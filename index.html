@@ -54,6 +54,15 @@ body{margin:0;font-family:var(--font);background:var(--cinza-bg);color:var(--chu
 .navbtn .ico{width:19px;height:19px;flex-shrink:0;opacity:.72;}
 .navbtn.active .ico, .navbtn:hover .ico{opacity:1;}
 .navbtn .rot{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+/* Título de seção do menu (RH · Financeiro · Sistema). Entrou em 30/08/2026,
+   quando o financeiro levou o menu a 15 telas. É rótulo, não botão: não recebe
+   clique nem foco, e o traço acima separa sem gastar altura com borda cheia. */
+.navsec{
+  padding:14px 18px 5px;font-size:10px;font-weight:700;letter-spacing:.09em;
+  text-transform:uppercase;color:#7d828c;pointer-events:none;
+}
+.navsec + .navbtn{border-top:none;}
+#sidebar nav > .navsec:first-child{padding-top:6px;}
 #sidebar .foot{padding:12px 16px;font-size:10.5px;color:#8b909a;border-top:1px solid #40444c;}
 
 #main{flex:1;min-width:0;display:flex;flex-direction:column;}
@@ -653,7 +662,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-08-30 · 21';
+const VERSAO = '2026-08-30 · 22';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -750,6 +759,34 @@ function defaultDB(){
     holerites: [],
     epiEntradas: [],
     epiSaidas: [],
+
+    /* ---------- FINANCEIRO ----------
+       Tudo aqui nasce VAZIO pelo mesmo motivo de `empresa` e `obras`: o app é
+       publicado num repositório PÚBLICO. O nome das empresas do grupo é o nome
+       da família, e o nome das contas e dos clientes identifica a operação.
+       NADA disso pode virar valor padrão no código — é cadastro do usuário.
+
+       Por que uma LISTA de empresas e não um campo: a operação tem duas pessoas
+       jurídicas. Uma assina os contratos e recebe do cliente; a outra tem os
+       funcionários e as despesas. Um financeiro de uma empresa só mostraria
+       resultado zero para sempre, porque a segunda é centro de custo por
+       desenho. Ver "SINCRONIA CLAUDE/ESTRUTURA - CBA e CEBA.md".
+
+       `DB.empresa` (singular, acima) é OUTRA COISA: é o cabeçalho dos
+       documentos de RH — quem assina o holerite e o recibo. Não confundir. */
+    empresas: [],     // {id, nome, apelido, cnpj, papel, ativo}
+    contas: [],       // {id, empresaId, nome, tipo, saldoInicial, dataSaldoInicial, ativo}
+    categorias: [],   // {id, nome, especie:'receita'|'despesa', ativo}  — o plano de contas
+    /* {id, empresaId, tipo:'receita'|'despesa'|'transferencia', natureza:'operacao'|'particular',
+        descricao, categoriaId, obraId, contaId, contaDestinoId, empresaDestinoId,
+        vencimento, valor, baixas:[{id,data,valor,contaId}], socio, pagoNaContaDe,
+        recorrenteId, competencia:'YYYY-MM', origem:'manual'|'rh', obs}
+       A baixa é uma LISTA, não um campo: em 2025 três medições foram pagas a
+       menor e viraram R$ 117 mil de dívida que ninguém enxergava. Sem baixa
+       parcial o app não consegue nem representar isso. */
+    lancamentos: [],
+    recorrentes: [],  // {id, empresaId, tipo, natureza, descricao, categoriaId, obraId, contaId, valor, diaVencimento, inicio, fim, ativo}
+
     _meta: {tombstones:{}, mapaTs:{}, objetoTs:{}, ultimaSync:null, ultimaEdicao:null, arquivoNome:''},
     config: {
       // desconto do funcionário
@@ -795,6 +832,14 @@ function migrate(db){
   db.adiantamentos = db.adiantamentos || [];
   db.pagamentos    = db.pagamentos    || [];   /* marca de pago no fechamento */
   db.diasUteisMes  = db.diasUteisMes  || {};
+  /* financeiro — coleções novas em 30/08/2026. Banco antigo não tem nenhuma
+     delas, e o app precisa abrir igual com ou sem financeiro cadastrado. */
+  db.empresas      = db.empresas      || [];
+  db.contas        = db.contas        || [];
+  db.categorias    = db.categorias    || [];
+  db.lancamentos   = db.lancamentos   || [];
+  db.recorrentes   = db.recorrentes   || [];
+  (db.lancamentos).forEach(l=>{ l.baixas = l.baixas || []; });
   db._meta = Object.assign({tombstones:{}, mapaTs:{}, objetoTs:{}, ultimaSync:null, ultimaEdicao:null, arquivoNome:''}, db._meta||{});
   Object.keys(db.pontoMensal||{}).forEach(k=>{
     const r = db.pontoMensal[k]; r.dias = r.dias||{}; r.ts = r.ts||{};
@@ -1199,20 +1244,29 @@ const SERVICO_LABEL = {homem_hora:'Homem-Hora', empreitada:'Empreitada'};
 const PERIODICIDADE_LABEL = {semanal:'Semanal', quinzenal:'Quinzenal'};
 const REGIME_LABEL = {hora:'hora', dia:'dia', mes:'mês'};
 
-/* ---------------- NAVEGAÇÃO ---------------- */
+/* ---------------- NAVEGAÇÃO ----------------
+   O menu ganhou SEÇÕES em 30/08/2026, ao entrar o financeiro: com 15 telas numa
+   lista corrida ninguém acha nada. O campo `secao` só agrupa visualmente — a
+   navegação continua sendo `goTo(id)`, e o id de nenhuma tela mudou. */
 const PAGES = [
-  {id:'dashboard',    label:'Dashboard',                 icon:'painel',   sub:'Visão geral da operação'},
-  {id:'funcionarios', label:'Funcionários',              icon:'pessoa',   sub:'Cadastro completo (ficha de admissão)'},
-  {id:'obras',        label:'Obras',                     icon:'obra',     sub:'Cadastro de obras e equipe alocada'},
-  {id:'ponto',        label:'Ponto',                     icon:'calendario',sub:'Presença e faltas — fichados e diaristas'},
-  {id:'fechamento',   label:'Fechamento / Pagamento',    icon:'confere',  sub:'Fechamento semanal e quinzenal (sextas-feiras)'},
-  {id:'adiantamentos',label:'Vales / Adiantamentos',     icon:'dinheiro', sub:'Vales de diaristas descontados no fechamento'},
-  {id:'vales',        label:'Vales VT / VR (Fichados)',  icon:'ticket',   sub:'Adiantamento de transporte e alimentação'},
-  {id:'holerite',     label:'Holerite',                  icon:'documento',sub:'Recibo de pagamento e demonstrativo de encargos'},
-  {id:'estoque',      label:'Estoque de EPI / Uniformes',icon:'caixa',    sub:'Entradas, saídas e cautelas'},
-  {id:'custos',       label:'Custo Consolidado',         icon:'grafico',  sub:'Custo real por funcionário, obra e tipo de serviço'},
-  {id:'sync',         label:'Sincronizar (Drive)',       icon:'nuvem',    sub:'Juntar os dados entre os computadores'},
-  {id:'config',       label:'Configurações',             icon:'engrenagem',sub:'Empresa, encargos e parâmetros de cálculo'}
+  {id:'dashboard',    secao:'',           label:'Dashboard',                 icon:'painel',   sub:'Visão geral da operação'},
+
+  {id:'funcionarios', secao:'RH',         label:'Funcionários',              icon:'pessoa',   sub:'Cadastro completo (ficha de admissão)'},
+  {id:'obras',        secao:'RH',         label:'Obras',                     icon:'obra',     sub:'Cadastro de obras e equipe alocada'},
+  {id:'ponto',        secao:'RH',         label:'Ponto',                     icon:'calendario',sub:'Presença e faltas — fichados e diaristas'},
+  {id:'fechamento',   secao:'RH',         label:'Fechamento / Pagamento',    icon:'confere',  sub:'Fechamento semanal e quinzenal (sextas-feiras)'},
+  {id:'adiantamentos',secao:'RH',         label:'Vales / Adiantamentos',     icon:'dinheiro', sub:'Vales de diaristas descontados no fechamento'},
+  {id:'vales',        secao:'RH',         label:'Vales VT / VR (Fichados)',  icon:'ticket',   sub:'Adiantamento de transporte e alimentação'},
+  {id:'holerite',     secao:'RH',         label:'Holerite',                  icon:'documento',sub:'Recibo de pagamento e demonstrativo de encargos'},
+  {id:'estoque',      secao:'RH',         label:'Estoque de EPI / Uniformes',icon:'caixa',    sub:'Entradas, saídas e cautelas'},
+  {id:'custos',       secao:'RH',         label:'Custo Consolidado',         icon:'grafico',  sub:'Custo real por funcionário, obra e tipo de serviço'},
+
+  {id:'caixa',        secao:'Financeiro', label:'Caixa e Contas',            icon:'cofre',    sub:'Saldo de cada conta, por empresa e consolidado'},
+  {id:'lancamentos',  secao:'Financeiro', label:'A Pagar / A Receber',       icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
+  {id:'fluxo',        secao:'Financeiro', label:'Fluxo de Caixa',            icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
+
+  {id:'sync',         secao:'Sistema',    label:'Sincronizar (Drive)',       icon:'nuvem',    sub:'Juntar os dados entre os computadores'},
+  {id:'config',       secao:'Sistema',    label:'Configurações',             icon:'engrenagem',sub:'Empresa, encargos e parâmetros de cálculo'}
 ];
 
 /* Ícones em SVG traçado. Antes eram formas geométricas (◆ ▦ ▤ ▧ ▨) que não
@@ -1232,7 +1286,10 @@ const ICONES = {
   grafico:   '<path d="M4 20h16"/><path d="M7 20v-6M12 20V6M17 20v-9"/>',
   nuvem:     '<path d="M7 18.5A4 4 0 0 1 7.4 10.6a5.2 5.2 0 0 1 9.9-1.2A3.9 3.9 0 0 1 17.6 18"/><path d="M12 21V12m0 0-2.6 2.6M12 12l2.6 2.6"/>',
   engrenagem:'<circle cx="12" cy="12" r="3.1"/><path d="M19.2 14.6a1.5 1.5 0 0 0 .3 1.7l.1.1a1.8 1.8 0 1 1-2.6 2.6l-.1-.1a1.5 1.5 0 0 0-2.6 1.1v.2a1.8 1.8 0 1 1-3.6 0v-.1a1.5 1.5 0 0 0-2.6-1.1l-.1.1a1.8 1.8 0 1 1-2.6-2.6l.1-.1a1.5 1.5 0 0 0-1.1-2.6h-.2a1.8 1.8 0 1 1 0-3.6h.1a1.5 1.5 0 0 0 1.1-2.6l-.1-.1a1.8 1.8 0 1 1 2.6-2.6l.1.1a1.5 1.5 0 0 0 2.6-1.1v-.2a1.8 1.8 0 1 1 3.6 0v.1a1.5 1.5 0 0 0 2.6 1.1l.1-.1a1.8 1.8 0 1 1 2.6 2.6l-.1.1a1.5 1.5 0 0 0 1.1 2.6h.2a1.8 1.8 0 1 1 0 3.6h-.1a1.5 1.5 0 0 0-1.4.9Z"/>',
-  menu:      '<path d="M4 7h16M4 12h16M4 17h16"/>'
+  menu:      '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  cofre:     '<rect x="3.2" y="4.5" width="17.6" height="15" rx="2"/><circle cx="10.5" cy="12" r="3.4"/><path d="M10.5 8.6v6.8M7.1 12h6.8M17.4 9.4v5.2"/>',
+  lista:     '<path d="M9 7h11M9 12h11M9 17h11"/><path d="m4 6.6 1.1 1.1L7 5.8M4 11.6l1.1 1.1L7 10.8M4 16.6l1.1 1.1L7 15.8"/>',
+  fluxo:     '<path d="M4 20h16"/><path d="M4.5 16.2 9 10.4l3.6 3 5.9-7.2"/><path d="M18.5 6.2h-3.4M18.5 6.2v3.4"/>'
 };
 function icone(nome){
   return '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
@@ -1243,11 +1300,17 @@ function icone(nome){
 let currentPage = 'dashboard';
 
 function buildNav(){
-  document.getElementById('navMenu').innerHTML = PAGES.map(p=>
-    `<button class="navbtn ${p.id===currentPage?'active':''}" onclick="goTo('${p.id}')">
+  let secaoAberta = null;
+  document.getElementById('navMenu').innerHTML = PAGES.map(p=>{
+    /* o título só sai quando a seção MUDA — assim a ordem do PAGES manda, e
+       acrescentar tela nova no meio de um grupo não exige mexer aqui */
+    const titulo = (p.secao && p.secao !== secaoAberta)
+      ? `<div class="navsec">${esc(p.secao)}</div>` : '';
+    secaoAberta = p.secao;
+    return titulo + `<button class="navbtn ${p.id===currentPage?'active':''}" onclick="goTo('${p.id}')">
       ${icone(p.icon)}<span class="rot">${p.label}</span>
-    </button>`
-  ).join('');
+    </button>`;
+  }).join('');
 }
 /* As duas folhas de ponto viraram uma tela só em 28/08/2026. Os nomes antigos
    continuam valendo como atalho: quem chamar goTo('pontoDiarista') cai na tela
@@ -1270,7 +1333,9 @@ function render(){
     dashboard: renderDashboard, funcionarios: renderFuncionarios, obras: renderObras,
     ponto: renderPonto, fechamento: renderFechamento,
     adiantamentos: renderAdiantamentos, vales: renderVales, holerite: renderHolerite,
-    estoque: renderEstoque, custos: renderCustos, sync: renderSync, config: renderConfig
+    estoque: renderEstoque, custos: renderCustos,
+    caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo,
+    sync: renderSync, config: renderConfig
   };
   document.getElementById('content').innerHTML = '';
   renderers[currentPage]();
@@ -5618,7 +5683,14 @@ function wipeData(){
 const DEV_KEY = 'belaAngraRH_dispositivo';
 
 /* coleções em lista, identificadas por id */
-const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','pagamentos','vales','holerites','epiEntradas','epiSaidas'];
+const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','pagamentos','vales','holerites','epiEntradas','epiSaidas',
+  /* financeiro (30/08/2026). Sem entrar nesta lista o módulo funciona num PC só
+     e o outro nunca fica sabendo — é o erro mais fácil de cometer aqui.
+     As BAIXAS viajam dentro do próprio lançamento: são um campo dele, não uma
+     coleção. Dar baixa num PC carimba o lançamento inteiro, e a mesclagem leva
+     a versão mais recente. Se os dois derem baixa no mesmo lançamento antes de
+     sincronizar, vale a última — a mesma limitação já avisada na tela. */
+  'empresas','contas','categorias','lancamentos','recorrentes'];
 /* mapas de dia: {chave: {dias:{iso:status}, ts:{iso:hora}}} */
 const SYNC_MAPAS_DIA = ['pontoMensal'];
 /* mapas simples: {chave: valor} com hora paralela em _meta */
@@ -6320,6 +6392,1714 @@ document.addEventListener('DOMContentLoaded', function(){
   reconectarArquivoSync();
   setInterval(atualizarIndicadorSync, 60000);   // mantém o "há X min" atualizado
 });
+/* =========================================================
+   FINANCEIRO — núcleo, cadastros e a tela de Caixa e Contas
+
+   Leia antes de mexer: "SINCRONIA CLAUDE/ESTRUTURA - CBA e CEBA.md".
+   Três coisas que o desenho inteiro depende:
+
+   1. SÃO DUAS EMPRESAS. Uma assina os contratos e recebe do cliente; a outra
+      tem os funcionários e as despesas. Um financeiro de uma empresa só
+      mostraria resultado zero para sempre, porque a segunda é centro de custo
+      por desenho. As duas precisam estar cadastradas.
+
+   2. TRANSFERÊNCIA ENTRE EMPRESAS NÃO É RECEITA NEM DESPESA. Se a transferência
+      entrar como receita de quem recebe, o faturamento consolidado conta o
+      mesmo dinheiro duas vezes. Por isso `transferencia` é um TIPO próprio:
+      mexe no caixa das duas contas e não entra em resultado nenhum.
+
+   3. TEM DINHEIRO QUE SAIU DA CONTA E NÃO É DA OPERAÇÃO. Em 2026 foram
+      R$ 124.098 (carro, moto, repasses). Isso precisa aparecer no CAIXA,
+      porque saiu mesmo, e ficar FORA do resultado. É o campo `natureza`.
+
+   Nada aqui pode ter nome de empresa, de conta ou de cliente escrito no
+   código: o app é publicado num repositório público. Tudo é cadastro.
+   ========================================================= */
+
+/* ---------------- CONSULTAS DE APOIO ---------------- */
+
+function empresaFin(id){ return DB.empresas.find(e=>e.id===id) || null; }
+function empresaFinNome(id){ const e = empresaFin(id); return e ? (e.apelido || e.nome) : '—'; }
+function empresasAtivas(){ return DB.empresas.filter(e=>e.ativo!==false); }
+
+function conta(id){ return DB.contas.find(c=>c.id===id) || null; }
+function contaNome(id){ const c = conta(id); return c ? c.nome : '—'; }
+function contasAtivas(empresaId){
+  return DB.contas.filter(c=>c.ativo!==false && (!empresaId || c.empresaId===empresaId));
+}
+
+function categoria(id){ return DB.categorias.find(c=>c.id===id) || null; }
+function categoriaNome(id){ const c = categoria(id); return c ? c.nome : '—'; }
+function categoriasDe(especie){
+  return DB.categorias.filter(c=>c.ativo!==false && (!especie || c.especie===especie))
+    .sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+}
+
+const TIPO_LANC_LABEL   = {receita:'Receita', despesa:'Despesa', transferencia:'Transferência'};
+const NATUREZA_LABEL    = {operacao:'Operação', particular:'Particular'};
+const TIPO_CONTA_LABEL  = {banco:'Conta bancária', carteira:'Dinheiro em espécie', aplicacao:'Aplicação'};
+
+/* ---------------- BAIXA E SITUAÇÃO DO LANÇAMENTO ----------------
+   A baixa é uma LISTA de pagamentos parciais, não um campo "pago sim/não".
+   Motivo concreto: em 2025 três medições foram pagas a menor e viraram
+   R$ 117.437,69 de dívida que ninguém enxergava, porque a planilha só sabia
+   dizer "pago" ou "não pago". Com baixa parcial isso vira saldo em aberto e
+   aparece sozinho na lista. */
+
+function valorBaixado(l){
+  return (l.baixas||[]).reduce((s,b)=>s + (Number(b.valor)||0), 0);
+}
+function saldoAberto(l){
+  /* arredonda na apresentação para não deixar resto de centavo em aberto */
+  return Math.round(((Number(l.valor)||0) - valorBaixado(l)) * 100) / 100;
+}
+function statusLanc(l){
+  const s = saldoAberto(l);
+  if(s <= 0) return 'quitado';
+  return valorBaixado(l) > 0 ? 'parcial' : 'aberto';
+}
+function estaVencido(l){
+  return statusLanc(l) !== 'quitado' && l.vencimento && l.vencimento < todayISO();
+}
+function badgeStatus(l){
+  const st = statusLanc(l);
+  if(st === 'quitado') return '<span class="badge badge-green">Quitado</span>';
+  if(st === 'parcial') return `<span class="badge badge-yellow">Parcial</span>`;
+  if(estaVencido(l))   return '<span class="badge badge-red">Vencido</span>';
+  return '<span class="badge badge-gray">Em aberto</span>';
+}
+/* a data em que o dinheiro de fato andou — a última baixa */
+function dataUltimaBaixa(l){
+  const bs = (l.baixas||[]).slice().sort((a,b)=>a.data.localeCompare(b.data));
+  return bs.length ? bs[bs.length-1].data : '';
+}
+
+/* ---------------- SALDO ----------------
+   O saldo anda pela BAIXA, não pelo vencimento: dinheiro só mexe no caixa
+   quando entra ou sai de verdade. Cada baixa pode ter caído numa conta
+   diferente da prevista (acontece), por isso ela carrega o próprio contaId. */
+
+function contaDaBaixa(l, b){ return b.contaId || l.contaId; }
+
+function saldoConta(contaId, ateISO){
+  const c = conta(contaId);
+  if(!c) return 0;
+  const ate = ateISO || todayISO();
+  let s = (!c.dataSaldoInicial || c.dataSaldoInicial <= ate) ? (Number(c.saldoInicial)||0) : 0;
+  DB.lancamentos.forEach(l=>{
+    (l.baixas||[]).forEach(b=>{
+      if(b.data > ate) return;
+      const v = Number(b.valor)||0;
+      if(l.tipo === 'transferencia'){
+        /* transferência mexe nas DUAS pontas; a mesma conta dos dois lados
+           (o usuário errou o cadastro) se anula sozinha, que é o certo */
+        if(l.contaId === contaId)        s -= v;
+        if(l.contaDestinoId === contaId) s += v;
+      }else if(contaDaBaixa(l, b) === contaId){
+        s += (l.tipo === 'receita' ? v : -v);
+      }
+    });
+  });
+  return Math.round(s * 100) / 100;
+}
+
+function saldoEmpresa(empresaId, ateISO){
+  return contasAtivas(empresaId).reduce((s,c)=>s + saldoConta(c.id, ateISO), 0);
+}
+function saldoGeral(ateISO){
+  return contasAtivas().reduce((s,c)=>s + saldoConta(c.id, ateISO), 0);
+}
+
+/* Movimentos realizados de uma conta, do mais novo para o mais antigo.
+   É o extrato: o que já aconteceu, não o que está previsto. */
+function movimentosDaConta(contaId, limite){
+  const movs = [];
+  DB.lancamentos.forEach(l=>{
+    (l.baixas||[]).forEach(b=>{
+      const v = Number(b.valor)||0;
+      if(l.tipo === 'transferencia'){
+        if(l.contaId === contaId)        movs.push({data:b.data, valor:-v, l, rotulo:'Transferência para ' + contaNome(l.contaDestinoId)});
+        if(l.contaDestinoId === contaId) movs.push({data:b.data, valor: v, l, rotulo:'Transferência de ' + contaNome(l.contaId)});
+      }else if(contaDaBaixa(l, b) === contaId){
+        movs.push({data:b.data, valor: l.tipo==='receita' ? v : -v, l, rotulo:l.descricao});
+      }
+    });
+  });
+  movs.sort((a,b)=> b.data.localeCompare(a.data));
+  return limite ? movs.slice(0, limite) : movs;
+}
+
+/* ---------------- O FINANCEIRO ESTÁ USÁVEL? ----------------
+   Sem empresa e sem conta cadastrada não dá para lançar nada. Em vez de
+   deixar a tela quebrar num select vazio, as telas chamam isto e mostram o
+   passo que falta. */
+function financeiroPronto(){
+  return DB.empresas.length > 0 && DB.contas.length > 0;
+}
+function avisoPrimeiroUso(){
+  const temEmpresa = DB.empresas.length > 0;
+  const temConta   = DB.contas.length > 0;
+  const temCat     = DB.categorias.length > 0;
+  if(temEmpresa && temConta && temCat) return '';
+  return `
+  <div class="card" style="background:#fdf3e2;border-color:#eddcb5;">
+    <h2 style="margin-top:0;">Falta configurar o financeiro</h2>
+    <p class="help" style="margin-top:0;color:#8a5a00;">
+      O financeiro começa vazio de propósito — <b>nada da sua empresa fica dentro do
+      arquivo do app</b>, porque ele é publicado num endereço público. Cadastre uma vez
+      e vai sozinho para os outros aparelhos na sincronização.
+    </p>
+    <ol style="margin:0 0 12px 18px;font-size:13px;line-height:1.9;color:#8a5a00;">
+      <li>${temEmpresa ? '<s>Cadastrar as empresas do grupo</s> ✓' : '<b>Cadastrar as empresas do grupo</b> — a que assina os contratos e a que tem os funcionários'}</li>
+      <li>${temConta   ? '<s>Cadastrar as contas de dinheiro</s> ✓' : '<b>Cadastrar as contas de dinheiro</b> — banco e carteira, com o saldo de partida'}</li>
+      <li>${temCat     ? '<s>Montar o plano de contas</s> ✓' : '<b>Montar o plano de contas</b> — combustível, alimentação, guias, folha, EPI…'}</li>
+    </ol>
+    <button class="btn btn-primary" onclick="goTo('caixa')">Ir para Caixa e Contas</button>
+  </div>`;
+}
+
+/* =========================================================
+   TELA: CAIXA E CONTAS
+   ========================================================= */
+
+let caixaEmpresaFiltro = '';
+
+function renderCaixa(){
+  const c = document.getElementById('content');
+  const hoje = todayISO();
+  const emps = DB.empresas.slice().sort((a,b)=>(a.nome||'').localeCompare(b.nome||'','pt-BR'));
+
+  c.innerHTML = `
+    ${avisoPrimeiroUso()}
+    ${DB.contas.length ? blocoSaldos(hoje) : ''}
+    ${blocoEmpresas(emps)}
+    ${blocoContas()}
+    ${blocoCategorias()}
+  `;
+}
+
+function blocoSaldos(hoje){
+  const emps = DB.empresas.filter(e=>e.ativo!==false);
+  const total = saldoGeral(hoje);
+  const semEmpresa = DB.contas.filter(c=>c.ativo!==false && !empresaFin(c.empresaId));
+
+  return `
+  <div class="card">
+    <h2 style="margin-top:0;">Saldo de hoje — ${fmtDate(hoje)}</h2>
+    <div class="grid grid-kpi kpis" style="margin-bottom:6px;">
+      ${emps.map(e=>{
+        const s = saldoEmpresa(e.id, hoje);
+        return `<div class="kpi">
+          <div class="v" style="color:${s<0?'var(--vermelho)':'var(--azul-esc)'};">${fmtMoney(s)}</div>
+          <div class="l">${esc(e.apelido || e.nome)}</div>
+        </div>`;
+      }).join('')}
+      <div class="kpi" style="background:var(--cinza-bg);">
+        <div class="v" style="color:${total<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(total)}</div>
+        <div class="l"><b>Consolidado (todas as empresas)</b></div>
+      </div>
+    </div>
+    ${semEmpresa.length ? `<p class="help" style="color:var(--vermelho);">
+      ${semEmpresa.length} conta(s) sem empresa: ${semEmpresa.map(c=>esc(c.nome)).join(', ')}.
+      Elas entram no consolidado mas não em nenhuma empresa — corrija no cadastro abaixo.</p>` : ''}
+    <p class="help" style="margin-bottom:0;">
+      O saldo anda pela <b>baixa</b>, não pelo vencimento — dinheiro só entra na conta
+      quando você dá baixa. O que está previsto e ainda não aconteceu aparece em
+      <b>Fluxo de Caixa</b>.
+    </p>
+  </div>`;
+}
+
+function blocoEmpresas(emps){
+  return `
+  <div class="card">
+    <div class="section-title">
+      <h2 style="margin:0;">Empresas do grupo</h2>
+      <button class="btn btn-primary" onclick="openEmpresaFinModal()">+ Nova empresa</button>
+    </div>
+    <div class="table-wrap">
+      ${emps.length ? `<table>
+        <thead><tr><th>Empresa</th><th>Papel na operação</th><th class="num">Contas</th><th class="num">Saldo</th><th>Situação</th><th></th></tr></thead>
+        <tbody>${emps.map(e=>{
+          const nc = DB.contas.filter(c=>c.empresaId===e.id).length;
+          const s  = saldoEmpresa(e.id);
+          return `<tr>
+            <td><b>${esc(e.nome)}</b>${e.apelido?` <span class="badge badge-gray">${esc(e.apelido)}</span>`:''}
+                ${e.cnpj?`<br><span style="font-size:11px;color:#9aa0ab;">${esc(e.cnpj)}</span>`:''}</td>
+            <td>${esc(PAPEL_EMPRESA_LABEL[e.papel] || '—')}</td>
+            <td class="num">${nc}</td>
+            <td class="num" style="color:${s<0?'var(--vermelho)':'inherit'};">${fmtMoney(s)}</td>
+            <td>${e.ativo===false?'<span class="badge badge-gray">Inativa</span>':'<span class="badge badge-green">Ativa</span>'}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn btn-secondary btn-sm" onclick="openEmpresaFinModal('${e.id}')">Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteEmpresaFin('${e.id}')">Excluir</button>
+            </td>
+          </tr>`;
+        }).join('')}</tbody></table>`
+      : `<div class="empty">
+          Nenhuma empresa cadastrada.<br>
+          <span style="font-size:12px;">Cadastre as duas: a que <b>assina os contratos e recebe do cliente</b>
+          e a que <b>tem os funcionários e as despesas</b>.</span>
+         </div>`}
+    </div>
+    <p class="help">
+      <b>Por que duas e não uma:</b> a empresa que paga a folha gasta quase tudo que recebe —
+      sozinha, ela mostraria resultado zero para sempre. A margem da operação aparece só
+      quando as duas estão no sistema e o dinheiro que passa de uma para a outra é tratado
+      como <b>transferência</b>, que não é receita nem despesa.
+    </p>
+  </div>`;
+}
+
+const PAPEL_EMPRESA_LABEL = {
+  contratos: 'Contratos e notas (recebe do cliente)',
+  operacao:  'Funcionários e despesas',
+  ambos:     'Contratos e operação'
+};
+
+function blocoContas(){
+  const contas = DB.contas.slice().sort((a,b)=>{
+    const ea = empresaFinNome(a.empresaId), eb = empresaFinNome(b.empresaId);
+    return ea === eb ? a.nome.localeCompare(b.nome,'pt-BR') : ea.localeCompare(eb,'pt-BR');
+  });
+  return `
+  <div class="card">
+    <div class="section-title">
+      <h2 style="margin:0;">Contas de dinheiro</h2>
+      <button class="btn btn-primary" onclick="openContaModal()"
+        ${DB.empresas.length?'':'disabled title="Cadastre uma empresa primeiro"'}>+ Nova conta</button>
+    </div>
+    <div class="table-wrap">
+      ${contas.length ? `<table>
+        <thead><tr><th>Conta</th><th>Empresa</th><th>Tipo</th><th class="num">Saldo inicial</th><th class="num">Saldo hoje</th><th></th></tr></thead>
+        <tbody>${contas.map(ct=>{
+          const s = saldoConta(ct.id);
+          return `<tr class="rowlink" onclick="openExtratoConta('${ct.id}')" title="Clique para ver o extrato">
+            <td><b>${esc(ct.nome)}</b>${ct.ativo===false?' <span class="badge badge-gray">inativa</span>':''}</td>
+            <td>${esc(empresaFinNome(ct.empresaId))}</td>
+            <td>${esc(TIPO_CONTA_LABEL[ct.tipo] || '—')}</td>
+            <td class="num">${fmtMoney(ct.saldoInicial||0)}${ct.dataSaldoInicial?`<br><span style="font-size:10.5px;color:#9aa0ab;">em ${fmtDate(ct.dataSaldoInicial)}</span>`:''}</td>
+            <td class="num" style="font-weight:700;color:${s<0?'var(--vermelho)':'inherit'};">${fmtMoney(s)}</td>
+            <td style="white-space:nowrap;" onclick="event.stopPropagation()">
+              <button class="btn btn-secondary btn-sm" onclick="openExtratoConta('${ct.id}')">Extrato</button>
+              <button class="btn btn-secondary btn-sm" onclick="openContaModal('${ct.id}')">Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteConta('${ct.id}')">Excluir</button>
+            </td>
+          </tr>`;
+        }).join('')}</tbody></table>`
+      : `<div class="empty">Nenhuma conta cadastrada. Cadastre pelo menos a conta do banco e o dinheiro de carteira.</div>`}
+    </div>
+    ${DB.contas.length ? `<button class="btn btn-secondary" onclick="openTransferenciaModal()">↔ Transferir entre contas</button>` : ''}
+    <p class="help">
+      O <b>saldo inicial</b> é de onde a conta parte — o saldo do dia em que você começou a
+      usar o app. Não precisa lançar o passado inteiro: ponha o saldo do extrato naquele dia
+      e siga daí para a frente.
+    </p>
+  </div>`;
+}
+
+function blocoCategorias(){
+  const rec = categoriasDe('receita'), des = categoriasDe('despesa');
+  const lista = (arr, titulo) => `
+    <div>
+      <h3 style="font-size:12.5px;margin:0 0 8px;color:var(--chumbo-claro);">${titulo}</h3>
+      ${arr.length ? arr.map(ct=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #eceef2;">
+          <span style="font-size:13px;">${esc(ct.nome)}</span>
+          <span style="white-space:nowrap;">
+            <button class="btn btn-secondary btn-sm" onclick="openCategoriaModal('${ct.id}')">Editar</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteCategoria('${ct.id}')">×</button>
+          </span>
+        </div>`).join('')
+      : '<div class="empty" style="padding:14px;">nenhuma</div>'}
+    </div>`;
+
+  return `
+  <div class="card">
+    <div class="section-title">
+      <h2 style="margin:0;">Plano de contas</h2>
+      <span>
+        <button class="btn btn-secondary" onclick="sugerirCategorias()">Sugerir categorias da construção civil</button>
+        <button class="btn btn-primary" onclick="openCategoriaModal()">+ Nova categoria</button>
+      </span>
+    </div>
+    <div class="grid grid-2">
+      ${lista(des, 'Despesas')}
+      ${lista(rec, 'Receitas')}
+    </div>
+    <p class="help">
+      Categoria é o que responde <b>"em que o dinheiro foi gasto"</b> no fim do mês.
+      Não crie categoria demais — vale mais ter dez que você usa do que quarenta que você
+      não lembra qual escolher.
+    </p>
+  </div>`;
+}
+
+/* ---------------- CADASTRO: EMPRESA ---------------- */
+
+function openEmpresaFinModal(id){
+  const e = id ? empresaFin(id) : null;
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${e ? 'Editar empresa' : 'Nova empresa do grupo'}</h2>
+    <div class="grid grid-2">
+      <div class="field"><label>Razão social *</label><input id="ef_nome" value="${e?esc(e.nome):''}"></div>
+      <div class="field"><label>Apelido (como aparece nas telas)</label><input id="ef_apelido" value="${e?esc(e.apelido||''):''}" placeholder="a sigla que você já usa"></div>
+    </div>
+    <div class="grid grid-2">
+      <div class="field"><label>CNPJ</label><input id="ef_cnpj" value="${e?esc(e.cnpj||''):''}"></div>
+      <div class="field"><label>Papel na operação</label>
+        <select id="ef_papel">
+          ${Object.keys(PAPEL_EMPRESA_LABEL).map(k=>
+            `<option value="${k}" ${e&&e.papel===k?'selected':''}>${PAPEL_EMPRESA_LABEL[k]}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="ef_ativo" ${!e||e.ativo!==false?'checked':''}> Empresa ativa</label>
+    <p class="help">
+      O <b>papel</b> não muda nenhum cálculo — serve para você e para quem abrir o sistema
+      depois entender de onde vem o dinheiro e para onde ele vai.
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveEmpresaFin('${id||''}')">Salvar</button>
+    </div>
+  `);
+}
+
+function saveEmpresaFin(id){
+  const nome = val('ef_nome').trim();
+  if(!nome){ toast('A razão social é obrigatória.'); return; }
+  const dados = {
+    nome, apelido: val('ef_apelido').trim(), cnpj: val('ef_cnpj').trim(),
+    papel: val('ef_papel'), ativo: checked('ef_ativo')
+  };
+  if(id){ Object.assign(empresaFin(id), dados); }
+  else  { DB.empresas.push(Object.assign({id: uid()}, dados)); }
+  saveDB(); closeModal(); render(); toast('Empresa salva.');
+}
+
+function deleteEmpresaFin(id){
+  const usoContas = DB.contas.filter(c=>c.empresaId===id).length;
+  const usoLanc   = DB.lancamentos.filter(l=>l.empresaId===id || l.empresaDestinoId===id).length;
+  if(usoContas || usoLanc){
+    alert('Não dá para excluir: esta empresa tem ' + usoContas + ' conta(s) e ' + usoLanc +
+          ' lançamento(s).\n\nSe ela não é mais usada, edite e desmarque "Empresa ativa" — '
+          + 'assim o histórico continua de pé.');
+    return;
+  }
+  if(!confirm('Excluir esta empresa?')) return;
+  DB.empresas = DB.empresas.filter(e=>e.id!==id);
+  saveDB(); render(); toast('Empresa excluída.');
+}
+
+/* ---------------- CADASTRO: CONTA ---------------- */
+
+function openContaModal(id){
+  const ct = id ? conta(id) : null;
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${ct ? 'Editar conta' : 'Nova conta de dinheiro'}</h2>
+    <div class="grid grid-2">
+      <div class="field"><label>Nome da conta *</label><input id="ct_nome" value="${ct?esc(ct.nome):''}" placeholder="como você chama essa conta"></div>
+      <div class="field"><label>Empresa *</label>
+        <select id="ct_empresa">
+          <option value="">— escolha —</option>
+          ${DB.empresas.map(e=>`<option value="${e.id}" ${ct&&ct.empresaId===e.id?'selected':''}>${esc(e.apelido||e.nome)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="grid grid-3">
+      <div class="field"><label>Tipo</label>
+        <select id="ct_tipo">
+          ${Object.keys(TIPO_CONTA_LABEL).map(k=>
+            `<option value="${k}" ${ct&&ct.tipo===k?'selected':''}>${TIPO_CONTA_LABEL[k]}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Saldo inicial (R$)</label>
+        <input type="number" step="0.01" id="ct_saldo" value="${ct?(ct.saldoInicial||0):0}"></div>
+      <div class="field"><label>Nesta data</label>
+        <input type="date" id="ct_data" value="${ct?(ct.dataSaldoInicial||''):todayISO()}"></div>
+    </div>
+    <label class="check"><input type="checkbox" id="ct_ativo" ${!ct||ct.ativo!==false?'checked':''}> Conta ativa</label>
+    <p class="help">
+      O saldo inicial é o <b>ponto de partida</b>, copiado do extrato no dia em que você
+      começou. Tudo que for lançado com baixa a partir dessa data soma ou subtrai daqui.
+      ${ct ? '<br><b>Cuidado ao mudar depois:</b> mexer no saldo inicial move o saldo de hoje na mesma medida.' : ''}
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveConta('${id||''}')">Salvar</button>
+    </div>
+  `);
+}
+
+function saveConta(id){
+  const nome = val('ct_nome').trim();
+  const empresaId = val('ct_empresa');
+  if(!nome){ toast('O nome da conta é obrigatório.'); return; }
+  if(!empresaId){ toast('Escolha de qual empresa é a conta.'); return; }
+  const dados = {
+    nome, empresaId, tipo: val('ct_tipo'),
+    saldoInicial: numVal('ct_saldo'), dataSaldoInicial: val('ct_data'),
+    ativo: checked('ct_ativo')
+  };
+  if(id){ Object.assign(conta(id), dados); }
+  else  { DB.contas.push(Object.assign({id: uid()}, dados)); }
+  saveDB(); closeModal(); render(); toast('Conta salva.');
+}
+
+function deleteConta(id){
+  const uso = DB.lancamentos.filter(l=>
+    l.contaId===id || l.contaDestinoId===id || (l.baixas||[]).some(b=>b.contaId===id)).length;
+  if(uso){
+    alert('Não dá para excluir: esta conta tem ' + uso + ' lançamento(s) ligados a ela.\n\n'
+        + 'Se ela foi encerrada, edite e desmarque "Conta ativa" — o saldo e o histórico ficam de pé.');
+    return;
+  }
+  if(!confirm('Excluir esta conta?')) return;
+  DB.contas = DB.contas.filter(c=>c.id!==id);
+  saveDB(); render(); toast('Conta excluída.');
+}
+
+function openExtratoConta(contaId){
+  const ct = conta(contaId);
+  const movs = movimentosDaConta(contaId, 120);
+  /* saldo corrido, calculado de trás para frente a partir do saldo de hoje */
+  let corrente = saldoConta(contaId);
+  const linhas = movs.map(m=>{
+    const saldoDepois = corrente;
+    corrente = Math.round((corrente - m.valor) * 100) / 100;
+    return `<tr>
+      <td>${fmtDate(m.data)}</td>
+      <td>${esc(m.rotulo || '—')}${m.l.natureza==='particular'?' <span class="badge badge-purple">particular</span>':''}</td>
+      <td>${esc(m.l.categoriaId ? categoriaNome(m.l.categoriaId) : '—')}</td>
+      <td class="num" style="color:${m.valor<0?'var(--vermelho)':'var(--verde)'};font-weight:700;">
+        ${m.valor<0?'−':'+'} ${fmtMoney(Math.abs(m.valor))}</td>
+      <td class="num">${fmtMoney(saldoDepois)}</td>
+    </tr>`;
+  }).join('');
+
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Extrato — ${esc(ct.nome)}</h2>
+    <div class="grid grid-3" style="margin-bottom:14px;">
+      <div class="kpi"><div class="v">${fmtMoney(saldoConta(contaId))}</div><div class="l">Saldo hoje</div></div>
+      <div class="kpi"><div class="v">${fmtMoney(ct.saldoInicial||0)}</div><div class="l">Saldo inicial${ct.dataSaldoInicial?' em '+fmtDate(ct.dataSaldoInicial):''}</div></div>
+      <div class="kpi"><div class="v">${movimentosDaConta(contaId).length}</div><div class="l">Movimentos realizados</div></div>
+    </div>
+    <div class="table-wrap">
+      ${movs.length ? `<table>
+        <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th><th class="num">Saldo</th></tr></thead>
+        <tbody>${linhas}</tbody></table>`
+      : '<div class="empty">Nenhum movimento ainda. O extrato mostra só o que já teve baixa.</div>'}
+    </div>
+    ${movimentosDaConta(contaId).length > 120 ? '<p class="help">Mostrando os 120 movimentos mais recentes.</p>' : ''}
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal()">Fechar</button>
+    </div>
+  `, true);
+}
+
+/* ---------------- CADASTRO: CATEGORIA ---------------- */
+
+function openCategoriaModal(id){
+  const ct = id ? categoria(id) : null;
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${ct ? 'Editar categoria' : 'Nova categoria'}</h2>
+    <div class="grid grid-2">
+      <div class="field"><label>Nome *</label><input id="cg_nome" value="${ct?esc(ct.nome):''}"></div>
+      <div class="field"><label>Espécie</label>
+        <select id="cg_especie">
+          <option value="despesa" ${!ct||ct.especie==='despesa'?'selected':''}>Despesa</option>
+          <option value="receita" ${ct&&ct.especie==='receita'?'selected':''}>Receita</option>
+        </select>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="cg_ativo" ${!ct||ct.ativo!==false?'checked':''}> Categoria ativa</label>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveCategoria('${id||''}')">Salvar</button>
+    </div>
+  `);
+}
+
+function saveCategoria(id){
+  const nome = val('cg_nome').trim();
+  if(!nome){ toast('O nome é obrigatório.'); return; }
+  const dados = {nome, especie: val('cg_especie'), ativo: checked('cg_ativo')};
+  if(id){ Object.assign(categoria(id), dados); }
+  else  { DB.categorias.push(Object.assign({id: uid()}, dados)); }
+  saveDB(); closeModal(); render(); toast('Categoria salva.');
+}
+
+function deleteCategoria(id){
+  const uso = DB.lancamentos.filter(l=>l.categoriaId===id).length
+            + DB.recorrentes.filter(r=>r.categoriaId===id).length;
+  if(uso){
+    alert('Não dá para excluir: ' + uso + ' lançamento(s) usam esta categoria.\n\n'
+        + 'Edite e desmarque "Categoria ativa" — ela some das listas novas e o histórico continua certo.');
+    return;
+  }
+  if(!confirm('Excluir esta categoria?')) return;
+  DB.categorias = DB.categorias.filter(c=>c.id!==id);
+  saveDB(); render(); toast('Categoria excluída.');
+}
+
+/* Atalho de primeiro uso. São nomes GENÉRICOS de construção civil — nenhum
+   identifica a empresa, o cliente ou a obra, então podem morar no código.
+   Não sobrescreve nada: só acrescenta o que ainda não existe pelo nome. */
+const CATEGORIAS_SUGERIDAS = [
+  ['Folha de pagamento',        'despesa'],
+  ['Diárias',                   'despesa'],
+  ['Vale transporte',           'despesa'],
+  ['Vale refeição / alimentação','despesa'],
+  ['Guias e impostos',          'despesa'],
+  ['Pró-labore',                'despesa'],
+  ['Combustível',               'despesa'],
+  ['Material de construção',    'despesa'],
+  ['Ferramenta e manutenção',   'despesa'],
+  ['EPI e uniforme',            'despesa'],
+  ['Aluguel de equipamento',    'despesa'],
+  ['Contabilidade',             'despesa'],
+  ['Tarifa bancária',           'despesa'],
+  ['Transporte e frete',        'despesa'],
+  ['Medição',                   'receita'],
+  ['Serviço avulso / extra',    'receita'],
+  ['Outras receitas',           'receita']
+];
+
+function sugerirCategorias(){
+  const existentes = DB.categorias.map(c=>(c.nome||'').toLowerCase());
+  const novas = CATEGORIAS_SUGERIDAS.filter(([n])=>existentes.indexOf(n.toLowerCase()) < 0);
+  if(!novas.length){ toast('Todas as sugestões já estão cadastradas.'); return; }
+  if(!confirm('Acrescentar ' + novas.length + ' categoria(s) sugerida(s)?\n\n'
+    + 'Nada do que já existe é alterado. Você pode renomear ou apagar depois.')) return;
+  novas.forEach(([nome, especie])=> DB.categorias.push({id: uid(), nome, especie, ativo:true}));
+  saveDB(); render(); toast(novas.length + ' categorias acrescentadas.');
+}
+/* =========================================================
+   FINANCEIRO — A Pagar / A Receber
+
+   A tela de trabalho do dia a dia: o que está em aberto, o que venceu, e a
+   baixa. Três coisas do desenho que não são óbvias:
+
+   - A tela abre em "Em aberto", não no mês corrente. Conta vencida de mês
+     passado é justamente a que não pode sumir da vista.
+   - A baixa aceita valor MENOR que o previsto. Pagamento a menor é o que
+     gerou R$ 117 mil de dívida invisível em 2025.
+   - Transferência entre contas (e entre empresas) é um tipo próprio, que
+     mexe no caixa das duas pontas e não entra em resultado nenhum.
+   ========================================================= */
+
+let lancAba      = 'pagar';     /* pagar | receber | transferencias | recorrentes */
+let lancPeriodo  = 'aberto';    /* aberto | mes | todos */
+let lancMes      = '';          /* 'YYYY-MM' quando lancPeriodo === 'mes' */
+let lancEmpresa  = '';
+let lancObra     = '';
+let lancBusca    = '';
+
+function initLanc(){
+  if(!lancMes) lancMes = currentYM();
+}
+
+/* ---------------- FILTRO ---------------- */
+
+function lancamentosFiltrados(){
+  initLanc();
+  const tipoDaAba = {pagar:'despesa', receber:'receita', transferencias:'transferencia'}[lancAba];
+  const busca = lancBusca.trim().toLowerCase();
+
+  return DB.lancamentos.filter(l=>{
+    if(tipoDaAba && l.tipo !== tipoDaAba) return false;
+    if(lancEmpresa && l.empresaId !== lancEmpresa && l.empresaDestinoId !== lancEmpresa) return false;
+    if(lancObra && l.obraId !== lancObra) return false;
+
+    if(lancPeriodo === 'aberto' && statusLanc(l) === 'quitado') return false;
+    if(lancPeriodo === 'mes'){
+      /* pelo vencimento; quitado no mês também aparece, senão o mês fechado
+         fica com buraco e não bate com o extrato */
+      const noVenc  = (l.vencimento||'').slice(0,7) === lancMes;
+      const naBaixa = (l.baixas||[]).some(b=>b.data.slice(0,7) === lancMes);
+      if(!noVenc && !naBaixa) return false;
+    }
+    if(busca){
+      const alvo = [l.descricao, categoriaNome(l.categoriaId), obraNome(l.obraId),
+                    l.socio, l.pagoNaContaDe, l.obs].join(' ').toLowerCase();
+      if(alvo.indexOf(busca) < 0) return false;
+    }
+    return true;
+  }).sort((a,b)=>{
+    /* vencido primeiro, depois por vencimento */
+    const va = a.vencimento || '9999-99-99', vb = b.vencimento || '9999-99-99';
+    return va.localeCompare(vb);
+  });
+}
+
+/* ---------------- A TELA ---------------- */
+
+function renderLancamentos(){
+  initLanc();
+  const c = document.getElementById('content');
+
+  if(!financeiroPronto()){
+    c.innerHTML = avisoPrimeiroUso();
+    return;
+  }
+
+  if(lancAba === 'recorrentes'){ c.innerHTML = telaRecorrentes(); return; }
+
+  const lista = lancamentosFiltrados();
+  const aberto   = lista.filter(l=>statusLanc(l)!=='quitado');
+  const vencidos = aberto.filter(estaVencido);
+  const totalAberto   = aberto.reduce((s,l)=>s+saldoAberto(l),0);
+  const totalVencido  = vencidos.reduce((s,l)=>s+saldoAberto(l),0);
+  const ehTransf = lancAba === 'transferencias';
+
+  c.innerHTML = `
+    <div class="tabs">
+      <button class="tab ${lancAba==='pagar'?'active':''}"          onclick="lancAba='pagar'; render();">A Pagar</button>
+      <button class="tab ${lancAba==='receber'?'active':''}"        onclick="lancAba='receber'; render();">A Receber</button>
+      <button class="tab ${lancAba==='transferencias'?'active':''}" onclick="lancAba='transferencias'; render();">Transferências</button>
+      <button class="tab ${lancAba==='recorrentes'?'active':''}"    onclick="lancAba='recorrentes'; render();">Todo mês</button>
+    </div>
+
+    ${vencidos.length ? `
+    <div style="margin:0 0 14px;padding:11px 14px;background:#fdecea;border-radius:8px;color:#8e2c20;border-left:4px solid var(--vermelho);">
+      <b>${vencidos.length} ${ehTransf?'transferência(s)':'conta(s)'} vencida(s)</b> —
+      ${fmtMoney(totalVencido)} em atraso. A mais antiga venceu em ${fmtDate(vencidos[0].vencimento)}.
+    </div>` : ''}
+
+    <div class="card">
+      <div class="section-title">
+        <h2 style="margin:0;">${ehTransf?'Transferências':(lancAba==='pagar'?'Contas a pagar':'Contas a receber')}</h2>
+        <span>
+          ${ehTransf
+            ? `<button class="btn btn-primary" onclick="openTransferenciaModal()">↔ Nova transferência</button>`
+            : `<button class="btn btn-primary" onclick="openLancModal('', '${lancAba==='pagar'?'despesa':'receita'}')">+ Novo lançamento</button>`}
+        </span>
+      </div>
+
+      <div class="grid grid-4" style="margin-bottom:4px;">
+        <div class="field"><label>Mostrar</label>
+          <select onchange="lancPeriodo=this.value; render();">
+            <option value="aberto" ${lancPeriodo==='aberto'?'selected':''}>Em aberto (todos os meses)</option>
+            <option value="mes"    ${lancPeriodo==='mes'?'selected':''}>Um mês</option>
+            <option value="todos"  ${lancPeriodo==='todos'?'selected':''}>Tudo</option>
+          </select>
+        </div>
+        <div class="field"><label>Mês</label>
+          <input type="month" value="${lancMes}" ${lancPeriodo==='mes'?'':'disabled'}
+                 onchange="lancMes=this.value; lancPeriodo='mes'; render();">
+        </div>
+        <div class="field"><label>Empresa</label>
+          <select onchange="lancEmpresa=this.value; render();">
+            <option value="">Todas as empresas</option>
+            ${DB.empresas.map(e=>`<option value="${e.id}" ${lancEmpresa===e.id?'selected':''}>${esc(e.apelido||e.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Obra</label>
+          <select onchange="lancObra=this.value; render();">${opcoesObra(lancObra)}</select>
+        </div>
+      </div>
+      <div class="field" style="max-width:420px;">
+        <label>Procurar</label>
+        <input id="lancBuscaInput" value="${esc(lancBusca)}" placeholder="descrição, categoria, obra…"
+               oninput="lancBusca=this.value; renderLancamentosLista();">
+      </div>
+
+      <div id="lancLista">${tabelaLancamentos(lista)}</div>
+
+      <div class="grid grid-3" style="margin-top:14px;">
+        <div class="kpi"><div class="v">${aberto.length}</div><div class="l">Em aberto na lista</div></div>
+        <div class="kpi"><div class="v" style="color:${totalAberto>0?'var(--azul-esc)':'inherit'};">${fmtMoney(totalAberto)}</div><div class="l">Saldo em aberto</div></div>
+        <div class="kpi"><div class="v" style="color:${totalVencido>0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(totalVencido)}</div><div class="l">Do que já venceu</div></div>
+      </div>
+    </div>
+  `;
+}
+
+/* Redesenha SÓ a lista, para a busca não destruir o campo em que se digita.
+   É o mesmo defeito que travou a busca de Funcionários em 28/08: um `oninput`
+   que chama o render completo apaga o próprio input e leva o foco junto. */
+function renderLancamentosLista(){
+  const alvo = document.getElementById('lancLista');
+  if(alvo) alvo.innerHTML = tabelaLancamentos(lancamentosFiltrados());
+}
+
+function tabelaLancamentos(lista){
+  if(!lista.length){
+    return `<div class="empty">Nada aqui${lancBusca?' com esse texto':''}.
+      ${lancPeriodo==='aberto'?'<br><span style="font-size:12px;">Você está vendo só o que está em aberto — troque para "Tudo" para ver o que já foi quitado.</span>':''}</div>`;
+  }
+  const ehTransf = lancAba === 'transferencias';
+  return `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>Vencimento</th><th>Descrição</th>
+      <th>${ehTransf?'De → Para':'Categoria'}</th>
+      <th>Empresa</th><th>Obra</th>
+      <th class="num">Valor</th><th class="num">Em aberto</th><th>Situação</th><th></th>
+    </tr></thead>
+    <tbody>${lista.map(l=>{
+      const st = statusLanc(l);
+      const venc = estaVencido(l);
+      return `<tr class="rowlink" onclick="openLancDetalhe('${l.id}')" title="Clique para ver o lançamento">
+        <td style="white-space:nowrap;${venc?'color:var(--vermelho);font-weight:700;':''}">
+          ${l.vencimento?fmtDate(l.vencimento):'—'}</td>
+        <td><b>${esc(l.descricao||'—')}</b>
+          ${l.natureza==='particular'?' <span class="badge badge-purple">particular</span>':''}
+          ${l.origem==='rh'?' <span class="badge badge-blue">do RH</span>':''}
+          ${l.recorrenteId?' <span class="badge badge-gray">todo mês</span>':''}
+          ${l.pagoNaContaDe?`<br><span style="font-size:10.5px;color:#9aa0ab;">pago na conta de ${esc(l.pagoNaContaDe)}</span>`:''}</td>
+        <td>${ehTransf
+              ? esc(contaNome(l.contaId)) + ' → ' + esc(contaNome(l.contaDestinoId))
+              : esc(l.categoriaId?categoriaNome(l.categoriaId):'—')}</td>
+        <td>${esc(empresaFinNome(l.empresaId))}</td>
+        <td>${l.obraId?esc(obraNome(l.obraId)):'—'}</td>
+        <td class="num">${fmtMoney(l.valor)}</td>
+        <td class="num" style="font-weight:700;">${st==='quitado'?'—':fmtMoney(saldoAberto(l))}</td>
+        <td>${badgeStatus(l)}</td>
+        <td style="white-space:nowrap;" onclick="event.stopPropagation()">
+          ${st!=='quitado'?`<button class="btn btn-primary btn-sm" onclick="openBaixaModal('${l.id}')">Dar baixa</button>`:''}
+          <button class="btn btn-secondary btn-sm" onclick="${l.tipo==='transferencia'?`openTransferenciaModal('${l.id}')`:`openLancModal('${l.id}')`}">Editar</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteLancamento('${l.id}')">Excluir</button>
+        </td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+
+/* ---------------- LANÇAMENTO: RECEITA E DESPESA ---------------- */
+
+function openLancModal(id, tipoPadrao){
+  const l = id ? DB.lancamentos.find(x=>x.id===id) : null;
+  const tipo = l ? l.tipo : (tipoPadrao || 'despesa');
+  const cats = categoriasDe(tipo === 'receita' ? 'receita' : 'despesa');
+  const temBaixa = l && (l.baixas||[]).length > 0;
+
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${l ? 'Editar lançamento' : (tipo==='receita' ? 'Nova conta a receber' : 'Nova conta a pagar')}</h2>
+
+    <div class="grid grid-4">
+      <div class="field"><label>Tipo</label>
+        <select id="l_tipo" onchange="trocaTipoLanc(this.value)">
+          <option value="despesa" ${tipo==='despesa'?'selected':''}>Despesa (a pagar)</option>
+          <option value="receita" ${tipo==='receita'?'selected':''}>Receita (a receber)</option>
+        </select>
+      </div>
+      <div class="field"><label>Empresa *</label>
+        <select id="l_empresa">
+          <option value="">— escolha —</option>
+          ${DB.empresas.map(e=>`<option value="${e.id}" ${l&&l.empresaId===e.id?'selected':''}>${esc(e.apelido||e.nome)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Vencimento *</label>
+        <input type="date" id="l_venc" value="${l?(l.vencimento||''):todayISO()}"></div>
+      <div class="field"><label>Valor (R$) *</label>
+        <input type="number" step="0.01" id="l_valor" value="${l?l.valor:''}"></div>
+    </div>
+
+    <div class="field"><label>Descrição *</label>
+      <input id="l_desc" value="${l?esc(l.descricao||''):''}" placeholder="o que é este pagamento"></div>
+
+    <div class="grid grid-4">
+      <div class="field"><label>Categoria</label>
+        <select id="l_categoria">
+          <option value="">— sem categoria —</option>
+          ${cats.map(ct=>`<option value="${ct.id}" ${l&&l.categoriaId===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Obra (opcional)</label>
+        <select id="l_obra">${opcoesObra(l?l.obraId:'')}</select></div>
+      <div class="field"><label>Conta prevista</label>
+        <select id="l_conta">
+          <option value="">— escolha na baixa —</option>
+          ${DB.contas.map(ct=>`<option value="${ct.id}" ${l&&l.contaId===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Natureza</label>
+        <select id="l_natureza" onchange="trocaNaturezaLanc(this.value)">
+          <option value="operacao"   ${!l||l.natureza!=='particular'?'selected':''}>Operação (entra no resultado)</option>
+          <option value="particular" ${l&&l.natureza==='particular'?'selected':''}>Particular (fora do resultado)</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="l_blocoParticular" style="display:${l&&l.natureza==='particular'?'block':'none'};">
+      <div class="grid grid-2">
+        <div class="field"><label>De quem é esse dinheiro (sócio / pessoa)</label>
+          <input id="l_socio" list="l_socios" value="${l?esc(l.socio||''):''}" placeholder="nome de quem retirou ou recebeu">
+          <datalist id="l_socios">${sociosJaUsados().map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
+        </div>
+        <div class="field"><label>&nbsp;</label>
+          <p class="help" style="margin:0;">Dinheiro particular <b>aparece no caixa</b>, porque saiu mesmo da
+          conta, e <b>fica fora do resultado</b> da operação. Preenchendo o nome, ele também entra
+          na conta-corrente do sócio, no Fluxo de Caixa.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="field"><label>Pago na conta de (opcional)</label>
+        <input id="l_pagoNaContaDe" value="${l?esc(l.pagoNaContaDe||''):''}" placeholder="quando o dinheiro vai para a conta de outra pessoa">
+        <p class="help" style="margin-bottom:0;">Acontece de verdade — já houve funcionário recebendo na conta da esposa.
+        Registrar aqui é o que evita achar que o pagamento não foi feito.</p>
+      </div>
+      <div class="field"><label>Observação</label>
+        <input id="l_obs" value="${l?esc(l.obs||''):''}"></div>
+    </div>
+
+    ${temBaixa ? `<p class="help" style="padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
+      Este lançamento já tem ${l.baixas.length} baixa(s), somando ${fmtMoney(valorBaixado(l))}.
+      <b>Mudar o valor muda o saldo em aberto</b>, não as baixas já feitas.</p>` : ''}
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      ${!l ? `<button class="btn btn-secondary" onclick="saveLanc('', true)">Salvar e já dar baixa</button>` : ''}
+      <button class="btn btn-primary" onclick="saveLanc('${id||''}')">Salvar</button>
+    </div>
+  `, true);
+}
+
+/* troca a lista de categorias ao trocar receita/despesa, sem redesenhar o modal
+   (redesenhar perderia o que já foi digitado) */
+function trocaTipoLanc(tipo){
+  const sel = document.getElementById('l_categoria');
+  if(!sel) return;
+  const cats = categoriasDe(tipo === 'receita' ? 'receita' : 'despesa');
+  sel.innerHTML = '<option value="">— sem categoria —</option>'
+    + cats.map(ct=>`<option value="${ct.id}">${esc(ct.nome)}</option>`).join('');
+}
+function trocaNaturezaLanc(nat){
+  const bloco = document.getElementById('l_blocoParticular');
+  if(bloco) bloco.style.display = (nat === 'particular') ? 'block' : 'none';
+}
+function sociosJaUsados(){
+  const set = {};
+  DB.lancamentos.forEach(l=>{ if(l.socio) set[l.socio] = true; });
+  return Object.keys(set).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+}
+
+function saveLanc(id, irParaBaixa){
+  const desc  = val('l_desc').trim();
+  const valor = numVal('l_valor');
+  const emp   = val('l_empresa');
+  const venc  = val('l_venc');
+  if(!desc){  toast('Escreva a descrição.'); return; }
+  if(!emp){   toast('Escolha a empresa.'); return; }
+  if(!venc){  toast('Informe o vencimento.'); return; }
+  if(valor <= 0){ toast('O valor precisa ser maior que zero.'); return; }
+
+  const natureza = val('l_natureza');
+  const dados = {
+    tipo: val('l_tipo'), empresaId: emp, vencimento: venc, valor,
+    descricao: desc, categoriaId: val('l_categoria'), obraId: val('l_obra'),
+    contaId: val('l_conta'), natureza,
+    socio: natureza === 'particular' ? val('l_socio').trim() : '',
+    pagoNaContaDe: val('l_pagoNaContaDe').trim(), obs: val('l_obs').trim()
+  };
+
+  let alvo;
+  if(id){
+    alvo = DB.lancamentos.find(x=>x.id===id);
+    Object.assign(alvo, dados);
+  }else{
+    alvo = Object.assign({id: uid(), baixas: [], origem: 'manual'}, dados);
+    DB.lancamentos.push(alvo);
+  }
+  saveDB(); closeModal(); render();
+  if(irParaBaixa){ openBaixaModal(alvo.id); }
+  else { toast('Lançamento salvo.'); }
+}
+
+function deleteLancamento(id){
+  const l = DB.lancamentos.find(x=>x.id===id);
+  if(!l) return;
+  const aviso = (l.baixas||[]).length
+    ? '\n\nATENÇÃO: ele tem ' + l.baixas.length + ' baixa(s) — excluir MEXE NO SALDO das contas.'
+    : '';
+  if(!confirm('Excluir "' + (l.descricao||'') + '"?' + aviso)) return;
+  DB.lancamentos = DB.lancamentos.filter(x=>x.id!==id);
+  saveDB(); render(); toast('Lançamento excluído.');
+}
+
+/* ---------------- DETALHE ---------------- */
+
+function openLancDetalhe(id){
+  const l = DB.lancamentos.find(x=>x.id===id);
+  if(!l) return;
+  const baixas = (l.baixas||[]).slice().sort((a,b)=>a.data.localeCompare(b.data));
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${esc(l.descricao||'Lançamento')}</h2>
+    <div class="grid grid-4" style="margin-bottom:14px;">
+      <div class="kpi"><div class="v">${fmtMoney(l.valor)}</div><div class="l">Valor previsto</div></div>
+      <div class="kpi"><div class="v" style="color:var(--verde);">${fmtMoney(valorBaixado(l))}</div><div class="l">Já ${l.tipo==='receita'?'recebido':'pago'}</div></div>
+      <div class="kpi"><div class="v" style="color:${saldoAberto(l)>0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(Math.max(0,saldoAberto(l)))}</div><div class="l">Em aberto</div></div>
+      <div class="kpi"><div class="v" style="font-size:15px;">${badgeStatus(l)}</div><div class="l">Situação${l.vencimento?' · vence '+fmtDate(l.vencimento):''}</div></div>
+    </div>
+
+    <div class="table-wrap"><table>
+      <tbody>
+        <tr><th style="width:34%;">Tipo</th><td>${TIPO_LANC_LABEL[l.tipo]||'—'}</td></tr>
+        <tr><th>Empresa</th><td>${esc(empresaFinNome(l.empresaId))}</td></tr>
+        ${l.tipo==='transferencia'
+          ? `<tr><th>De → Para</th><td>${esc(contaNome(l.contaId))} → ${esc(contaNome(l.contaDestinoId))}${
+               l.empresaDestinoId&&l.empresaDestinoId!==l.empresaId?` <span class="badge badge-yellow">entre empresas</span>`:''}</td></tr>`
+          : `<tr><th>Categoria</th><td>${esc(l.categoriaId?categoriaNome(l.categoriaId):'—')}</td></tr>
+             <tr><th>Conta prevista</th><td>${esc(l.contaId?contaNome(l.contaId):'— escolhida na baixa —')}</td></tr>`}
+        <tr><th>Obra</th><td>${l.obraId?esc(obraNome(l.obraId)):'—'}</td></tr>
+        <tr><th>Natureza</th><td>${NATUREZA_LABEL[l.natureza]||'Operação'}${
+            l.natureza==='particular'?' <span class="help" style="display:inline;">(fica fora do resultado)</span>':''}${
+            l.socio?` · ${esc(l.socio)}`:''}</td></tr>
+        ${l.pagoNaContaDe?`<tr><th>Pago na conta de</th><td>${esc(l.pagoNaContaDe)}</td></tr>`:''}
+        ${l.obs?`<tr><th>Observação</th><td>${esc(l.obs)}</td></tr>`:''}
+      </tbody>
+    </table></div>
+
+    <h2 style="font-size:14px;margin:18px 0 8px;">Baixas</h2>
+    <div class="table-wrap">
+      ${baixas.length ? `<table>
+        <thead><tr><th>Data</th><th>Conta</th><th class="num">Valor</th><th></th></tr></thead>
+        <tbody>${baixas.map(b=>`<tr>
+          <td>${fmtDate(b.data)}</td>
+          <td>${esc(contaNome(l.tipo==='transferencia' ? l.contaId : contaDaBaixa(l,b)))}</td>
+          <td class="num">${fmtMoney(b.valor)}</td>
+          <td><button class="btn btn-danger btn-sm" onclick="estornarBaixa('${l.id}','${b.id}')">Estornar</button></td>
+        </tr>`).join('')}</tbody></table>`
+      : '<div class="empty">Nenhuma baixa ainda — o dinheiro não andou.</div>'}
+    </div>
+
+    <div class="modal-actions">
+      ${statusLanc(l)!=='quitado'?`<button class="btn btn-primary" onclick="openBaixaModal('${l.id}')">Dar baixa</button>`:''}
+      <button class="btn btn-secondary" onclick="closeModal()">Fechar</button>
+    </div>
+  `, true);
+}
+
+/* ---------------- BAIXA ---------------- */
+
+function openBaixaModal(id){
+  const l = DB.lancamentos.find(x=>x.id===id);
+  if(!l) return;
+  const resta = saldoAberto(l);
+  const ehTransf = l.tipo === 'transferencia';
+
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${ehTransf ? 'Confirmar transferência' : (l.tipo==='receita' ? 'Registrar recebimento' : 'Registrar pagamento')}</h2>
+    <p class="help" style="margin-top:0;">
+      <b>${esc(l.descricao||'')}</b> · previsto ${fmtMoney(l.valor)}${
+      valorBaixado(l) ? ` · já ${l.tipo==='receita'?'recebido':'pago'} ${fmtMoney(valorBaixado(l))}` : ''}
+    </p>
+    <div class="grid grid-3">
+      <div class="field"><label>Data em que o dinheiro andou *</label>
+        <input type="date" id="b_data" value="${todayISO()}"></div>
+      <div class="field"><label>Valor (R$) *</label>
+        <input type="number" step="0.01" id="b_valor" value="${resta}"></div>
+      ${ehTransf
+        ? `<div class="field"><label>Contas</label>
+             <input value="${esc(contaNome(l.contaId))} → ${esc(contaNome(l.contaDestinoId))}" disabled></div>`
+        : `<div class="field"><label>Entrou / saiu de qual conta *</label>
+             <select id="b_conta">
+               <option value="">— escolha —</option>
+               ${DB.contas.map(ct=>`<option value="${ct.id}" ${l.contaId===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('')}
+             </select>
+           </div>`}
+    </div>
+    <p class="help">
+      <b>Pagou menos do que o previsto?</b> Ponha o valor que realmente andou. O resto
+      continua em aberto e some da lista só quando for quitado — foi assim que uma dívida de
+      R$ 117 mil passou despercebida numa planilha que só sabia dizer "pago" ou "não pago".
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarBaixa('${id}')">Confirmar</button>
+    </div>
+  `);
+}
+
+function confirmarBaixa(id){
+  const l = DB.lancamentos.find(x=>x.id===id);
+  if(!l) return;
+  const data  = val('b_data');
+  const valor = numVal('b_valor');
+  const ehTransf = l.tipo === 'transferencia';
+  const contaId  = ehTransf ? l.contaId : val('b_conta');
+
+  if(!data){ toast('Informe a data.'); return; }
+  if(valor <= 0){ toast('O valor precisa ser maior que zero.'); return; }
+  if(!contaId){ toast('Escolha a conta.'); return; }
+  if(valor > saldoAberto(l) + 0.005){
+    if(!confirm('O valor é MAIOR que o que falta (' + fmtMoney(saldoAberto(l)) + ').\n\n'
+      + 'Isso vai deixar o lançamento pago a mais. Confirma mesmo assim?')) return;
+  }
+
+  l.baixas = l.baixas || [];
+  l.baixas.push({id: uid(), data, valor, contaId});
+  saveDB(); closeModal(); render();
+  toast(statusLanc(l)==='quitado' ? 'Quitado.' : 'Baixa parcial registrada — resta ' + fmtMoney(saldoAberto(l)) + '.');
+}
+
+function estornarBaixa(lancId, baixaId){
+  const l = DB.lancamentos.find(x=>x.id===lancId);
+  if(!l) return;
+  if(!confirm('Estornar esta baixa? O valor volta para o saldo em aberto e sai do saldo da conta.')) return;
+  l.baixas = (l.baixas||[]).filter(b=>b.id!==baixaId);
+  saveDB(); closeModal(); render(); toast('Baixa estornada.');
+}
+
+/* ---------------- TRANSFERÊNCIA ----------------
+   Some do caixa de uma conta e aparece no de outra. NÃO é receita nem despesa:
+   se a transferência da empresa que recebe do cliente para a que paga a folha
+   entrasse como receita, o faturamento consolidado contaria o mesmo dinheiro
+   duas vezes — uma na nota ao cliente e outra aqui. */
+
+function openTransferenciaModal(id){
+  const l = id ? DB.lancamentos.find(x=>x.id===id) : null;
+  const opcoesConta = (sel) => DB.contas.map(ct=>
+    `<option value="${ct.id}" ${sel===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('');
+
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${l ? 'Editar transferência' : 'Transferência entre contas'}</h2>
+    <div class="grid grid-2">
+      <div class="field"><label>Sai da conta *</label>
+        <select id="t_origem"><option value="">— escolha —</option>${opcoesConta(l?l.contaId:'')}</select></div>
+      <div class="field"><label>Entra na conta *</label>
+        <select id="t_destino"><option value="">— escolha —</option>${opcoesConta(l?l.contaDestinoId:'')}</select></div>
+    </div>
+    <div class="grid grid-3">
+      <div class="field"><label>Data *</label>
+        <input type="date" id="t_data" value="${l?(l.vencimento||todayISO()):todayISO()}"></div>
+      <div class="field"><label>Valor (R$) *</label>
+        <input type="number" step="0.01" id="t_valor" value="${l?l.valor:''}"></div>
+      <div class="field"><label>Descrição</label>
+        <input id="t_desc" value="${l?esc(l.descricao||''):'Transferência'}"></div>
+    </div>
+    ${!l ? `<label class="check"><input type="checkbox" id="t_jaFoi" checked> O dinheiro já andou (dar baixa agora)</label>` : ''}
+    <p class="help">
+      Transferência <b>não é receita nem despesa</b> — some de um caixa e aparece no outro,
+      e não entra em resultado nenhum. É assim que o repasse de uma empresa do grupo para a
+      outra tem que ser lançado: se entrasse como receita, o faturamento consolidado
+      contaria o mesmo dinheiro duas vezes.
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveTransferencia('${id||''}')">Salvar</button>
+    </div>
+  `);
+}
+
+function saveTransferencia(id){
+  const origem  = val('t_origem'), destino = val('t_destino');
+  const valor   = numVal('t_valor'), data = val('t_data');
+  if(!origem || !destino){ toast('Escolha as duas contas.'); return; }
+  if(origem === destino){ toast('As contas de origem e destino são a mesma.'); return; }
+  if(valor <= 0){ toast('O valor precisa ser maior que zero.'); return; }
+  if(!data){ toast('Informe a data.'); return; }
+
+  const cO = conta(origem), cD = conta(destino);
+  const dados = {
+    tipo: 'transferencia', natureza: 'operacao',
+    empresaId: cO.empresaId, empresaDestinoId: cD.empresaId,
+    contaId: origem, contaDestinoId: destino,
+    vencimento: data, valor, descricao: val('t_desc').trim() || 'Transferência',
+    categoriaId: '', obraId: ''
+  };
+
+  if(id){
+    Object.assign(DB.lancamentos.find(x=>x.id===id), dados);
+  }else{
+    const novo = Object.assign({id: uid(), baixas: [], origem: 'manual'}, dados);
+    if(checked('t_jaFoi')) novo.baixas.push({id: uid(), data, valor, contaId: origem});
+    DB.lancamentos.push(novo);
+  }
+  saveDB(); closeModal(); render(); toast('Transferência salva.');
+}
+
+/* ---------------- RECORRENTES (todo mês) ----------------
+   Guia de imposto, contabilidade, aluguel, pró-labore: caem toda hora e são
+   exatamente as que se esquece. Aqui fica o MOLDE; os lançamentos do mês são
+   gerados por botão, não sozinhos ao abrir o app — geração automática nos dois
+   computadores criaria a mesma conta duas vezes. */
+
+function telaRecorrentes(){
+  const ym = currentYM();
+  const pendentes = recorrentesPendentes(ym);
+  return `
+    <div class="tabs">
+      <button class="tab" onclick="lancAba='pagar'; render();">A Pagar</button>
+      <button class="tab" onclick="lancAba='receber'; render();">A Receber</button>
+      <button class="tab" onclick="lancAba='transferencias'; render();">Transferências</button>
+      <button class="tab active">Todo mês</button>
+    </div>
+
+    <div class="card">
+      <div class="section-title">
+        <h2 style="margin:0;">Contas que se repetem todo mês</h2>
+        <button class="btn btn-primary" onclick="openRecorrenteModal()">+ Nova conta mensal</button>
+      </div>
+      <div class="table-wrap">
+        ${DB.recorrentes.length ? `<table>
+          <thead><tr><th>Descrição</th><th>Empresa</th><th>Categoria</th><th class="num">Valor</th><th class="num">Dia</th><th>Vigência</th><th>Situação</th><th></th></tr></thead>
+          <tbody>${DB.recorrentes.map(r=>`<tr>
+            <td><b>${esc(r.descricao||'—')}</b> <span class="badge ${r.tipo==='receita'?'badge-green':'badge-gray'}">${r.tipo==='receita'?'a receber':'a pagar'}</span>
+                ${r.natureza==='particular'?' <span class="badge badge-purple">particular</span>':''}</td>
+            <td>${esc(empresaFinNome(r.empresaId))}</td>
+            <td>${esc(r.categoriaId?categoriaNome(r.categoriaId):'—')}</td>
+            <td class="num">${fmtMoney(r.valor)}</td>
+            <td class="num">${r.diaVencimento||1}</td>
+            <td>${r.inicio?fmtDate(r.inicio):'—'}${r.fim?' até '+fmtDate(r.fim):''}</td>
+            <td>${r.ativo===false?'<span class="badge badge-gray">Parada</span>':'<span class="badge badge-green">Ativa</span>'}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn btn-secondary btn-sm" onclick="openRecorrenteModal('${r.id}')">Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteRecorrente('${r.id}')">Excluir</button>
+            </td>
+          </tr>`).join('')}</tbody></table>`
+        : `<div class="empty">Nenhuma ainda. Guia de imposto, contabilidade, aluguel, pró-labore —
+            cadastre uma vez e não precisa lembrar todo mês.</div>`}
+      </div>
+    </div>
+
+    ${DB.recorrentes.length ? `
+    <div class="card">
+      <h2 style="margin-top:0;">Gerar os lançamentos de ${monthLabel(ym)}</h2>
+      ${pendentes.length
+        ? `<p class="help" style="margin-top:0;">${pendentes.length} conta(s) deste mês ainda não foram geradas:
+             ${pendentes.map(r=>esc(r.descricao)).join(' · ')}.</p>
+           <button class="btn btn-primary" onclick="gerarRecorrentes('${ym}')">Gerar ${pendentes.length} lançamento(s)</button>`
+        : `<p class="help" style="margin-top:0;color:var(--verde);"><b>Tudo em dia.</b> As contas mensais de ${monthLabel(ym)} já foram geradas.</p>`}
+      <p class="help">
+        A geração é <b>por botão, de propósito</b>: se o app gerasse sozinho ao abrir, os dois
+        computadores criariam a mesma conta duas vezes. Gerar de novo o mesmo mês não duplica —
+        o sistema reconhece o que já existe.
+      </p>
+    </div>` : ''}
+  `;
+}
+
+function recorrenteVigenteEm(r, ym){
+  if(r.ativo === false) return false;
+  if(r.inicio && ym < r.inicio.slice(0,7)) return false;
+  if(r.fim    && ym > r.fim.slice(0,7))    return false;
+  return true;
+}
+function recorrentesPendentes(ym){
+  return DB.recorrentes.filter(r=>{
+    if(!recorrenteVigenteEm(r, ym)) return false;
+    return !DB.lancamentos.some(l=>l.recorrenteId===r.id && l.competencia===ym);
+  });
+}
+
+function gerarRecorrentes(ym){
+  const pend = recorrentesPendentes(ym);
+  if(!pend.length){ toast('Nada a gerar.'); return; }
+  const [ano, mes] = ym.split('-').map(Number);
+  const ultimo = daysInMonth(ano, mes);
+  pend.forEach(r=>{
+    /* dia 31 em mês de 30 cai no último dia, não vaza para o mês seguinte */
+    const dia = Math.min(Math.max(1, r.diaVencimento||1), ultimo);
+    DB.lancamentos.push({
+      id: uid(), recorrenteId: r.id, competencia: ym, origem: 'manual', baixas: [],
+      tipo: r.tipo, empresaId: r.empresaId, natureza: r.natureza || 'operacao',
+      descricao: r.descricao, categoriaId: r.categoriaId, obraId: r.obraId || '',
+      contaId: r.contaId || '', valor: r.valor,
+      vencimento: `${ym}-${String(dia).padStart(2,'0')}`,
+      socio: r.socio || '', pagoNaContaDe: '', obs: ''
+    });
+  });
+  saveDB(); render(); toast(pend.length + ' lançamento(s) gerados para ' + monthLabel(ym) + '.');
+}
+
+function openRecorrenteModal(id){
+  const r = id ? DB.recorrentes.find(x=>x.id===id) : null;
+  const tipo = r ? r.tipo : 'despesa';
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${r ? 'Editar conta mensal' : 'Nova conta que se repete todo mês'}</h2>
+    <div class="grid grid-4">
+      <div class="field"><label>Tipo</label>
+        <select id="r_tipo" onchange="trocaTipoRecorrente(this.value)">
+          <option value="despesa" ${tipo==='despesa'?'selected':''}>Despesa (a pagar)</option>
+          <option value="receita" ${tipo==='receita'?'selected':''}>Receita (a receber)</option>
+        </select></div>
+      <div class="field"><label>Empresa *</label>
+        <select id="r_empresa"><option value="">— escolha —</option>
+          ${DB.empresas.map(e=>`<option value="${e.id}" ${r&&r.empresaId===e.id?'selected':''}>${esc(e.apelido||e.nome)}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Valor (R$) *</label>
+        <input type="number" step="0.01" id="r_valor" value="${r?r.valor:''}"></div>
+      <div class="field"><label>Vence todo dia *</label>
+        <input type="number" min="1" max="31" id="r_dia" value="${r?(r.diaVencimento||1):5}"></div>
+    </div>
+    <div class="field"><label>Descrição *</label>
+      <input id="r_desc" value="${r?esc(r.descricao||''):''}"></div>
+    <div class="grid grid-4">
+      <div class="field"><label>Categoria</label>
+        <select id="r_categoria"><option value="">— sem categoria —</option>
+          ${categoriasDe(tipo==='receita'?'receita':'despesa').map(ct=>
+            `<option value="${ct.id}" ${r&&r.categoriaId===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Conta prevista</label>
+        <select id="r_conta"><option value="">— escolha na baixa —</option>
+          ${DB.contas.map(ct=>`<option value="${ct.id}" ${r&&r.contaId===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Começa em</label>
+        <input type="date" id="r_inicio" value="${r?(r.inicio||''):todayISO()}"></div>
+      <div class="field"><label>Termina em (opcional)</label>
+        <input type="date" id="r_fim" value="${r?(r.fim||''):''}"></div>
+    </div>
+    <div class="grid grid-2">
+      <div class="field"><label>Natureza</label>
+        <select id="r_natureza">
+          <option value="operacao"   ${!r||r.natureza!=='particular'?'selected':''}>Operação (entra no resultado)</option>
+          <option value="particular" ${r&&r.natureza==='particular'?'selected':''}>Particular (fora do resultado)</option>
+        </select></div>
+      <div class="field"><label>&nbsp;</label>
+        <label class="check" style="margin-top:8px;"><input type="checkbox" id="r_ativo" ${!r||r.ativo!==false?'checked':''}> Ativa</label></div>
+    </div>
+    <p class="help">
+      <b>Pró-labore é despesa da operação</b>, mesmo quando quem paga é a conta de outra
+      empresa do grupo — é custo do trabalho, não retirada. Lançar como retirada de sócio
+      erra o resultado e a conta-corrente ao mesmo tempo.
+      <b>O encargo de pró-labore é diferente do de salário</b> (não tem FGTS, o INSS é
+      outro): confirme com a contabilidade.
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveRecorrente('${id||''}')">Salvar</button>
+    </div>
+  `, true);
+}
+
+function trocaTipoRecorrente(tipo){
+  const sel = document.getElementById('r_categoria');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">— sem categoria —</option>'
+    + categoriasDe(tipo==='receita'?'receita':'despesa').map(ct=>`<option value="${ct.id}">${esc(ct.nome)}</option>`).join('');
+}
+
+function saveRecorrente(id){
+  const desc = val('r_desc').trim();
+  const emp  = val('r_empresa');
+  const valor= numVal('r_valor');
+  const dia  = parseInt(val('r_dia'), 10);
+  if(!desc){ toast('Escreva a descrição.'); return; }
+  if(!emp){  toast('Escolha a empresa.'); return; }
+  if(valor <= 0){ toast('O valor precisa ser maior que zero.'); return; }
+  if(!(dia >= 1 && dia <= 31)){ toast('O dia do vencimento vai de 1 a 31.'); return; }
+
+  const dados = {
+    tipo: val('r_tipo'), empresaId: emp, descricao: desc, valor, diaVencimento: dia,
+    categoriaId: val('r_categoria'), contaId: val('r_conta'), obraId: '',
+    inicio: val('r_inicio'), fim: val('r_fim'),
+    natureza: val('r_natureza'), ativo: checked('r_ativo')
+  };
+  if(id){ Object.assign(DB.recorrentes.find(x=>x.id===id), dados); }
+  else  { DB.recorrentes.push(Object.assign({id: uid()}, dados)); }
+  saveDB(); closeModal(); render(); toast('Conta mensal salva.');
+}
+
+function deleteRecorrente(id){
+  const gerados = DB.lancamentos.filter(l=>l.recorrenteId===id).length;
+  const aviso = gerados
+    ? '\n\nOs ' + gerados + ' lançamento(s) já gerados por ela CONTINUAM existindo — só para de gerar novos.'
+    : '';
+  if(!confirm('Excluir esta conta mensal?' + aviso)) return;
+  DB.recorrentes = DB.recorrentes.filter(r=>r.id!==id);
+  saveDB(); render(); toast('Conta mensal excluída.');
+}
+/* =========================================================
+   FINANCEIRO — Fluxo de Caixa, Resultado e Conta-corrente de sócio
+
+   Três perguntas, três blocos:
+
+   1. "Dá para pagar a folha da sexta?" — a projeção, que soma o que está
+      previsto ao saldo de hoje e AVISA o dia em que o saldo fica negativo.
+      Em 2026 a conta passou 37 dias no vermelho tendo lucro: o problema não
+      era margem, era descasamento de prazo. É exatamente isso que a projeção
+      pega antes de acontecer.
+
+   2. "A operação deu lucro?" — o resultado, que soma SÓ o que é da operação.
+      Transferência entre empresas do grupo e dinheiro particular ficam fora,
+      senão o número dobra ou vira ficção.
+
+   3. "Quanto a empresa deve ao sócio, ou ele a ela?" — a conta-corrente.
+      Esse registro não existia em lugar nenhum, e por isso a apuração de 2026
+      errou o SINAL: dizia que a empresa devia R$ 34.675 ao sócio quando era
+      ele quem devia. Aqui o saldo é dito por extenso, não só com sinal.
+   ========================================================= */
+
+let fluxoEmpresa = '';
+let fluxoDias    = 60;
+let fluxoMes     = '';
+let fluxoRegime  = 'caixa';   /* caixa (pela baixa) | competencia (pelo vencimento) */
+
+function initFluxo(){ if(!fluxoMes) fluxoMes = currentYM(); }
+
+function renderFluxo(){
+  initFluxo();
+  const c = document.getElementById('content');
+  if(!financeiroPronto()){ c.innerHTML = avisoPrimeiroUso(); return; }
+  c.innerHTML = blocoProjecao() + blocoResultado() + blocoPorObra() + blocoContaCorrente();
+}
+
+/* =========================================================
+   1. PROJEÇÃO
+   ========================================================= */
+
+/* Quanto este lançamento mexe no caixa do recorte escolhido.
+   Transferência entre contas da MESMA empresa não muda o saldo dela; entre
+   empresas diferentes, muda o das duas — e no consolidado se anula. */
+function efeitoNoCaixa(l, empresaId, valor){
+  if(l.tipo === 'transferencia'){
+    if(!empresaId) return 0;                       /* consolidado: entra e sai */
+    let v = 0;
+    if(l.empresaId === empresaId)        v -= valor;
+    if(l.empresaDestinoId === empresaId) v += valor;
+    return v;
+  }
+  if(empresaId && l.empresaId !== empresaId) return 0;
+  return l.tipo === 'receita' ? valor : -valor;
+}
+
+function projecao(empresaId, dias){
+  const hoje = todayISO();
+  const fim  = addDays(hoje, dias);
+  const abertos = DB.lancamentos.filter(l=>statusLanc(l) !== 'quitado');
+
+  /* O que já venceu é tratado de dois jeitos DIFERENTES, e a assimetria é de
+     propósito:
+
+     - CONTA VENCIDA A PAGAR entra na partida. O dinheiro está para sair a
+       qualquer momento; deixar de fora esconde um aperto que já existe.
+     - RECEBIMENTO VENCIDO NÃO entra. Cliente atrasado não é dinheiro em
+       caixa. Somar o que ele deve como se já tivesse chegado é o mesmo erro
+       que deixou passar R$ 117 mil de medição paga a menor em 2025, e
+       transformaria este aviso num otimista que nunca acusa nada.
+
+     Um alarme de saldo tem que errar para o lado pessimista: se tocar à toa
+     não custa nada, se deixar de tocar custa a folha da sexta. */
+  let atrasadoSaida = 0, atrasadoEntrada = 0;
+  const porDia = {};
+  abertos.forEach(l=>{
+    const v = efeitoNoCaixa(l, empresaId, saldoAberto(l));
+    if(!v) return;
+    const venc = l.vencimento || hoje;
+    if(venc < hoje){
+      if(v < 0) atrasadoSaida += v; else atrasadoEntrada += v;
+      return;
+    }
+    if(venc > fim) return;
+    porDia[venc] = (porDia[venc] || 0) + v;
+  });
+
+  const saldoHoje    = empresaId ? saldoEmpresa(empresaId, hoje) : saldoGeral(hoje);
+  const saldoPartida = Math.round((saldoHoje + atrasadoSaida) * 100) / 100;
+
+  let saldo = saldoPartida;
+  const linhas = [];
+  let menor = {saldo, data: hoje};
+
+  Object.keys(porDia).sort().forEach(d=>{
+    saldo = Math.round((saldo + porDia[d]) * 100) / 100;
+    linhas.push({data: d, mov: porDia[d], saldo});
+    if(saldo < menor.saldo) menor = {saldo, data: d};
+  });
+
+  return {
+    atrasadoSaida, atrasadoEntrada,
+    saldoHoje, saldoPartida,
+    linhas, saldoFinal: saldo, menor,
+    primeiroNegativo: linhas.find(x=>x.saldo < 0) || null
+  };
+}
+
+function blocoProjecao(){
+  const p = projecao(fluxoEmpresa, fluxoDias);
+
+  return `
+  <div class="card">
+    <div class="section-title">
+      <h2 style="margin:0;">Projeção — próximos ${fluxoDias} dias</h2>
+      <span>
+        <select onchange="fluxoEmpresa=this.value; render();" style="max-width:220px;display:inline-block;">
+          <option value="">Consolidado (todas)</option>
+          ${DB.empresas.map(e=>`<option value="${e.id}" ${fluxoEmpresa===e.id?'selected':''}>${esc(e.apelido||e.nome)}</option>`).join('')}
+        </select>
+        <select onchange="fluxoDias=parseInt(this.value,10); render();" style="max-width:130px;display:inline-block;">
+          ${[15,30,60,90].map(d=>`<option value="${d}" ${fluxoDias===d?'selected':''}>${d} dias</option>`).join('')}
+        </select>
+      </span>
+    </div>
+
+    ${p.primeiroNegativo ? `
+      <div style="margin:0 0 14px;padding:12px 14px;background:#fdecea;border-radius:8px;color:#8e2c20;border-left:4px solid var(--vermelho);">
+        <div style="font-weight:700;font-size:13.5px;margin-bottom:3px;">
+          O saldo fica negativo em ${fmtDate(p.primeiroNegativo.data)} — ${fmtMoney(p.primeiroNegativo.saldo)}
+        </div>
+        <div class="help" style="color:#8e2c20;margin:0;">
+          Falta ${fmtMoney(Math.abs(p.menor.saldo))} no pior dia (${fmtDate(p.menor.data)}).
+          Dá tempo de antecipar um recebimento ou remarcar um pagamento.
+        </div>
+      </div>`
+    : `<p class="help" style="margin:0 0 14px;padding:9px 12px;background:#eef8f1;border-radius:8px;color:#1f6b3e;">
+        <b>Sem aperto à vista.</b> O saldo não fica negativo nos próximos ${fluxoDias} dias
+        pelo que está lançado. Menor saldo: ${fmtMoney(p.menor.saldo)} em ${fmtDate(p.menor.data)}.
+      </p>`}
+
+    <div class="grid grid-4" style="margin-bottom:14px;">
+      <div class="kpi"><div class="v" style="color:${p.saldoHoje<0?'var(--vermelho)':'var(--azul-esc)'};">${fmtMoney(p.saldoHoje)}</div><div class="l">Saldo de hoje</div></div>
+      <div class="kpi"><div class="v" style="color:${p.atrasadoSaida?'var(--vermelho)':'inherit'};">${fmtMoney(Math.abs(p.atrasadoSaida))}</div><div class="l">Vencido e ainda não pago</div></div>
+      <div class="kpi"><div class="v" style="color:${p.menor.saldo<0?'var(--vermelho)':'inherit'};">${fmtMoney(p.menor.saldo)}</div><div class="l">Pior saldo do período</div></div>
+      <div class="kpi"><div class="v" style="color:${p.saldoFinal<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(p.saldoFinal)}</div><div class="l">Saldo daqui a ${fluxoDias} dias</div></div>
+    </div>
+
+    ${p.atrasadoEntrada ? `
+    <p class="help" style="margin:0 0 14px;padding:10px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
+      <b>${fmtMoney(p.atrasadoEntrada)} a receber já vencido — de propósito, NÃO entra na conta acima.</b>
+      Cliente atrasado não é dinheiro em caixa. Se essa quantia fosse somada como se já
+      tivesse chegado, o aviso de saldo negativo nunca acusaria nada — foi assim que uma
+      medição paga a menor virou dívida sem ninguém ver. Quando entrar, dê baixa e o saldo sobe.
+    </p>` : ''}
+
+    <div class="table-wrap">
+      ${p.linhas.length ? `<table>
+        <thead><tr><th>Data</th><th>Dia</th><th class="num">Entra / sai</th><th class="num">Saldo depois</th><th></th></tr></thead>
+        <tbody>
+          <tr style="background:var(--cinza-bg);">
+            <td><b>hoje</b></td><td>${DOW_FULL[dowOf(todayISO())]}</td>
+            <td class="num">${p.atrasadoSaida?`<span style="color:var(--vermelho);">− ${fmtMoney(Math.abs(p.atrasadoSaida))} (vencido)</span>`:'—'}</td>
+            <td class="num"><b>${fmtMoney(p.saldoPartida)}</b></td><td></td>
+          </tr>
+          ${p.linhas.map(x=>`<tr>
+            <td style="white-space:nowrap;">${fmtDate(x.data)}</td>
+            <td>${DOW_FULL[dowOf(x.data)]}</td>
+            <td class="num" style="color:${x.mov<0?'var(--vermelho)':'var(--verde)'};">${x.mov<0?'−':'+'} ${fmtMoney(Math.abs(x.mov))}</td>
+            <td class="num" style="font-weight:700;color:${x.saldo<0?'var(--vermelho)':'inherit'};">${fmtMoney(x.saldo)}</td>
+            <td>${x.saldo<0?'<span class="badge badge-red">negativo</span>':''}</td>
+          </tr>`).join('')}
+        </tbody></table>`
+      : '<div class="empty">Nada previsto para os próximos dias. Lance as contas em "A Pagar / A Receber".</div>'}
+    </div>
+    <p class="help">
+      Só aparecem os dias que têm movimento. O que já venceu e continua em aberto entra
+      logo na primeira linha, porque é dinheiro que pode sair a qualquer momento.
+      No <b>consolidado</b>, transferência entre as empresas do grupo não mexe no total —
+      o dinheiro só troca de bolso.
+    </p>
+  </div>`;
+}
+
+/* =========================================================
+   2. RESULTADO DA OPERAÇÃO
+   ========================================================= */
+
+/* Qual data vale para o mês: a da baixa (regime de caixa, "quando o dinheiro
+   andou") ou a do vencimento (competência, "de que mês é a conta"). */
+function valorNoMes(l, ym, regime){
+  if(regime === 'competencia'){
+    return (l.vencimento||'').slice(0,7) === ym ? (Number(l.valor)||0) : 0;
+  }
+  return (l.baixas||[]).reduce((s,b)=> s + (b.data.slice(0,7) === ym ? (Number(b.valor)||0) : 0), 0);
+}
+
+function resultadoDoMes(ym, regime, empresaId){
+  const r = {receitas: 0, despesas: 0, porCategoria: {}, particularEntrada: 0, particularSaida: 0, transferencias: 0};
+  DB.lancamentos.forEach(l=>{
+    if(empresaId && l.empresaId !== empresaId) return;
+    const v = valorNoMes(l, ym, regime);
+    if(!v) return;
+
+    if(l.tipo === 'transferencia'){ r.transferencias += v; return; }   /* nunca entra no resultado */
+    if(l.natureza === 'particular'){
+      if(l.tipo === 'receita') r.particularEntrada += v; else r.particularSaida += v;
+      return;                                                          /* nem isto */
+    }
+    const chave = l.categoriaId || '__sem__';
+    r.porCategoria[chave] = r.porCategoria[chave] || {receita:0, despesa:0};
+    if(l.tipo === 'receita'){ r.receitas += v; r.porCategoria[chave].receita += v; }
+    else                    { r.despesas += v; r.porCategoria[chave].despesa += v; }
+  });
+  r.resultado = Math.round((r.receitas - r.despesas) * 100) / 100;
+  r.margem = r.receitas > 0 ? (r.resultado / r.receitas * 100) : 0;
+  return r;
+}
+
+function blocoResultado(){
+  const r = resultadoDoMes(fluxoMes, fluxoRegime, fluxoEmpresa);
+  const cats = Object.keys(r.porCategoria)
+    .map(k=>({k, nome: k==='__sem__' ? 'Sem categoria' : categoriaNome(k), ...r.porCategoria[k]}))
+    .sort((a,b)=>(b.despesa+b.receita)-(a.despesa+a.receita));
+  const temParticular = r.particularEntrada || r.particularSaida;
+
+  return `
+  <div class="card">
+    <div class="section-title">
+      <h2 style="margin:0;">Resultado da operação — ${monthLabel(fluxoMes)}</h2>
+      <span>
+        <input type="month" value="${fluxoMes}" onchange="fluxoMes=this.value; render();" style="max-width:170px;display:inline-block;">
+        <select onchange="fluxoRegime=this.value; render();" style="max-width:250px;display:inline-block;">
+          <option value="caixa"       ${fluxoRegime==='caixa'?'selected':''}>Pelo dinheiro que andou (baixa)</option>
+          <option value="competencia" ${fluxoRegime==='competencia'?'selected':''}>Pelo mês da conta (vencimento)</option>
+        </select>
+      </span>
+    </div>
+
+    <div class="grid grid-4" style="margin-bottom:14px;">
+      <div class="kpi"><div class="v" style="color:var(--verde);">${fmtMoney(r.receitas)}</div><div class="l">Receita da operação</div></div>
+      <div class="kpi"><div class="v" style="color:var(--vermelho);">${fmtMoney(r.despesas)}</div><div class="l">Custo da operação</div></div>
+      <div class="kpi"><div class="v" style="color:${r.resultado<0?'var(--vermelho)':'var(--azul-esc)'};">${fmtMoney(r.resultado)}</div><div class="l">Resultado</div></div>
+      <div class="kpi"><div class="v" style="color:${r.resultado<0?'var(--vermelho)':'var(--azul-esc)'};">${fmtNum(r.margem,1)}%</div><div class="l">Margem sobre a receita</div></div>
+    </div>
+
+    <div class="table-wrap">
+      ${cats.length ? `<table>
+        <thead><tr><th>Categoria</th><th class="num">Receita</th><th class="num">Custo</th><th class="num">% do custo</th></tr></thead>
+        <tbody>${cats.map(ct=>`<tr>
+          <td>${esc(ct.nome)}</td>
+          <td class="num">${ct.receita?fmtMoney(ct.receita):'—'}</td>
+          <td class="num">${ct.despesa?fmtMoney(ct.despesa):'—'}</td>
+          <td class="num">${ct.despesa&&r.despesas?fmtNum(ct.despesa/r.despesas*100,1)+'%':'—'}</td>
+        </tr>`).join('')}</tbody></table>`
+      : '<div class="empty">Nada lançado neste mês com esta forma de contar.</div>'}
+    </div>
+
+    ${temParticular ? `
+    <p class="help" style="margin-top:12px;padding:10px 12px;background:#f0e9fb;border-radius:8px;color:#4a2a75;">
+      <b>Fora deste resultado, de propósito:</b> ${fmtMoney(r.particularSaida)} de saída e
+      ${fmtMoney(r.particularEntrada)} de entrada marcados como <b>particular</b>.
+      Esse dinheiro saiu ou entrou na conta de verdade — e por isso está no caixa — mas não é
+      custo nem receita da obra. Aparece na conta-corrente de sócio, mais abaixo.
+    </p>` : ''}
+    ${r.transferencias ? `<p class="help">${fmtMoney(r.transferencias)} em transferências no mês —
+      não entram no resultado, porque o dinheiro só trocou de conta.</p>` : ''}
+    <p class="help" style="margin-bottom:0;">
+      <b>Pelo dinheiro que andou</b> responde "quanto sobrou no bolso este mês".
+      <b>Pelo mês da conta</b> responde "quanto este mês custou", mesmo que o pagamento caia
+      depois. Os dois estão certos — respondem perguntas diferentes.
+    </p>
+  </div>`;
+}
+
+/* =========================================================
+   3. RESULTADO POR OBRA
+   ========================================================= */
+
+function blocoPorObra(){
+  const linhas = DB.obras.map(o=>{
+    let rec = 0, des = 0;
+    DB.lancamentos.forEach(l=>{
+      if(l.obraId !== o.id) return;
+      if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+      const v = valorNoMes(l, fluxoMes, fluxoRegime);
+      if(!v) return;
+      if(l.tipo === 'receita') rec += v; else des += v;
+    });
+    return {o, rec, des, res: Math.round((rec-des)*100)/100};
+  }).filter(x=>x.rec || x.des);
+
+  const semObra = (()=>{
+    let rec = 0, des = 0;
+    DB.lancamentos.forEach(l=>{
+      if(l.obraId) return;
+      if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+      const v = valorNoMes(l, fluxoMes, fluxoRegime);
+      if(!v) return;
+      if(l.tipo === 'receita') rec += v; else des += v;
+    });
+    return {rec, des};
+  })();
+
+  return `
+  <div class="card">
+    <h2 style="margin-top:0;">Resultado por obra — ${monthLabel(fluxoMes)}</h2>
+    <div class="table-wrap">
+      ${linhas.length ? `<table>
+        <thead><tr><th>Obra</th><th class="num">Recebido</th><th class="num">Custo</th><th class="num">Resultado</th><th class="num">Margem</th></tr></thead>
+        <tbody>${linhas.map(x=>`<tr>
+          <td><b>${esc(x.o.nome)}</b></td>
+          <td class="num">${fmtMoney(x.rec)}</td>
+          <td class="num">${fmtMoney(x.des)}</td>
+          <td class="num" style="font-weight:700;color:${x.res<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(x.res)}</td>
+          <td class="num">${x.rec?fmtNum(x.res/x.rec*100,1)+'%':'—'}</td>
+        </tr>`).join('')}</tbody></table>`
+      : '<div class="empty">Nenhum lançamento com obra neste mês. Escolha a obra no lançamento para a margem por obra aparecer aqui.</div>'}
+    </div>
+    ${(semObra.rec||semObra.des) ? `<p class="help">
+      Fora da tabela: ${fmtMoney(semObra.rec)} de receita e ${fmtMoney(semObra.des)} de custo
+      <b>sem obra escolhida</b>. Enquanto houver custo sem obra, a margem de cada uma sai
+      melhor do que é de verdade.</p>` : ''}
+    <p class="help" style="margin-bottom:0;">
+      Aqui só entra o que foi lançado no financeiro. O <b>custo da mão de obra</b> — salário,
+      diária, encargos, vales, EPI — está em <b>Custo Consolidado</b>, no RH, e ainda não é
+      somado automaticamente aqui. Enquanto isso não for ligado, a margem desta tabela é
+      <b>maior do que a real</b>.
+    </p>
+  </div>`;
+}
+
+/* =========================================================
+   4. CONTA-CORRENTE DE SÓCIO
+   ========================================================= */
+
+function contaCorrenteSocios(){
+  const mapa = {};
+  DB.lancamentos.forEach(l=>{
+    if(l.natureza !== 'particular') return;
+    const nome = (l.socio || '').trim() || 'Sem nome';
+    const m = mapa[nome] = mapa[nome] || {nome, aportou: 0, retirou: 0, previstoAportar: 0, previstoRetirar: 0, itens: 0};
+    m.itens++;
+    const baixado = valorBaixado(l);
+    const aberto  = Math.max(0, saldoAberto(l));
+    if(l.tipo === 'receita'){ m.aportou += baixado; m.previstoAportar += aberto; }
+    else                    { m.retirou += baixado; m.previstoRetirar += aberto; }
+  });
+  return Object.keys(mapa).map(k=>{
+    const m = mapa[k];
+    m.saldo = Math.round((m.aportou - m.retirou) * 100) / 100;
+    return m;
+  }).sort((a,b)=>Math.abs(b.saldo)-Math.abs(a.saldo));
+}
+
+function blocoContaCorrente(){
+  const socios = contaCorrenteSocios();
+  return `
+  <div class="card">
+    <h2 style="margin-top:0;">Conta-corrente de sócio</h2>
+    <div class="table-wrap">
+      ${socios.length ? `<table>
+        <thead><tr><th>Pessoa</th><th class="num">Pôs na empresa</th><th class="num">Tirou da empresa</th><th class="num">Saldo</th><th>O que isso quer dizer</th></tr></thead>
+        <tbody>${socios.map(s=>`<tr>
+          <td><b>${esc(s.nome)}</b><br><span style="font-size:10.5px;color:#9aa0ab;">${s.itens} lançamento(s)</span></td>
+          <td class="num">${fmtMoney(s.aportou)}</td>
+          <td class="num">${fmtMoney(s.retirou)}</td>
+          <td class="num" style="font-weight:700;">${fmtMoney(Math.abs(s.saldo))}</td>
+          <td>${s.saldo > 0
+              ? `<span class="badge badge-blue">a empresa deve a ${esc(s.nome.split(' ')[0])}</span>`
+              : (s.saldo < 0
+                ? `<span class="badge badge-yellow">${esc(s.nome.split(' ')[0])} deve à empresa</span>`
+                : '<span class="badge badge-green">quitado</span>')}</td>
+        </tr>`).join('')}</tbody></table>`
+      : `<div class="empty">Nada aqui ainda.<br><span style="font-size:12px;">
+          Entra sozinho quando um lançamento é marcado como <b>Particular</b> e recebe um nome.</span></div>`}
+    </div>
+    <p class="help">
+      <b>O saldo é dito por extenso de propósito.</b> A apuração de 2026 errou justamente o
+      sinal — dizia que a empresa devia R$ 34.675 ao sócio quando, refeita a conta pelo
+      extrato, era ele quem devia R$ 10.251,40. O que virou o número foram quatro coisas que
+      só ele sabia: um repasse que era de outra empresa, um dinheiro aplicado que continuava
+      sendo dele, uma mensalidade que entrou e saiu, e uma moto paga com dinheiro da empresa.
+    </p>
+    <p class="help" style="margin-bottom:0;">
+      <b>Pró-labore não é retirada de sócio.</b> É pagamento pelo trabalho: entra como
+      <b>despesa da operação</b>, não aqui — mesmo quando quem paga é a conta de outra
+      empresa do grupo. Lançar como retirada erra o resultado e esta tabela ao mesmo tempo.
+    </p>
+  </div>`;
+}
 /* =========================================================
    AJUSTES DE TELA PEQUENA
    Entra nos DOIS builds: o computador não é afetado, porque tudo aqui só
