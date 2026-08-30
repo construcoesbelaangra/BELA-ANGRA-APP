@@ -446,6 +446,26 @@ tr:hover td{background:#fafbfd;}
 .sync-ind.neutro .pt{background:var(--azul);}
 @media(max-width:760px){.sync-ind{padding:9px 14px;}}
 
+/* ---- o mesmo estado, no pé da barra lateral (computador) ----
+   Sobre fundo escuro, então as cores são as do ponto e do texto, não do fundo:
+   uma faixa clara aqui brigaria com a lateral. */
+.sync-lat{display:none;padding:10px 16px;border-top:1px solid #40444c;font-size:11px;
+          line-height:1.45;color:#a9b0bd;}
+.sync-lat .pt{display:inline-block;width:8px;height:8px;border-radius:50%;
+              margin-right:6px;vertical-align:middle;flex-shrink:0;}
+.sync-lat .btn{width:100%;justify-content:center;margin-top:7px;padding:6px 8px;font-size:11.5px;}
+.sync-lat.pendente{color:#f0c674;}
+.sync-lat.pendente .pt{background:#e39b00;box-shadow:0 0 0 3px rgba(227,155,0,.25);}
+.sync-lat.ok      .pt{background:#3fbf6f;}
+.sync-lat.neutro  .pt{background:#6f8ad6;}
+
+/* No computador o estado fica na lateral; no celular, na faixa do topo.
+   Um dos dois sempre aparece, nunca os dois. */
+@media(min-width:761px){
+  #syncIndicador{display:none;}
+  .sync-lat{display:block;}
+}
+
 .help{font-size:11.5px;color:#9aa0ab;margin-top:3px;line-height:1.5;}
 .section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap;}
 .searchbar{max-width:280px;}
@@ -593,6 +613,12 @@ tr:hover td{background:#fafbfd;}
       </button>
     </div>
     <nav id="navMenu"></nav>
+    <!-- No computador o estado da sincronização mora AQUI, no pé da barra
+         lateral, junto da versão. Antes era uma faixa colorida de largura
+         inteira no topo do conteúdo, que no monitor grande ficava enorme para
+         a informação que carrega. No celular ela continua no topo — lá o
+         espaço é vertical e a faixa é o único lugar onde se vê o estado. -->
+    <div id="syncLateral" class="sync-lat"></div>
     <div class="foot">Sistema de RH · offline<br>Dados salvos neste navegador
       <br><span id="versaoApp" style="color:#6f747d;"></span></div>
   </div>
@@ -627,7 +653,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-08-30 · 20';
+const VERSAO = '2026-08-30 · 21';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6241,24 +6267,42 @@ function desdeQuando(ts){
   return d === 1 ? 'ontem' : `há ${d} dias`;
 }
 
+/* O mesmo estado sai em DOIS lugares, e o CSS escolhe qual aparece:
+   - `#syncIndicador`, a faixa no topo do conteúdo — é o que se vê no celular;
+   - `#syncLateral`, no pé da barra lateral — é o que se vê no computador.
+   Os textos são diferentes de propósito: a lateral tem 230px de largura, então
+   ali a frase é curta e o botão ocupa a linha inteira. */
 function atualizarIndicadorSync(){
-  const el = document.getElementById('syncIndicador');
-  if(!el) return;
+  const faixa = document.getElementById('syncIndicador');
+  const lado  = document.getElementById('syncLateral');
+  if(!faixa && !lado) return;
   const m = meta();
+
+  let estado, faixaHTML, ladoHTML;
+
   if(pendenteSync()){
-    el.className = 'sync-ind pendente';
-    el.innerHTML = `<span class="pt"></span>
+    estado = 'pendente';
+    faixaHTML = `<span class="pt"></span>
       <span>Alterações não enviadas ao Drive${m.ultimaEdicao?' · última edição '+desdeQuando(m.ultimaEdicao.quando):''}</span>
       <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">⟳ Sincronizar agora</button>`;
+    ladoHTML = `<span class="pt"></span>Não enviado ao Drive${
+      m.ultimaEdicao?'<br>última edição '+desdeQuando(m.ultimaEdicao.quando):''}
+      <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">⟳ Sincronizar</button>`;
   } else if(syncConfigurada() && m.ultimaSync){
-    el.className = 'sync-ind ok';
-    el.innerHTML = `<span class="pt"></span><span>Tudo sincronizado com o Drive · ${desdeQuando(m.ultimaSync)}</span>`;
+    estado = 'ok';
+    faixaHTML = `<span class="pt"></span><span>Tudo sincronizado com o Drive · ${desdeQuando(m.ultimaSync)}</span>`;
+    ladoHTML  = `<span class="pt"></span>Sincronizado · ${desdeQuando(m.ultimaSync)}`;
   } else {
-    el.className = 'sync-ind neutro';
-    el.innerHTML = `<span class="pt"></span>
+    estado = 'neutro';
+    faixaHTML = `<span class="pt"></span>
       <span>Sincronização com o Drive ainda não configurada</span>
       <button class="btn btn-secondary btn-sm" onclick="goTo('sync')">Configurar</button>`;
+    ladoHTML = `<span class="pt"></span>Drive não configurado
+      <button class="btn btn-secondary btn-sm" onclick="goTo('sync')">Configurar</button>`;
   }
+
+  if(faixa){ faixa.className = 'sync-ind ' + estado; faixa.innerHTML = faixaHTML; }
+  if(lado){  lado.className  = 'sync-lat ' + estado; lado.innerHTML  = ladoHTML;  }
 }
 
 /* avisa se tentar fechar a aba com trabalho não sincronizado */
@@ -6957,7 +7001,16 @@ window.addEventListener('resize', function(){
   const instalado = window.navigator.standalone === true
              || window.matchMedia('(display-mode: standalone)').matches;
 
-  if(!instalado){
+  /* O aviso só faz sentido em CELULAR e TABLET, e é lá que ele resolve dois
+     problemas de verdade: a regra dos 7 dias do iPhone, que apaga os dados de
+     um site fora da Tela de Início, e o funcionamento sem sinal na obra.
+     No computador ninguém "adiciona à tela inicial" — ali o app é aberto pelo
+     arquivo ou pelo link, e a faixa amarela só atrapalhava. (Pedido em 30/08/2026.)
+     A detecção é por APARELHO, não por largura de janela: encolher a janela do
+     computador não devia fazer um aviso aparecer. */
+  const ehMobile = ehIOS || /Android/i.test(navigator.userAgent);
+
+  if(!instalado && ehMobile){
     const mostrar = function(){
       const main = document.getElementById('main');
       if(!main || document.getElementById('avisoInstalar')) return;
