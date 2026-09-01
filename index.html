@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Bela Angra · Sistema de RH</title>
+<title>APP - Bela Angra</title>
 <!-- iPhone: adicionado à Tela de Início, o app sai do Safari e fica ISENTO da regra
      que apaga o armazenamento após 7 dias sem uso. Sem isso, os dados somem no celular. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -37,6 +37,12 @@ body{margin:0;font-family:var(--font);background:var(--cinza-bg);color:var(--chu
 #sidebar{
   width:230px;flex-shrink:0;background:var(--chumbo);color:#dfe2e8;
   display:flex;flex-direction:column;
+  /* fixa a barra na tela: o nome da empresa e o estado da sincronização
+     (no pé) não podem sumir quando o CONTEÚDO (#main) rola mais do que a
+     tela. `nav{overflow-y:auto}` abaixo garante que, se uma pasta aberta não
+     couber nos 100vh, é só a lista de itens que ganha rolagem própria —
+     nunca a barra inteira. Pedido do Maycon em 01/09/2026. */
+  position:sticky;top:0;align-self:flex-start;height:100vh;
 }
 #sidebar .brand{
   display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid #40444c;
@@ -54,15 +60,26 @@ body{margin:0;font-family:var(--font);background:var(--cinza-bg);color:var(--chu
 .navbtn .ico{width:19px;height:19px;flex-shrink:0;opacity:.72;}
 .navbtn.active .ico, .navbtn:hover .ico{opacity:1;}
 .navbtn .rot{min-width:0;overflow:hidden;text-overflow:ellipsis;}
-/* Título de seção do menu (RH · Financeiro · Sistema). Entrou em 30/08/2026,
-   quando o financeiro levou o menu a 15 telas. É rótulo, não botão: não recebe
-   clique nem foco, e o traço acima separa sem gastar altura com borda cheia. */
-.navsec{
-  padding:14px 18px 5px;font-size:10px;font-weight:700;letter-spacing:.09em;
-  text-transform:uppercase;color:#7d828c;pointer-events:none;
+/* Pasta de seção do menu (RH · Financeiro · Sistema). Era só um rótulo até
+   01/09/2026; virou botão que abre/fecha a própria seção (pedido do Maycon,
+   para caber sem rolar e a barra poder ficar fixa). Só uma pasta aberta por
+   vez — quem abre/fecha é `toggleNavSecao()`. */
+.navsec-toggle{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  width:100%;background:none;border:none;text-align:left;cursor:pointer;
+  padding:13px 18px;margin-top:2px;
+  font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:#9a9fa9;
 }
-.navsec + .navbtn{border-top:none;}
-#sidebar nav > .navsec:first-child{padding-top:6px;}
+#sidebar nav > .navsec-toggle:first-child{margin-top:6px;}
+.navsec-toggle:hover{color:#fff;}
+/* pasta com a página aberta dentro, mesmo fechada — para saber onde se está
+   sem precisar abrir todas as pastas por curiosidade */
+.navsec-toggle.tem-ativa{color:#dfe2e8;}
+.navsec-toggle .ico{width:13px;height:13px;opacity:.75;flex-shrink:0;transition:transform .15s ease;}
+.navsec-toggle.aberta .ico{transform:rotate(90deg);}
+/* item de dentro de uma pasta: recuo extra, para ficar claro que pertence a ela */
+.navbtn.sub{padding-left:34px;}
 #sidebar .foot{padding:12px 16px;font-size:10.5px;color:#8b909a;border-top:1px solid #40444c;}
 
 #main{flex:1;min-width:0;display:flex;flex-direction:column;}
@@ -251,8 +268,14 @@ body{margin:0;font-family:var(--font);background:var(--cinza-bg);color:var(--chu
 }
 
 /* trava final: o corpo da página nunca rola de lado, em nenhum tamanho.
-   Conteúdo largo (tabela, calendário) rola dentro da própria caixa. */
-html, body{max-width:100%;overflow-x:hidden;}
+   Conteúdo largo (tabela, calendário) rola dentro da própria caixa.
+   SÓ no <html>, nunca em <body>: `overflow-x` diferente de `overflow-y` força
+   os dois a virar `auto` no elemento — se isso caísse no <body>, ele viraria
+   um contêiner de rolagem próprio, e o `position:sticky` da barra lateral
+   passaria a grudar nele (que nunca rola de verdade) em vez do <html> (que é
+   quem rola). A barra ficaria "solta", subindo junto com a página em vez de
+   ficar fixa. Descoberto em 01/09/2026 ao fixar a barra lateral. */
+html{max-width:100%;overflow-x:hidden;}
 #main, #content{min-width:0;}
 
 /* Item de grid nasce com min-width:auto, então um número comprido
@@ -665,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-01 · 25';
+const VERSAO = '2026-09-01 · 26';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -705,9 +728,20 @@ function pintarMarca(){
 }
 
 document.getElementById('versaoApp').textContent = 'versão ' + VERSAO;
-/* ícone da Tela de Início no iPhone — sempre o do APP, nunca o da empresa:
-   o ícone é gerado antes de existir dado, e não pode vazar marca nenhuma */
+/* Ícone da aba do navegador (favicon) e da Tela de Início no iPhone — sempre o
+   do APP, nunca o da empresa: os dois são gerados antes de existir dado, e não
+   podem vazar marca nenhuma. Pedido do Maycon em 01/09/2026: a aba estava sem
+   ícone nenhum (o navegador desenhava a bolinha genérica de página em branco).
+   SVG basta para favicon — os navegadores atuais aceitam direto, ao contrário
+   do ícone de app instalado do Windows (ver "Ícone do app instalado" abaixo),
+   que precisa de PNG. */
 (function(){
+  const fav = document.createElement('link');
+  fav.rel = 'icon';
+  fav.type = 'image/svg+xml';
+  fav.href = LOGO_APP;
+  document.head.appendChild(fav);
+
   const l = document.createElement('link');
   l.rel = 'apple-touch-icon';
   l.href = LOGO_APP;
@@ -1314,7 +1348,8 @@ const ICONES = {
   menu:      '<path d="M4 7h16M4 12h16M4 17h16"/>',
   cofre:     '<rect x="3.2" y="4.5" width="17.6" height="15" rx="2"/><circle cx="10.5" cy="12" r="3.4"/><path d="M10.5 8.6v6.8M7.1 12h6.8M17.4 9.4v5.2"/>',
   lista:     '<path d="M9 7h11M9 12h11M9 17h11"/><path d="m4 6.6 1.1 1.1L7 5.8M4 11.6l1.1 1.1L7 10.8M4 16.6l1.1 1.1L7 15.8"/>',
-  fluxo:     '<path d="M4 20h16"/><path d="M4.5 16.2 9 10.4l3.6 3 5.9-7.2"/><path d="M18.5 6.2h-3.4M18.5 6.2v3.4"/>'
+  fluxo:     '<path d="M4 20h16"/><path d="M4.5 16.2 9 10.4l3.6 3 5.9-7.2"/><path d="M18.5 6.2h-3.4M18.5 6.2v3.4"/>',
+  seta:      '<path d="M9 5l7 7-7 7"/>'
 };
 function icone(nome){
   return '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
@@ -1324,18 +1359,49 @@ function icone(nome){
 
 let currentPage = 'dashboard';
 
+/* Qual pasta do menu (RH / Financeiro / Sistema) está aberta. Só uma de cada
+   vez — é pasta, não acordeão de várias abertas. Começa fechada: a página
+   inicial é o Dashboard, que não mora em pasta nenhuma. `goTo()` abre a pasta
+   da página para onde se navegou, então ela nunca fica "escondida" depois de
+   clicar num item dela. */
+let navSecaoAberta = '';
+
+/* alterna uma pasta do menu sem mexer na página aberta — por isso chama só
+   buildNav(), não render() (que trocaria o conteúdo principal à toa) */
+function toggleNavSecao(nome){
+  navSecaoAberta = (navSecaoAberta === nome) ? '' : nome;
+  buildNav();
+}
+
 function buildNav(){
-  let secaoAberta = null;
-  document.getElementById('navMenu').innerHTML = PAGES.map(p=>{
-    /* o título só sai quando a seção MUDA — assim a ordem do PAGES manda, e
-       acrescentar tela nova no meio de um grupo não exige mexer aqui */
-    const titulo = (p.secao && p.secao !== secaoAberta)
-      ? `<div class="navsec">${esc(p.secao)}</div>` : '';
-    secaoAberta = p.secao;
-    return titulo + `<button class="navbtn ${p.id===currentPage?'active':''}" onclick="goTo('${p.id}')">
+  const botaoPagina = p => `<button class="navbtn ${p.secao?'sub':''} ${p.id===currentPage?'active':''}" onclick="goTo('${p.id}')">
       ${icone(p.icon)}<span class="rot">${p.label}</span>
     </button>`;
-  }).join('');
+
+  let html = '';
+  let secaoAtual = null;
+  let paginasDaSecao = [];
+  const fechaSecaoAberta = () => {
+    if(secaoAtual === null) return;
+    /* pasta com a página atual dentro fica marcada mesmo fechada, para dar
+       para saber onde se está sem precisar abrir todas as pastas */
+    const aberta = secaoAtual === navSecaoAberta;
+    const temAtiva = paginasDaSecao.some(p=>p.id===currentPage);
+    html += `<button class="navsec navsec-toggle ${aberta?'aberta':''} ${temAtiva?'tem-ativa':''}"
+        onclick="toggleNavSecao('${esc(secaoAtual)}')">
+      <span class="navsec-nome">${esc(secaoAtual)}</span>${icone('seta')}
+    </button>`;
+    if(aberta) html += paginasDaSecao.map(botaoPagina).join('');
+  };
+
+  PAGES.forEach(p=>{
+    if(!p.secao){ html += botaoPagina(p); return; }   // Dashboard: fora de pasta
+    if(p.secao !== secaoAtual){ fechaSecaoAberta(); secaoAtual = p.secao; paginasDaSecao = []; }
+    paginasDaSecao.push(p);
+  });
+  fechaSecaoAberta();
+
+  document.getElementById('navMenu').innerHTML = html;
 }
 /* As duas folhas de ponto viraram uma tela só em 28/08/2026. Os nomes antigos
    continuam valendo como atalho: quem chamar goTo('pontoDiarista') cai na tela
@@ -1345,7 +1411,12 @@ const PAGINA_PONTO_ANTIGA = {pontoMensal:'fichado', pontoDiarista:'diarista'};
 
 function goTo(id){
   if(PAGINA_PONTO_ANTIGA[id]){ pontoTipo = PAGINA_PONTO_ANTIGA[id]; id = 'ponto'; }
-  currentPage = id; window.scrollTo(0,0); render();
+  currentPage = id;
+  /* abre a pasta de quem para onde se navegou, senão o item ficaria ativo
+     dentro de uma pasta fechada — invisível na hora de saber onde se está */
+  const pagina = PAGES.find(p=>p.id===id);
+  navSecaoAberta = pagina ? pagina.secao : '';
+  window.scrollTo(0,0); render();
 }
 
 function render(){
