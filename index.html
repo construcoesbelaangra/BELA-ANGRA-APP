@@ -427,6 +427,7 @@ tr:hover td{background:#fafbfd;}
 .calendar .day.falta_justificada{background:#fbf1dc;}
 .calendar .day.falta_injustificada{background:#fdecea;}
 .calendar .day.atestado{background:var(--azul-claro);}
+.calendar .day.licenca{background:#e3d9f5;}
 .calendar .day.folga{background:#eceef2;}
 .calendar .day.falta{background:#fdecea;}
 .calendar .day.feriado{background:#f0e9fb;}
@@ -552,6 +553,8 @@ tr:hover td{background:#fafbfd;}
 .fcont th.c, .fcont td.c{text-align:center;}
 /* dia que pertence ao mês vizinho, ou pessoa fora do vínculo: não conta */
 .fcont .fora{background:#eceef2;color:#7a808c;font-size:7.5px;}
+/* cabeçalho do dia de feriado: nome do feriado no lugar do dia da semana */
+.fcont .fcab{background:#f0e9fb;color:#5b2a86;}
 .flegenda{margin:8px 0 12px;font-size:9px;color:#333;background:#f2f4f9;
           border:1px solid #d5dae6;border-radius:4px;padding:5px 8px;}
 .flegenda b{color:#111;}
@@ -662,7 +665,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-01 · 24';
+const VERSAO = '2026-09-01 · 25';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -759,6 +762,12 @@ function defaultDB(){
     holerites: [],
     epiEntradas: [],
     epiSaidas: [],
+    /* {id, data:'YYYY-MM-DD', nome, tipo:'nacional'|'municipal'}. Cadastro em
+       Configurações. Datas e nomes de feriado são informação pública — não
+       identificam a empresa — por isso os NACIONAIS podem ser sugeridos pelo
+       código (ver FERIADOS_NACIONAIS em 08_config.js); municipais/estaduais o
+       usuário cadastra à mão, com o próprio nome. */
+    feriados: [],
 
     /* ---------- FINANCEIRO ----------
        Tudo aqui nasce VAZIO pelo mesmo motivo de `empresa` e `obras`: o app é
@@ -839,6 +848,7 @@ function migrate(db){
   db.categorias    = db.categorias    || [];
   db.lancamentos   = db.lancamentos   || [];
   db.recorrentes   = db.recorrentes   || [];
+  db.feriados      = db.feriados      || [];
   (db.lancamentos).forEach(l=>{ l.baixas = l.baixas || []; });
   db._meta = Object.assign({tombstones:{}, mapaTs:{}, objetoTs:{}, ultimaSync:null, ultimaEdicao:null, arquivoNome:''}, db._meta||{});
   Object.keys(db.pontoMensal||{}).forEach(k=>{
@@ -1104,6 +1114,15 @@ function foraDoVinculo(f, iso){
   if(f.demissao && iso > f.demissao) return 'depois';
   return '';
 }
+
+/* ---------- FERIADOS ----------
+   Um dia de calendário, independente de funcionário. Usado para: rotular o dia
+   como feriado nas telas de Ponto e na folha da contabilidade (em vez de deixar
+   a folga "invisível", igual um domingo) e para o ⚡ preencher presença NÃO
+   presumir trabalho num feriado — o padrão nesse dia é o contrário do padrão
+   normal, porque geralmente não se trabalha em feriado. */
+function feriadoDoDia(iso){ return DB.feriados.find(x=>x.data===iso); }
+function isFeriado(iso){ return !!feriadoDoDia(iso); }
 /* =========================================================
    PRESENÇA PRESUMIDA
    O ponto é preenchido como presença por padrão (é o mais provável) e marcado
@@ -1167,14 +1186,18 @@ function motivoBloqueio(f, iso){
   return '';
 }
 
-/* dias de semana (seg a sex) de um mês — base do vale de transporte/alimentação */
+/* dias de semana (seg a sex) de um mês, SEM os feriados — base do vale de
+   transporte/alimentação. Feriado não gera despesa de passagem nem
+   alimentação (ninguém se desloca nem come na obra), por isso não conta aqui,
+   do mesmo jeito que sábado e domingo já não contam. */
 function diasDeSemanaDoMes(ym){
   const [y,m] = ym.split('-').map(Number);
   const nd = daysInMonth(y,m);
   let n = 0;
   for(let d=1; d<=nd; d++){
     const dow = new Date(y, m-1, d).getDay();
-    if(dow>=1 && dow<=5) n++;
+    const iso = `${ym}-${String(d).padStart(2,'0')}`;
+    if(dow>=1 && dow<=5 && !isFeriado(iso)) n++;
   }
   return n;
 }
@@ -1213,12 +1236,14 @@ function ultimoDiaMes(ym){
   const [y,m] = ym.split('-').map(Number);
   return `${ym}-${String(daysInMonth(y,m)).padStart(2,'0')}`;
 }
-/* 5º dia útil do mês — data em que o salário do mês anterior é pago */
+/* 5º dia útil do mês — data em que o salário do mês anterior é pago.
+   Feriado não é dia útil, então não conta e não pode ser o próprio dia do
+   pagamento (o banco/escritório não abre). */
 function quintoDiaUtil(ym){
   let iso = primeiroDiaMes(ym), n = 0;
   while(true){
     const dw = dowOf(iso);
-    if(dw>=1 && dw<=5) n++;
+    if(dw>=1 && dw<=5 && !isFeriado(iso)) n++;
     if(n===5) return iso;
     iso = addDays(iso, 1);
   }
@@ -1234,7 +1259,7 @@ function diasUteisDoFuncionarioNoMes(f, ym){
   let n = 0, iso = f.admissao;
   while(iso <= fim){
     const dw = dowOf(iso);
-    if(dw>=1 && dw<=5) n++;
+    if(dw>=1 && dw<=5 && !isFeriado(iso)) n++;
     iso = addDays(iso, 1);
   }
   return n;
@@ -2175,10 +2200,11 @@ let pmObraFiltro = '';
 
 const STATUS_LABEL = {
   trabalhado:'Trabalhado', falta_justificada:'Falta justificada',
-  falta_injustificada:'Falta injustificada', atestado:'Atestado médico', folga:'Folga/DSR'
+  falta_injustificada:'Falta injustificada', atestado:'Atestado médico', licenca:'Licença',
+  folga:'Folga/DSR'
 };
-const STATUS_SIGLA = {trabalhado:'✓', falta_justificada:'FJ', falta_injustificada:'FI', atestado:'AT', folga:'DSR'};
-const STATUS_CYCLE = ['trabalhado','falta_justificada','falta_injustificada','atestado','folga',''];
+const STATUS_SIGLA = {trabalhado:'✓', falta_justificada:'FJ', falta_injustificada:'FI', atestado:'AT', licenca:'LIC', folga:'DSR'};
+const STATUS_CYCLE = ['trabalhado','falta_justificada','falta_injustificada','atestado','licenca','folga',''];
 
 /* Qual das duas visões está aberta: 'dia' (a equipe toda) ou 'mes' (um funcionário).
 
@@ -2332,9 +2358,19 @@ function renderCalendarMensal(){
     const st = reg.dias[iso] || '';
     const bloqueado = antesDaAdmissao(f, iso);
     const porConfirmar = !!auto[iso] && !!st;
-    cells += `<div class="day ${st} ${bloqueado?'fora':''} ${porConfirmar?'aconfirmar':''}" onclick="cycleDia('${iso}')"
-        title="${bloqueado?motivoBloqueio(f, iso):(STATUS_LABEL[st]||'Sem lançamento')}${porConfirmar?' — presumido, ainda não confirmado':''}">
-      <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}</div>
+    /* feriado só decora a célula (nome no title, marquinha 🎉) — continua
+       dando para marcar 'trabalhado' se a pessoa trabalhou no feriado
+       (direito a pagamento em dobro, igual na tela "Lançar o dia"). A cor de
+       feriado só entra quando o dia está em branco: um dia já lançado
+       (ex.: trabalhado) mantém a cor do status, e a 🎉 já avisa que era
+       feriado. */
+    const fer = feriadoDoDia(iso);
+    let titulo = STATUS_LABEL[st] || 'Sem lançamento';
+    if(fer) titulo = `${fer.nome} (feriado)${st?' — '+titulo:''}`;
+    if(bloqueado) titulo = motivoBloqueio(f, iso);
+    cells += `<div class="day ${st} ${bloqueado?'fora':''} ${porConfirmar?'aconfirmar':''} ${fer&&!st?'feriado':''}" onclick="cycleDia('${iso}')"
+        title="${titulo}${porConfirmar?' — presumido, ainda não confirmado':''}">
+      <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
       <div class="st">${bloqueado?'<span style="color:#9aa0ab;">—</span>':(STATUS_SIGLA[st]||'')}</div></div>`;
   }
 
@@ -2347,7 +2383,9 @@ function renderCalendarMensal(){
         <span><span class="dot" style="background:#fbf1dc"></span>Falta justificada (FJ)</span>
         <span><span class="dot" style="background:#fdecea"></span>Falta injustificada (FI)</span>
         <span><span class="dot" style="background:var(--azul-claro)"></span>Atestado (AT)</span>
+        <span><span class="dot" style="background:#e3d9f5"></span>Licença (LIC)</span>
         <span><span class="dot" style="background:#eceef2"></span>Folga/DSR</span>
+        <span>🎉 Feriado cadastrado</span>
       </div>
       <p class="help">Clique num dia para alternar o status. As faltas injustificadas alimentam automaticamente o desconto no holerite e no vale de VT/VR.</p>
       <div class="grid grid-4" style="margin-top:14px;">
@@ -2355,6 +2393,9 @@ function renderCalendarMensal(){
         <div class="kpi"><div class="v">${fal.justificada}</div><div class="l">Faltas justificadas</div></div>
         <div class="kpi"><div class="v">${fal.injustificada}</div><div class="l">Faltas injustificadas</div></div>
         <div class="kpi"><div class="v">${fal.atestado}</div><div class="l">Atestados</div></div>
+      </div>
+      <div class="grid grid-4" style="margin-top:10px;">
+        <div class="kpi"><div class="v">${fal.licenca}</div><div class="l">Licenças</div></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
         <button class="btn btn-secondary" onclick="printAssiduidade()">Relatório de assiduidade (PDF)</button>
@@ -2380,7 +2421,7 @@ function cycleDia(iso){
 
 function preencherMesUtil(){
   const f = func(pmFuncId);
-  if(!confirm('Marcar todos os dias de segunda a sexta como "trabalhado"? Os dias que você já lançou serão mantidos, e dias anteriores à admissão são ignorados.')) return;
+  if(!confirm('Marcar todos os dias de segunda a sexta como "trabalhado"? Os feriados cadastrados são pulados, os dias que você já lançou serão mantidos, e dias anteriores à admissão são ignorados.')) return;
   const key = pmKey();
   if(!DB.pontoMensal[key]) DB.pontoMensal[key] = {dias:{}};
   const nd = daysInMonth(pmAno, pmMes);
@@ -2388,7 +2429,7 @@ function preencherMesUtil(){
   for(let d=1; d<=nd; d++){
     const iso = `${pmAno}-${String(pmMes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dow = dowOf(iso);
-    if(antesDaAdmissao(f, iso)) continue;
+    if(antesDaAdmissao(f, iso) || isFeriado(iso)) continue;
     if(dow>=1 && dow<=5 && !DB.pontoMensal[key].dias[iso]){ DB.pontoMensal[key].dias[iso] = 'trabalhado'; n++; }
   }
   saveDB(); renderPontoMensal(); toast(`${n} dia(s) preenchido(s).`);
@@ -2396,12 +2437,13 @@ function preencherMesUtil(){
 
 function getFaltasMes(funcId, ym){
   const reg = DB.pontoMensal[`${funcId}_${ym}`];
-  const r = {justificada:0, injustificada:0, atestado:0, trabalhado:0, folga:0};
+  const r = {justificada:0, injustificada:0, atestado:0, licenca:0, trabalhado:0, folga:0};
   if(!reg) return r;
   Object.values(reg.dias||{}).forEach(s=>{
     if(s==='falta_justificada') r.justificada++;
     else if(s==='falta_injustificada') r.injustificada++;
     else if(s==='atestado') r.atestado++;
+    else if(s==='licenca') r.licenca++;
     else if(s==='trabalhado') r.trabalhado++;
     else if(s==='folga') r.folga++;
   });
@@ -2589,6 +2631,7 @@ function renderPontoDia(){
   const futuro = ehFuturo(pdiaData);
   const dow = DOW_FULL[dowOf(pdiaData)];
   const fimDeSemana = dowOf(pdiaData)===0 || dowOf(pdiaData)===6;
+  const feriadoHoje = feriadoDoDia(pdiaData);
   /* na folha "Todos" os dois vínculos aparecem juntos, e os botões de cada
      linha são diferentes — a coluna de vínculo é o que explica a diferença */
   const misto = pdiaTipo === 'todos';
@@ -2615,11 +2658,20 @@ function renderPontoDia(){
         title="${esc(rotulo)}"
         onclick="marcarDia('${f.id}','${pdiaData}','${valor}')"><span
         class="ini">${inicial}</span><span class="detalhe">${rotulo}</span></button>`;
+    /* Feriado: o padrão vira o oposto do dia normal — geralmente ninguém
+       trabalha, e não trabalhar num feriado NÃO é falta. Por isso o menu some
+       e sobra só um lançamento de duas pontas, igual o Maycon pediu — o "não
+       trabalhou" é o mesmo status em branco de sempre, só com outro rótulo. */
+    if(feriadoHoje){
+      return op('trabalhado', 'T', 'Trabalhou (feriado — direito a pagamento em dobro)', '#1f8a4c')
+           + op('',           '—', 'Não trabalhou (feriado)',                            '#6c7280');
+    }
     if(f.tipo === 'fichado'){
       return op('trabalhado',          'P',  'Presente',           '#1f8a4c')
            + op('falta_injustificada', 'F',  'Falta',              '#c0392b')
            + op('falta_justificada',   'FJ', 'Falta justificada',  '#b8860b')
            + op('atestado',            'FA', 'Falta com atestado', '#1c4fd8')
+           + op('licenca',             'LIC','Licença',            '#7b3fb8')
            + op('',                    '—',  'Sem lançamento',     '#6c7280');
     }
     return op('trabalhado', 'P', 'Presente',       '#1f8a4c')
@@ -2661,31 +2713,40 @@ function renderPontoDia(){
         <div class="field" style="margin:0;"><label>Ordem da lista</label>${selectOrdem('renderPontoDia();')}</div>
       </div>
 
-      <div style="margin:12px 0;font-size:13px;color:var(--chumbo-claro);">
-        <b>${fmtDate(pdiaData)} · ${dow}</b>
+      <div style="margin:12px 0;font-size:13px;color:var(--chumbo-claro);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span><b>${fmtDate(pdiaData)} · ${dow}</b>
         ${fimDeSemana?' <span class="badge badge-yellow">fim de semana</span>':''}
         ${futuro?' <span class="badge badge-blue">data futura — o que estiver aqui é previsão</span>':''}
         · ${lista.length} pessoa(s)
-        ${nAuto?` · <span style="color:var(--amarelo);font-weight:700;">${nAuto} a confirmar</span>`:''}
+        ${nAuto?` · <span style="color:var(--amarelo);font-weight:700;">${nAuto} a confirmar</span>`:''}</span>
+        ${feriadoHoje
+          ? `<span class="badge" style="background:#f0e9fb;color:#5b2a86;">🎉 Feriado — ${esc(feriadoHoje.nome)}${feriadoHoje.tipo==='municipal'?' (municipal)':''}</span>
+             <button class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;" onclick="removerFeriado('${feriadoHoje.id}')">remover</button>`
+          : `<button class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;" onclick="abrirNovoFeriado('${pdiaData}')">📅 Marcar este dia como feriado</button>`}
       </div>
 
       <div class="grid grid-4" style="margin-bottom:12px;">
         <div class="kpi"><div class="v" style="color:var(--verde);">${nTrab}</div><div class="l">Trabalharam</div></div>
         <div class="kpi"><div class="v" style="color:var(--vermelho);">${nFalta}</div><div class="l">Faltaram</div></div>
-        <div class="kpi"><div class="v">${nVazio}</div><div class="l">Sem lançamento</div></div>
+        <div class="kpi"><div class="v">${nVazio}</div><div class="l">${feriadoHoje?'Não trabalharam':'Sem lançamento'}</div></div>
         <div class="kpi"><div class="v" style="color:var(--amarelo);">${nAuto}</div><div class="l">A confirmar neste dia</div></div>
       </div>
 
       ${lista.length ? `
       <div class="acoes-dia" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-        ${(()=>{ const branco = emBrancoNesteDia(), pend = presumidosNesteDia();
+        ${(()=>{ const branco = feriadoHoje ? 0 : emBrancoNesteDia(), pend = presumidosNesteDia();
           /* A sequência do caminho curto, nesta ordem, porque é o passo a passo:
              ⚡ preenche → marca as faltas → ✓ confirma o resto.
              O de confirmar fica SEMPRE na tela, apagado enquanto não há o que
-             confirmar — escondê-lo fazia ninguém descobrir que existia. */
+             confirmar — escondê-lo fazia ninguém descobrir que existia.
+             Em feriado o ⚡ some (força branco=0): o padrão nesse dia é o
+             contrário do padrão normal — geralmente ninguém trabalha — então
+             "todos vieram" seria a aposta errada. */
           return `<button class="btn btn-sm" style="background:var(--azul);color:#fff;"
             onclick="preencherEsteDia()" ${branco?'':'disabled'}
-            title="${branco
+            title="${feriadoHoje
+              ? 'Feriado: o padrão é ninguém trabalhar. Marque manualmente só quem trabalhou.'
+              : branco
               ? 'Marca como trabalhado quem ainda não tem lançamento neste dia. Não mexe no que você já lançou.'
               : 'Não há ninguém em branco neste dia.'}">
             ⚡ Todos vieram${branco?` (${branco})`:''}
@@ -2806,7 +2867,9 @@ function preencherPresenca(tipo, ini, fim){
     let iso = ini;
     while(iso <= fim){
       const dw = dowOf(iso);
-      if(dw>=1 && dw<=5 && !foraDoVinculo(f, iso)){
+      /* pula feriado: o padrão nesse dia é o contrário — geralmente ninguém
+         trabalha, então presumir presença estaria quase sempre errado */
+      if(dw>=1 && dw<=5 && !foraDoVinculo(f, iso) && !isFeriado(iso)){
         const s = statusDoDia(f, iso);
         if(!s.status){                       // nunca sobrescreve o que já existe
           setStatusDoDia(f, iso, 'trabalhado', true);
@@ -2829,7 +2892,7 @@ function openPreencherModal(tipo){
     <p class="help" style="margin-bottom:14px;font-size:13px;color:var(--chumbo-claro);line-height:1.7;">
       Marca <b>segunda a sexta</b> como trabalhado para
       ${tipo==='todos'?'<b>todo mundo</b> (fichados e diaristas)':'todos os '+(tipo==='fichado'?'fichados':'diaristas')}
-      com vínculo ativo no período.
+      com vínculo ativo no período, <b>pulando os feriados cadastrados</b>.
       Fica registrado como <b>"a confirmar"</b> — o app vai te cobrar até você conferir.
       <b>Nada que já tenha lançamento é alterado.</b>
     </p>
@@ -2908,11 +2971,16 @@ function executarPreenchimento(tipo){
      1  = dia trabalhado        F  = falta
      FA = falta abonada por atestado
      FJ = falta abonada justificada
+     LIC = licença (ex.: paternidade)
      FC = folga compensada      X  = fora do vínculo (não admitido / já saiu)
 
-   Feriado: a planilha manual escreve "QUI - Feriado" no cabeçalho do dia. O app
-   não tem cadastro de feriados, então não marca sozinho — na prática o feriado
-   aparece como FC quando o dia é lançado como folga.
+   Feriado (01/09/2026): a planilha manual escreve "QUI - Feriado" no
+   cabeçalho do dia. Agora o app TEM cadastro de feriados (Configurações →
+   Feriados, `DB.feriados`), então a linha do dia da semana (`cabDow`) escreve
+   o NOME do feriado cadastrado no lugar de "SEG/TER/...". As células de cada
+   pessoa continuam em branco nesse dia (ninguém é cobrado por não ter
+   trabalhado) — só marca "1" quem realmente trabalhou o feriado, com direito
+   a pagamento em dobro (isso é combinado fora do app, na folha de pagamento).
    ========================================================= */
 
 /* status do app -> sigla da planilha da contabilidade */
@@ -2921,6 +2989,7 @@ const SIGLA_CONTABIL = {
   falta_injustificada: 'F',
   falta_justificada:   'FJ',
   atestado:            'FA',
+  licenca:             'LIC',
   folga:               'FC'
 };
 
@@ -2997,8 +3066,13 @@ function printFolhaContabilidade(){
        E ficaria sempre vazia e só roubava largura do nome. */
     const cabData = dias.map(iso =>
       `<th class="c${iso.slice(0,7)!==ym?' fora':''}">${fmtDate(iso).slice(0,5)}</th>`).join('');
-    const cabDow = dias.map(iso =>
-      `<th class="c${iso.slice(0,7)!==ym?' fora':''}">${DOW_FULL[dowOf(iso)]}</th>`).join('');
+    /* dia de feriado escreve o NOME do feriado no lugar do dia da semana —
+       igual a planilha manual escrevia "QUI - Feriado" no cabeçalho. */
+    const cabDow = dias.map(iso => {
+      const doMes = iso.slice(0,7) === ym;
+      const fer = doMes && feriadoDoDia(iso);
+      return `<th class="c${!doMes?' fora':''}${fer?' fcab':''}">${fer ? esc(fer.nome) : DOW_FULL[dowOf(iso)]}</th>`;
+    }).join('');
 
     const linhas = equipe.map((f, i) => {
       let total = 0;
@@ -3046,8 +3120,10 @@ function printFolhaContabilidade(){
       <b>1</b> dia trabalhado &nbsp;·&nbsp; <b>F</b> falta &nbsp;·&nbsp;
       <b>FA</b> falta abonada — atestado &nbsp;·&nbsp;
       <b>FJ</b> falta abonada — justificada &nbsp;·&nbsp;
+      <b>LIC</b> licença &nbsp;·&nbsp;
       <b>FC</b> folga compensada &nbsp;·&nbsp;
-      <b>X</b> fora do vínculo
+      <b>X</b> fora do vínculo &nbsp;·&nbsp;
+      dia com <b>nome de feriado</b> no cabeçalho: só marca "1" quem trabalhou
     </div>`;
 
   /* agrupa os blocos em páginas e desenha o cabeçalho em cada uma */
@@ -3089,7 +3165,7 @@ function resumoMesFuncionario(f, ym){
   const ini = primeiroDiaMes(ym), fim = ultimoDiaMes(ym);
   const reg = DB.pontoMensal[`${f.id}_${ym}`] || {dias:{}};
   const r = {uteis:0, comVinculo:0, trabalhado:0, injustificada:0, justificada:0,
-             atestado:0, folga:0, semLancamento:0};
+             atestado:0, licenca:0, folga:0, feriado:0, semLancamento:0};
   let iso = ini;
   while(iso <= fim){
     const dw = dowOf(iso);
@@ -3098,11 +3174,16 @@ function resumoMesFuncionario(f, ym){
       if(!foraDoVinculo(f, iso)){
         r.comVinculo++;
         const st = reg.dias[iso] || '';
+        /* feriado sem lançamento é o esperado (ninguém trabalha) — não é
+           "furo" de apontamento, igual sábado/domingo já não entram em
+           `uteis`. Só cai em "sem lançamento" quando NÃO é feriado. */
         if(st === 'trabalhado')               r.trabalhado++;
         else if(st === 'falta_injustificada') r.injustificada++;
         else if(st === 'falta_justificada')   r.justificada++;
         else if(st === 'atestado')            r.atestado++;
+        else if(st === 'licenca')             r.licenca++;
         else if(st === 'folga')               r.folga++;
+        else if(isFeriado(iso))               r.feriado++;
         else                                  r.semLancamento++;
       }
     }
@@ -3127,7 +3208,7 @@ function printResumoMensal(){
   }
 
   const som = {comVinculo:0, trabalhado:0, injustificada:0, justificada:0,
-               atestado:0, folga:0, semLancamento:0};
+               atestado:0, licenca:0, folga:0, feriado:0, semLancamento:0};
   let algumFuro = false;
 
   const linhas = equipe.map((f, i) => {
@@ -3153,6 +3234,8 @@ function printResumoMensal(){
       <td class="c">${r.injustificada||''}</td>
       <td class="c">${r.justificada||''}</td>
       <td class="c">${r.atestado||''}</td>
+      <td class="c">${r.licenca||''}</td>
+      <td class="c">${r.feriado||''}</td>
       <td class="c">${r.folga||''}</td>
       <td class="obs">${obs.join('<br>')}</td>
     </tr>`;
@@ -3169,6 +3252,7 @@ function printResumoMensal(){
       <th class="c">Admissão</th><th class="c">Dias no<br>vínculo</th>
       <th class="c">Traba-<br>lhados</th><th class="c">Faltas<br>injust.</th>
       <th class="c">Faltas<br>just.</th><th class="c">Ates-<br>tados</th>
+      <th class="c">Licen-<br>ças</th><th class="c">Feria-<br>dos</th>
       <th class="c">Folgas<br>/ DSR</th><th>Observações</th>
     </tr></thead>`;
 
@@ -3186,7 +3270,9 @@ function printResumoMensal(){
       <div class="flegenda">
         <b>${uteis}</b> dias úteis no mês (segunda a sexta) &nbsp;·&nbsp;
         <b>Dias no vínculo</b> = dias úteis em que a pessoa já estava admitida e ainda não
-        havia saído &nbsp;·&nbsp; a soma das colunas de cada pessoa fecha com os dias no vínculo
+        havia saído &nbsp;·&nbsp; a soma das colunas de cada pessoa (inclusive Feriados) fecha
+        com os dias no vínculo &nbsp;·&nbsp; <b>Feriados</b> = feriado cadastrado em que a
+        pessoa não trabalhou (não conta como falta nem reduz o vínculo)
       </div>
       <table class="dtab fresumo">
         ${cabTabela}
@@ -3198,6 +3284,8 @@ function printResumoMensal(){
           <td class="c">${som.injustificada}</td>
           <td class="c">${som.justificada}</td>
           <td class="c">${som.atestado}</td>
+          <td class="c">${som.licenca}</td>
+          <td class="c">${som.feriado}</td>
           <td class="c">${som.folga}</td>
           <td class="obs">${som.semLancamento?`<b>${som.semLancamento} dia(s) sem lançamento</b>`:'Apontamento completo'}</td>
         </tr></tfoot>` : ''}
@@ -3310,9 +3398,16 @@ function renderCalendarDiarista(){
 
     const bloqueado = antesDaAdmissao(f, iso);
     const porConfirmar = !!(e && e.auto && e.status);
-    cells += `<div class="day ${st} ${bloqueado?'fora':''} ${porConfirmar?'aconfirmar':''}" onclick="cyclePd('${iso}')"
-        title="${bloqueado?motivoBloqueio(f, iso):(PD_LABEL[st]||'Sem lançamento')}${porConfirmar?' — presumido, ainda não confirmado':''}">
-      <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}</div>
+    /* feriado só decora (nome no title, 🎉): diarista não trabalha feriado por
+       regra, mas se marcar "trabalhado" mesmo assim a cor do status prevalece,
+       igual no calendário dos fichados. */
+    const fer = feriadoDoDia(iso);
+    let titulo = PD_LABEL[st] || 'Sem lançamento';
+    if(fer) titulo = `${fer.nome} (feriado)${st?' — '+titulo:''}`;
+    if(bloqueado) titulo = motivoBloqueio(f, iso);
+    cells += `<div class="day ${st} ${bloqueado?'fora':''} ${porConfirmar?'aconfirmar':''} ${fer&&!st?'feriado':''}" onclick="cyclePd('${iso}')"
+        title="${titulo}${porConfirmar?' — presumido, ainda não confirmado':''}">
+      <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
       <div class="st">${bloqueado?'<span style="color:#9aa0ab;">—</span>':(PD_SIGLA[st]||'')}</div>
       ${bloqueado?'':`<span class="qbtn ${e&&e.quentinha?'on':''}" onclick="event.stopPropagation(); toggleQuentinha('${iso}')" title="Marcar quentinha">🍱</span>`}
     </div>`;
@@ -3336,6 +3431,7 @@ function renderCalendarDiarista(){
         <span><span class="dot" style="background:#e5f5ea"></span>Trabalhado (✓)</span>
         <span><span class="dot" style="background:#fdecea"></span>Falta (F)</span>
         <span>🍱 quentinha (clique no ícone)</span>
+        <span>🎉 Feriado cadastrado</span>
         ${f.admissao?'<span style="color:#9aa0ab;">— dias fora do vínculo (antes da admissão ou depois da demissão) ficam bloqueados</span>':''}
       </div>
       <p class="help">Clique no dia para alternar: trabalhado → falta → vazio. O pagamento é fechado na tela <b>Fechamento / Pagamento</b>, sempre por sexta-feira.</p>
@@ -5546,6 +5642,46 @@ function renderConfig(){
     </div>
 
     <div class="card">
+      <h2>Feriados</h2>
+      <p class="help" style="margin-top:0;">
+        Um feriado cadastrado aparece na tela de <b>Ponto</b> igual um domingo — a folha da
+        contabilidade escreve o nome dele no lugar do dia da semana. Em dia de feriado, o
+        lançamento na equipe fica só com duas opções: <b>trabalhou</b> (direito a pagamento
+        em dobro) ou <b>não trabalhou</b> — não conta como falta, porque ninguém deveria
+        estar trabalhando mesmo.
+      </p>
+      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:14px;">
+        <div class="field" style="margin:0;"><label>Ano</label>
+          <input type="number" id="fer_ano_sugestao" value="${new Date().getFullYear()}" style="width:90px;">
+        </div>
+        <button class="btn btn-secondary" onclick="sugerirFeriados()">Sugerir feriados nacionais deste ano</button>
+        <button class="btn btn-primary" onclick="abrirNovoFeriado()">+ Feriado</button>
+      </div>
+      <p class="help" style="margin-top:0;">
+        A sugestão traz só os feriados <b>nacionais</b> (inclusive os que dependem da Páscoa —
+        Carnaval, Sexta-feira Santa, Corpus Christi). <b>Feriado municipal ou estadual</b> — dia
+        do padroeiro, aniversário da cidade — o app não sabe adivinhar: cadastre com o botão
+        "+ Feriado" e marque o tipo como municipal.
+      </p>
+      ${DB.feriados.length ? `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Data</th><th>Dia</th><th>Nome</th><th>Tipo</th><th></th></tr></thead>
+          <tbody>
+            ${DB.feriados.slice().sort((a,b)=>a.data.localeCompare(b.data)).map(x=>`
+              <tr>
+                <td>${fmtDate(x.data)}</td>
+                <td>${DOW_FULL[dowOf(x.data)]}</td>
+                <td>${esc(x.nome)}</td>
+                <td><span class="badge ${x.tipo==='municipal'?'badge-yellow':'badge-blue'}">${x.tipo==='municipal'?'Municipal/estadual':'Nacional'}</span></td>
+                <td><button class="btn btn-danger btn-sm" onclick="removerFeriado('${x.id}')">Remover</button></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="help">Nenhum feriado cadastrado ainda.</p>`}
+    </div>
+
+    <div class="card">
       <h2>Dados e backup</h2>
       <p class="help" style="font-size:13px;color:var(--chumbo-claro);margin-bottom:12px;">
         Os dados ficam salvos <b>neste computador</b>. Para levá-los a outro computador, use a tela
@@ -5685,6 +5821,94 @@ function wipeData(){
   if(!confirm('Tem certeza mesmo? Esta ação não pode ser desfeita.')) return;
   DB = defaultDB(); saveDB(); toast('Todos os dados foram apagados.'); goTo('dashboard');
 }
+
+/* =========================================================
+   FERIADOS
+
+   Só os NACIONAIS são sugeridos pelo código: são fato público (não identificam
+   a empresa) e valem para o Brasil inteiro, então podem morar em código igual
+   CATEGORIAS_SUGERIDAS (11_financeiro.js). Municipal/estadual varia de cidade
+   para cidade — o app não tem como adivinhar, por isso vira cadastro manual,
+   com o tipo marcado à mão.
+
+   `pascoa()` é o algoritmo de Gauss/Meeus para o domingo de Páscoa no
+   calendário gregoriano — dele saem Carnaval, Sexta-feira Santa e Corpus
+   Christi, que são feriados nacionais mas não têm data fixa.
+   ========================================================= */
+function pascoa(ano){
+  const a = ano % 19, b = Math.floor(ano/100), c = ano % 100;
+  const d = Math.floor(b/4), e = b % 4;
+  const f = Math.floor((b+8)/25), g = Math.floor((b-f+1)/3);
+  const h = (19*a + b - d - g + 15) % 30;
+  const i = Math.floor(c/4), k = c % 4;
+  const l = (32 + 2*e + 2*i - h - k) % 7;
+  const m = Math.floor((a + 11*h + 22*l)/451);
+  const n = h + l - 7*m + 114;
+  const mes = Math.floor(n/31), dia = (n % 31) + 1;
+  return `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+}
+function feriadosNacionaisSugeridos(ano){
+  const pasc = pascoa(ano);
+  return [
+    [`${ano}-01-01`,        'Confraternização Universal'],
+    [addDays(pasc, -47),    'Carnaval (segunda-feira)'],
+    [addDays(pasc, -46),    'Carnaval (terça-feira)'],
+    [addDays(pasc, -2),     'Sexta-feira Santa'],
+    [addDays(pasc, 60),     'Corpus Christi'],
+    [`${ano}-04-21`,        'Tiradentes'],
+    [`${ano}-05-01`,        'Dia do Trabalho'],
+    [`${ano}-09-07`,        'Independência do Brasil'],
+    [`${ano}-10-12`,        'Nossa Senhora Aparecida'],
+    [`${ano}-11-02`,        'Finados'],
+    [`${ano}-11-15`,        'Proclamação da República'],
+    [`${ano}-12-25`,        'Natal']
+  ];
+}
+function sugerirFeriados(){
+  const ano = parseInt(val('fer_ano_sugestao'),10) || new Date().getFullYear();
+  const existentes = DB.feriados.map(x=>x.data);
+  const novos = feriadosNacionaisSugeridos(ano).filter(([d])=>existentes.indexOf(d)<0);
+  if(!novos.length){ toast(`Os feriados nacionais de ${ano} já estão cadastrados.`); return; }
+  if(!confirm(`Acrescentar ${novos.length} feriado(s) nacional(is) de ${ano}?\n\nNada do que já existe é alterado.`)) return;
+  novos.forEach(([data,nome])=> DB.feriados.push({id:uid(), data, nome, tipo:'nacional'}));
+  saveDB(); renderConfig(); toast(`${novos.length} feriado(s) acrescentado(s).`);
+}
+/* chamado tanto de Configurações quanto do botão rápido na tela de Ponto
+   ("marcar este dia como feriado") — por isso aceita uma data pronta. */
+function abrirNovoFeriado(iso){
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Novo feriado</h2>
+    <div class="field"><label>Data</label><input type="date" id="fer_data" value="${iso||todayISO()}"></div>
+    <div class="field"><label>Nome</label><input id="fer_nome" value="Feriado" placeholder="Ex: Dia do Padroeiro"></div>
+    <div class="field"><label>Tipo</label>
+      <select id="fer_tipo">
+        <option value="nacional">Nacional</option>
+        <option value="municipal">Municipal / estadual</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="salvarFeriado()">Salvar</button>
+  `);
+}
+function salvarFeriado(){
+  const data = val('fer_data');
+  if(!data){ alert('Escolha uma data.'); return; }
+  if(DB.feriados.some(x=>x.data===data)){ alert('Já existe um feriado cadastrado nesta data.'); return; }
+  const nome = val('fer_nome').trim() || 'Feriado';
+  DB.feriados.push({id:uid(), data, nome, tipo: val('fer_tipo')});
+  saveDB(); closeModal();
+  toast(`Feriado cadastrado: ${fmtDate(data)} — ${nome}.`);
+  if(currentPage === 'ponto') renderPonto(); else renderConfig();
+}
+function removerFeriado(id){
+  const f = DB.feriados.find(x=>x.id===id);
+  if(!f) return;
+  if(!confirm(`Remover o feriado de ${fmtDate(f.data)} (${f.nome})?`)) return;
+  DB.feriados = DB.feriados.filter(x=>x.id!==id);
+  saveDB();
+  toast('Feriado removido.');
+  if(currentPage === 'ponto') renderPonto(); else renderConfig();
+}
 /* =========================================================
    SINCRONIZAÇÃO ENTRE COMPUTADORES
    Cada registro carrega a hora da última alteração. Ao sincronizar,
@@ -5702,7 +5926,8 @@ const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','p
      coleção. Dar baixa num PC carimba o lançamento inteiro, e a mesclagem leva
      a versão mais recente. Se os dois derem baixa no mesmo lançamento antes de
      sincronizar, vale a última — a mesma limitação já avisada na tela. */
-  'empresas','contas','categorias','lancamentos','recorrentes'];
+  'empresas','contas','categorias','lancamentos','recorrentes',
+  'feriados'];
 /* mapas de dia: {chave: {dias:{iso:status}, ts:{iso:hora}}} */
 const SYNC_MAPAS_DIA = ['pontoMensal'];
 /* mapas simples: {chave: valor} com hora paralela em _meta */
@@ -8848,23 +9073,48 @@ window.addEventListener('resize', function(){
      --------------------------------------------------------- */
   (function(){
     if(document.querySelector('link[rel="manifest"]')) return;
-    const mf = {
-      name: 'RH Bela Angra',
-      short_name: 'RH Bela Angra',
-      start_url: './',
-      scope: './',
-      display: 'standalone',
-      background_color: '#f3f4f7',
-      theme_color: '#2b2e33',
-      lang: 'pt-BR',
-      /* sempre a logo do APP: o manifesto e' servido publicamente */
-      icons: [{src: LOGO_APP, sizes: '512x512', type: 'image/svg+xml', purpose: 'any'}]
+    function publicarManifest(icons){
+      const mf = {
+        name: 'RH Bela Angra',
+        short_name: 'RH Bela Angra',
+        start_url: './',
+        scope: './',
+        display: 'standalone',
+        background_color: '#f3f4f7',
+        theme_color: '#2b2e33',
+        lang: 'pt-BR',
+        /* sempre a logo do APP: o manifesto e' servido publicamente */
+        icons: icons
+      };
+      const blob = new Blob([JSON.stringify(mf)], {type: 'application/manifest+json'});
+      const l = document.createElement('link');
+      l.rel = 'manifest';
+      l.href = URL.createObjectURL(blob);
+      document.head.appendChild(l);
+    }
+    /* O Windows (e algumas versões do Android/Chrome) não aceita SVG como
+       ícone de app instalado — sem um ícone RASTER (PNG) no manifesto, o
+       Windows gera sozinho um "avatar" genérico com a primeira letra do nome.
+       Foi o que aconteceu de verdade: o app instalado ficou com a letra "R",
+       de "RH Bela Angra" (relatado em 01/09/2026). Por isso a LOGO_APP (um
+       SVG) é rasterizada em PNG na hora, num canvas, e é o PNG que vai para
+       o manifesto — o SVG original entra também, para quem sabe usá-lo. */
+    const img = new Image();
+    img.onload = function(){
+      const tam = [192, 512].map(px=>{
+        const cv = document.createElement('canvas');
+        cv.width = px; cv.height = px;
+        cv.getContext('2d').drawImage(img, 0, 0, px, px);
+        let png; try{ png = cv.toDataURL('image/png'); }catch(e){ png = null; }
+        return png ? {src: png, sizes: `${px}x${px}`, type: 'image/png', purpose: 'any'} : null;
+      }).filter(Boolean);
+      tam.push({src: LOGO_APP, sizes: '512x512', type: 'image/svg+xml', purpose: 'any'});
+      publicarManifest(tam.length ? tam : [{src: LOGO_APP, sizes: '512x512', type: 'image/svg+xml', purpose: 'any'}]);
     };
-    const blob = new Blob([JSON.stringify(mf)], {type: 'application/manifest+json'});
-    const l = document.createElement('link');
-    l.rel = 'manifest';
-    l.href = URL.createObjectURL(blob);
-    document.head.appendChild(l);
+    img.onerror = function(){
+      publicarManifest([{src: LOGO_APP, sizes: '512x512', type: 'image/svg+xml', purpose: 'any'}]);
+    };
+    img.src = LOGO_APP;
   })();
 
 })();
