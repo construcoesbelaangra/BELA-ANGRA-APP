@@ -662,7 +662,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-01 · 23';
+const VERSAO = '2026-09-01 · 24';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2259,7 +2259,9 @@ function abasPonto(tipo){
 function renderPontoMensal(){
   if(pontoAba === 'dia'){ pdiaTipo = 'fichado'; renderPontoDia(); return; }
   const c = document.getElementById('content');
-  const todos = DB.funcionarios.filter(f=>f.tipo==='fichado' && f.status!=='inativo');
+  /* ativosNoMes, não status!=='inativo': quem foi demitido dentro deste mês
+     continua aparecendo para lançar/corrigir os dias em que trabalhou. */
+  const todos = ativosNoMes(`${pmAno}-${String(pmMes).padStart(2,'0')}`).filter(f=>f.tipo==='fichado');
   /* filtrar por obra é o jeito de apontar: chega na obra, vê quem está lá, aponta só aquela equipe */
   const fichados = ordenarFuncionarios(filtraObra(todos, pmObraFiltro));
   if(!fichados.some(f=>f.id===pmFuncId)) pmFuncId = fichados.length ? fichados[0].id : null;
@@ -2547,9 +2549,13 @@ function equipeDoDia(){
   /* 'todos' junta as duas folhas: é como se aponta na obra, onde fichado e
      diarista estão lado a lado. A ordenação padrão (cargo, antigo primeiro)
      vale para a lista inteira, sem separar por vínculo. */
-  const base = DB.funcionarios.filter(f=>
-    (pdiaTipo === 'todos' || f.tipo === pdiaTipo)
-    && !foraDoVinculo(f, pdiaData) && f.status !== 'inativo');
+  /* ativosNoPeriodo(dia,dia) já cobre o vínculo (admissão/demissão) igual ao
+     foraDoVinculo, e por isso substitui o antigo "&& f.status!=='inativo'":
+     aquele bloqueava até quem foi demitido DENTRO do próprio dia sendo
+     lançado — um diarista admitido dia 10 e demitido dia 14 sumia do Ponto
+     antes de dar para marcar a presença dos dias 10 a 14 que ele trabalhou. */
+  const base = ativosNoPeriodo(pdiaData, pdiaData).filter(f=>
+    (pdiaTipo === 'todos' || f.tipo === pdiaTipo));
   return ordenarFuncionarios(filtraObra(base, pdiaObra));
 }
 
@@ -2792,8 +2798,10 @@ function limparODia(){
    ========================================================= */
 function preencherPresenca(tipo, ini, fim){
   let n = 0, pessoas = 0;
-  DB.funcionarios.filter(f=>
-    (tipo==='todos' || f.tipo===tipo) && f.status!=='inativo').forEach(f=>{
+  /* ativosNoPeriodo, não status!=='inativo': mesmo motivo do equipeDoDia —
+     quem foi demitido dentro do período escolhido precisa continuar entrando. */
+  ativosNoPeriodo(ini, fim).filter(f=>
+    (tipo==='todos' || f.tipo===tipo)).forEach(f=>{
     let tocou = false;
     let iso = ini;
     while(iso <= fim){
@@ -3245,7 +3253,11 @@ function pdEntry(funcId, iso){
 function renderPontoDiarista(){
   if(pontoAba === 'dia'){ pdiaTipo = 'diarista'; renderPontoDia(); return; }
   const c = document.getElementById('content');
-  const todos = DB.funcionarios.filter(f=>f.tipo==='diarista' && f.status!=='inativo');
+  /* usa ativosNoMes, não status!=='inativo': quem foi demitido dentro deste mês
+     precisa continuar aparecendo para lançar/corrigir os dias em que trabalhou
+     (ex.: admitido dia 10, demitido dia 14 — sem isso o ponto dele nunca entra
+     no relatório para comparar com a medição do contratante). */
+  const todos = ativosNoMes(`${pdAno}-${String(pdMes).padStart(2,'0')}`).filter(f=>f.tipo==='diarista');
   /* mesma lógica do ponto dos fichados: filtra a obra e aponta só aquela equipe */
   const diaristas = ordenarFuncionarios(filtraObra(todos, pdObraFiltro));
   if(!diaristas.some(f=>f.id===pdFuncId)) pdFuncId = diaristas.length ? diaristas[0].id : null;
