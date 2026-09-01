@@ -662,7 +662,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-08-30 · 22';
+const VERSAO = '2026-09-01 · 23';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2010,12 +2010,13 @@ function periodoDaSexta(sextaISO, periodicidade){
 function periodoLabel(p){
   return `${fmtDate(p.inicio)} a ${fmtDate(p.fim)}`;
 }
+/* NÃO grava sozinho: só sugere a sexta de hoje enquanto ninguém configurou.
+   Já gravou automaticamente uma vez (31/08/2026) e, como o carimbo é "agora",
+   isso venceu a âncora certa numa sincronização e reclassificou sextas
+   passadas — sumindo com quinzenais já fechados e pagos. A âncora só deve
+   virar dado de verdade pela mão do usuário, em Configurações. */
 function ancoraQuinzenal(){
-  if(!DB.config.quinzenalAncora){
-    DB.config.quinzenalAncora = proximaSextaISO();
-    saveDB();
-  }
-  return DB.config.quinzenalAncora;
+  return DB.config.quinzenalAncora || proximaSextaISO();
 }
 function isSextaQuinzenal(sextaISO){
   const a = parseISO(ancoraQuinzenal());
@@ -4054,8 +4055,7 @@ function renderFechamentoFichados(){
   c.innerHTML = `
     <div class="card">
       <div class="tabs">
-        <button class="tab" onclick="fcPeriodicidade='semanal'; renderFechamento();">Diaristas semanais</button>
-        <button class="tab" onclick="fcPeriodicidade='quinzenal'; renderFechamento();">Diaristas quinzenais</button>
+        <button class="tab" onclick="fcPeriodicidade='diaristas'; renderFechamento();">Diaristas</button>
         <button class="tab active">Fichados — dia 20 e 5º dia útil</button>
       </div>
 
