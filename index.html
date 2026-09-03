@@ -688,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-01 · 26';
+const VERSAO = '2026-09-01 · 27';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -853,6 +853,14 @@ function defaultDB(){
       quinzenalAncora: '',         // uma sexta-feira de referência (YYYY-MM-DD)
       valorVRPadrao: 31,          // vale-refeição por dia trabalhado
       adiantamentoPercent: 40,    // adiantamento dos fichados, pago no dia 20
+      // ponte do vale VT/VR com o financeiro (01/09/2026): de onde sai o
+      // pagamento quando o usuário marca "Pago" em Vales VT/VR
+      valesContaPadrao: '',
+      valesCategoriaPadrao: '',
+      // mesma ponte, para a marca de pago do fechamento dos diaristas
+      // (05_diarista.js) — de onde sai o pagamento da diária
+      fechamentoContaPadrao: '',
+      fechamentoCategoriaPadrao: '',
       // códigos das rubricas do holerite (conforme a contabilidade)
       codigos: {
         saldoSalario:'001', difSalario:'108', salarioFamilia:'230',
@@ -1299,6 +1307,13 @@ function diasUteisDoFuncionarioNoMes(f, ym){
   return n;
 }
 
+/* As duas formas de cobrar, e por isso de apurar lucro separado (pedido do
+   Maycon em 01/09/2026): Homem-Hora (diária por função) e Empreitada (preço
+   fechado por serviço medido). Nasceu em `funcionario.tipoServico`; o
+   financeiro reaproveita o MESMO nome de campo e o MESMO rótulo em
+   `l.tipoServico` (12_lancamentos.js), para separar receita e custo por
+   operação em "Fluxo de Caixa" (`blocoPorOperacao`, 13_fluxo.js) — sem
+   precisar de um segundo dicionário de rótulos para manter igual ao primeiro. */
 const SERVICO_LABEL = {homem_hora:'Homem-Hora', empreitada:'Empreitada'};
 const PERIODICIDADE_LABEL = {semanal:'Semanal', quinzenal:'Quinzenal'};
 const REGIME_LABEL = {hora:'hora', dia:'dia', mes:'mês'};
@@ -3631,17 +3646,56 @@ function pagamentoDe(funcId, sexta, per){
   return (DB.pagamentos||[]).find(p=>
     p.funcionarioId===funcId && p.sexta===sexta && p.periodicidade===per);
 }
+/* Ponte com o financeiro (01/09/2026), igual à do vale VT/VR em 06a_vales.js:
+   marcar pago cria (e já dá baixa n)o lançamento de despesa sozinho, na conta
+   e categoria escolhidas na tela — sem redigitar o pagamento em Lançamentos.
+   Desmarcar apaga esse lançamento; a marca é dona dele, os dois não podem
+   discordar. A data do lançamento é a PRÓPRIA SEXTA sendo fechada, não o dia
+   em que se clicou — pagamento lançado com atraso (ex.: marcado em setembro,
+   de uma sexta de 28/08) tem que cair em agosto, não no dia do clique. */
 function togglePago(funcId, sexta, per, valor){
   const ja = pagamentoDe(funcId, sexta, per);
   if(ja){
+    if(ja.lancamentoId) DB.lancamentos = DB.lancamentos.filter(l=>l.id!==ja.lancamentoId);
     DB.pagamentos = DB.pagamentos.filter(p=>p.id!==ja.id);
-  }else{
-    DB.pagamentos.push({
-      id: uid(), funcionarioId: funcId, sexta, periodicidade: per,
-      valor: Number(valor)||0, quando: todayISO()
-    });
+    saveDB(); renderFechamento();
+    return;
   }
+
+  const f = func(funcId);
+  const liquido = Number(valor)||0;
+  const contaId = DB.config.fechamentoContaPadrao;
+  if(!contaId){ toast('Escolha antes de qual conta sai o pagamento (acima da lista).'); return; }
+  const ct = conta(contaId);
+  if(!ct){ toast('A conta configurada não existe mais — escolha outra.'); return; }
+
+  const pagamento = {
+    id: uid(), funcionarioId: funcId, sexta, periodicidade: per,
+    valor: liquido, quando: todayISO(), lancamentoId: ''
+  };
+
+  /* líquido zero ou negativo (vale comeu a diária inteira): marca como pago,
+     mas não há dinheiro saindo — não cria lançamento nenhum */
+  if(liquido > 0){
+    const lanc = {
+      id: uid(), baixas: [], origem: 'rh', origemRef: `fechamento_${funcId}_${sexta}_${per}`,
+      tipo: 'despesa', natureza: 'operacao',
+      empresaId: ct.empresaId, contaId,
+      categoriaId: DB.config.fechamentoCategoriaPadrao || '',
+      obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+      descricao: `Diária(s) — ${f.nome} — sexta ${fmtDate(sexta)}`,
+      valor: liquido, vencimento: sexta, obs: ''
+    };
+    lanc.baixas.push({id: uid(), data: sexta, valor: liquido, contaId});
+    DB.lancamentos.push(lanc);
+    pagamento.lancamentoId = lanc.id;
+  }
+
+  DB.pagamentos.push(pagamento);
   saveDB(); renderFechamento();
+  toast(liquido > 0
+    ? `Pagamento de ${f.nome} marcado — lançamento de ${fmtMoney(liquido)} criado no financeiro.`
+    : `${f.nome}: marcado, mas o líquido é ${fmtMoney(liquido)} — nenhum lançamento foi criado.`);
 }
 
 /* ---------------------------------------------------------
@@ -3780,14 +3834,38 @@ function renderFechamento(){
       ${calcs.length ? `
       <div style="margin-top:10px;padding:10px 14px;border-radius:8px;
         background:${tudoPago?'#eef8f1':'#f3f4f7'};border-left:4px solid ${tudoPago?'var(--verde)':'var(--cinza-borda)'};">
-        <b style="color:${tudoPago?'#1f6b3e':'var(--chumbo)'};">
-          ${tudoPago ? 'Tudo pago nesta sexta.' : `${pagos.length} de ${calcs.length} pagos`}
-        </b>
-        ${tudoPago ? '' : ` · falta <b>${fmtMoney(faltaVlr)}</b> de ${fmtMoney(totalLiq)}`}
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <b style="color:${tudoPago?'#1f6b3e':'var(--chumbo)'};">
+              ${tudoPago ? 'Tudo pago nesta sexta.' : `${pagos.length} de ${calcs.length} pagos`}
+            </b>
+            ${tudoPago ? '' : ` · falta <b>${fmtMoney(faltaVlr)}</b> de ${fmtMoney(totalLiq)}`}
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
+            <span>De onde sai o pagamento:
+              <select style="margin-left:4px;" onchange="DB.config.fechamentoContaPadrao=this.value; saveDB(); renderFechamento();">
+                <option value="">— escolha a conta —</option>
+                ${DB.contas.map(ct=>`<option value="${ct.id}" ${DB.config.fechamentoContaPadrao===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('')}
+              </select>
+            </span>
+            <span>Categoria:
+              <select style="margin-left:4px;" onchange="DB.config.fechamentoCategoriaPadrao=this.value; saveDB(); renderFechamento();">
+                <option value="">— sem categoria —</option>
+                ${categoriasDe('despesa').map(ct=>`<option value="${ct.id}" ${DB.config.fechamentoCategoriaPadrao===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+              </select>
+            </span>
+          </div>
+        </div>
         <span class="help" style="display:block;margin-top:3px;">
-          Marque o quadradinho conforme for pagando. A marca fica salva e vai junto na sincronização.
+          Marque o quadradinho conforme for pagando. A marca fica salva e vai junto na sincronização,
+          e já cria o lançamento de saída no financeiro (na conta escolhida acima), sem redigitar.
         </span>
-      </div>` : ''}
+      </div>
+      ${!DB.config.fechamentoContaPadrao?`<p class="help" style="margin:8px 0 0;color:var(--vermelho);">
+        Escolha acima de qual conta sai o pagamento — sem isso, marcar <b>Pago</b> não lança nada no financeiro.
+        ${DB.contas.length?'':'Não há conta cadastrada ainda: '}
+        ${DB.contas.length?'':'<a href="#" onclick="goTo(\'caixa\'); return false;">cadastre uma em Caixa e Contas</a>.'}
+      </p>`:''}` : ''}
 
       ${calcs.length ? Object.keys(porObra).map(k=>{
         const grupo = porObra[k].sort((a,b)=>cmpFuncionarios(a.f,b.f));
@@ -3809,7 +3887,8 @@ function renderFechamento(){
                 return `<tr${pg?' style="background:#f4faf6;"':''}>
                 <td class="num">
                   <input type="checkbox" ${pg?'checked':''} style="width:17px;height:17px;cursor:pointer;"
-                    title="${pg?`Pago em ${fmtDate(pg.quando)} — clique para desmarcar`:'Marcar como pago'}"
+                    ${!pg && !DB.config.fechamentoContaPadrao?'disabled title="Escolha a conta de pagamento acima primeiro"':
+                      `title="${pg?`Pago em ${fmtDate(pg.quando)} — clique para desmarcar`:'Marcar como pago'}"`}
                     onclick="togglePago('${x.f.id}','${fcSexta}','${per}',${x.liquido})">
                 </td>
                 <td><b>${esc(x.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(x.f.funcao||'')} · ${SERVICO_LABEL[x.f.tipoServico]||''}</span></td>
@@ -4385,7 +4464,8 @@ function initValesMes(){ if(!valesMes) valesMes = currentYM(); }
 function getVale(funcId, mes){
   let v = DB.vales.find(x=>x.funcionarioId===funcId && x.mes===mes);
   if(!v){
-    v = {id:uid(), funcionarioId:funcId, mes, dias:'', descontoFaltas:'', descontoOutros:0, obs:''};
+    v = {id:uid(), funcionarioId:funcId, mes, dias:'', descontoFaltas:'', descontoOutros:0, obs:'',
+         pago:false, pagoQuando:'', pagoLancamentoId:''};
     DB.vales.push(v); saveDB();
   }
   return v;
@@ -4456,6 +4536,13 @@ function renderVales(){
   const totalVT = rows.reduce((s,r)=>s+r.totalVT,0);
   const totalVR = rows.reduce((s,r)=>s+r.totalVR,0);
   const totalPagar = rows.reduce((s,r)=>s+r.liquido,0);
+  const pagos = rows.filter(r=>r.v.pago);
+  /* soma o valor REALMENTE lançado (congelado), não o líquido recalculado ao vivo */
+  const totalPago = pagos.reduce((s,r)=>{
+    const lanc = r.v.pagoLancamentoId && DB.lancamentos.find(l=>l.id===r.v.pagoLancamentoId);
+    return s + (lanc ? lanc.valor : r.liquido);
+  }, 0);
+  const contaPadrao = DB.config.valesContaPadrao;
 
   c.innerHTML = `
     <div class="card">
@@ -4465,7 +4552,7 @@ function renderVales(){
         </div>
         <div class="field" style="margin:0;"><label>Dias trabalhados neste mês</label>
           <div style="display:flex;gap:6px;">
-            <input type="number" min="0" max="31" value="${dias}" onchange="setDiasVale(this.value)">
+            <input type="number" min="0" max="31" value="${dias}" onwheel="this.blur()" onchange="setDiasVale(this.value)">
             ${ajustado?`<button class="btn btn-secondary btn-sm" style="white-space:nowrap;" onclick="setDiasVale('')" title="Voltar ao número de dias de semana do mês">↺ ${diasPadrao}</button>`:''}
           </div>
         </div>
@@ -4473,9 +4560,9 @@ function renderVales(){
         <div class="kpi"><div class="v">${fmtMoney(totalVR)}</div><div class="l">Total de vale-refeição</div></div>
       </div>
       <p class="help" style="margin:6px 0 14px;">
-        ${monthLabel(valesMes)} tem <b>${diasPadrao}</b> dias de semana (segunda a sexta), e é esse o número usado por padrão.
+        ${monthLabel(valesMes)} tem <b>${diasPadrao}</b> dias de semana (segunda a sexta, sem feriado), e é esse o número usado por padrão.
         ${ajustado?`<b style="color:var(--amarelo);">Você ajustou para ${dias} dias.</b>`:''}
-        Mude o campo acima se o mês teve feriado, ponto facultativo ou parada de obra — vale para todo mundo.
+        Mude o campo acima se o mês teve parada de obra — vale para todo mundo.
         <b>Quem foi admitido no meio do mês já entra com os dias contados a partir da admissão</b>, automaticamente.
         Ainda assim dá para corrigir a coluna <b>Dias</b> de uma pessoa específica.
       </p>
@@ -4484,6 +4571,36 @@ function renderVales(){
         As faltas de <b>${monthLabel(mesAnteriorDe(valesMes))}</b> é que são descontadas aqui, no vale de ${monthLabel(valesMes)}.
         O mesmo vale para empréstimos: são descontados no mês seguinte ao que você emprestou, podendo ser parcelados.
       </p>
+
+      ${rows.length ? `
+      <div style="margin:0 0 14px;padding:11px 14px;background:${pagos.length===rows.length?'#eef8f1':'#f2f4f9'};border-radius:8px;
+           display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <b>${pagos.length} de ${rows.length} pago(s)</b>
+          ${pagos.length<rows.length?` · falta pagar ${fmtMoney(totalPagar-totalPago)}`:''}
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
+          <span>De onde sai o pagamento:
+            <select style="margin-left:4px;" onchange="DB.config.valesContaPadrao=this.value; saveDB(); renderVales();">
+              <option value="">— escolha a conta —</option>
+              ${DB.contas.map(ct=>`<option value="${ct.id}" ${contaPadrao===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('')}
+            </select>
+          </span>
+          <span>Categoria:
+            <select style="margin-left:4px;" onchange="DB.config.valesCategoriaPadrao=this.value; saveDB(); renderVales();">
+              <option value="">— sem categoria —</option>
+              ${categoriasDe('despesa').map(ct=>`<option value="${ct.id}" ${DB.config.valesCategoriaPadrao===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+            </select>
+          </span>
+          <button class="btn btn-secondary btn-sm" onclick="recalcularVales()"
+            title="Volta dias e descontos de quem ainda não foi pago para o cálculo automático">↺ Recalcular tudo</button>
+        </div>
+      </div>
+      ${!contaPadrao?`<p class="help" style="margin:0 0 14px;color:var(--vermelho);">
+        Escolha acima de qual conta sai o pagamento — sem isso, marcar <b>Pago</b> não lança nada no financeiro.
+        ${DB.contas.length?'':'Não há conta cadastrada ainda: '}
+        ${DB.contas.length?'':'<a href="#" onclick="goTo(\'caixa\'); return false;">cadastre uma em Caixa e Contas</a>.'}
+      </p>`:''}` : ''}
 
       <div class="table-wrap">
         ${rows.length ? `
@@ -4495,26 +4612,28 @@ function renderVales(){
             <th class="num" style="width:130px;">Faltas mês ant.</th>
             <th class="num" style="width:120px;">Empréstimo</th>
             <th class="num" style="width:110px;">Outros desc.</th>
-            <th class="num">Líquido</th><th></th>
+            <th class="num">Líquido</th><th style="width:110px;">Pago</th><th></th>
           </tr></thead>
           <tbody>
           ${rows.map(r=>{
             const auto = diasUteisDoFuncionarioNoMes(r.f, valesMes);
             const parcial = r.f.admissao && r.f.admissao > primeiroDiaMes(valesMes);
-            return `<tr>
+            const pago = r.v.pago;
+            const dis = pago ? 'disabled title="Pago — desmarque \'Pago\' para editar"' : '';
+            return `<tr ${pago?'style="background:#f6fbf8;"':''}>
             <td><b>${esc(r.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc([r.f.cidadeVT1,r.f.cidadeVT2].filter(Boolean).join(' + ')||'trecho não cadastrado')}</span></td>
             <td class="num">${fmtMoney(r.vtDia)}</td>
             <td class="num">${fmtMoney(r.vrDia)}</td>
-            <td><input type="number" min="0" max="31" style="text-align:center;min-width:52px;" value="${r.dias}" onchange="setValeCampo('${r.f.id}','dias',this.value)" title="Ajuste só desta pessoa">
+            <td><input type="number" min="0" max="31" style="text-align:center;min-width:52px;" value="${r.dias}" onwheel="this.blur()" ${dis} onchange="setValeCampo('${r.f.id}','dias',this.value)" title="Ajuste só desta pessoa">
                 ${parcial?`<span style="font-size:10px;color:var(--azul-esc);">desde ${fmtDate(r.f.admissao).slice(0,5)}</span>`:''}
                 ${r.v.dias!=='' && r.v.dias!=null && Number(r.v.dias)!==auto?`<span style="font-size:10px;color:var(--amarelo);">manual (auto: ${auto})</span>`:''}</td>
             <td class="num">${fmtMoney(r.totalVT)}</td>
             <td class="num">${fmtMoney(r.totalVR)}</td>
-            <td><input type="number" step="0.01" value="${r.descFaltas}" onchange="setValeCampo('${r.f.id}','descontoFaltas',this.value)">
+            <td><input type="number" step="0.01" value="${r.descFaltas}" onwheel="this.blur()" ${dis} onchange="setValeCampo('${r.f.id}','descontoFaltas',this.value)">
                 ${r.falAnt.injustificada
                   ? `<span style="font-size:10px;color:var(--vermelho);">${r.falAnt.injustificada} falta(s) em ${monthLabel(r.mesAnterior).slice(0,3)}</span>`
                   : '<span style="font-size:10px;color:#9aa0ab;">sem faltas no mês anterior</span>'}
-                ${Math.abs(r.descFaltas - r.sugDescFaltas) > 0.01
+                ${!pago && Math.abs(r.descFaltas - r.sugDescFaltas) > 0.01
                   ? `<button class="btn btn-secondary btn-sm" style="margin-top:3px;padding:2px 6px;font-size:10px;"
                        onclick="setValeCampo('${r.f.id}','descontoFaltas',${r.sugDescFaltas})"
                        title="O valor digitado não bate com o cálculo pelas faltas do mês anterior">↺ corrigir para ${fmtMoney(r.sugDescFaltas)}</button>`
@@ -4522,8 +4641,17 @@ function renderVales(){
             <td class="num">${r.totalParcelas
                 ? `<span style="color:var(--vermelho);font-weight:700;">- ${fmtMoney(r.totalParcelas)}</span><br><span style="font-size:10px;color:#9aa0ab;">${r.parcelas.map(p=>`${p.parcela}/${p.total}`).join(', ')}</span>`
                 : '—'}</td>
-            <td><input type="number" step="0.01" value="${r.descOutros}" onchange="setValeCampo('${r.f.id}','descontoOutros',this.value)"></td>
-            <td class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(r.liquido)}</td>
+            <td><input type="number" step="0.01" value="${r.descOutros}" onwheel="this.blur()" ${dis} onchange="setValeCampo('${r.f.id}','descontoOutros',this.value)"></td>
+            <td class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(
+                /* pago: mostra o valor QUE FOI de verdade lançado (congelado), não um
+                   recálculo ao vivo que pode ter se afastado depois do pagamento */
+                pago && r.v.pagoLancamentoId
+                  ? (DB.lancamentos.find(l=>l.id===r.v.pagoLancamentoId) || {valor:r.liquido}).valor
+                  : r.liquido)}</td>
+            <td>${pago
+                ? `<button class="btn btn-secondary btn-sm" style="background:#1f8a4c;color:#fff;border-color:#1f8a4c;" onclick="toggleValePago('${r.f.id}','${valesMes}')" title="Pago em ${fmtDate(r.v.pagoQuando)} — clique para desmarcar">✓ Pago</button>`
+                : `<button class="btn btn-secondary btn-sm" onclick="toggleValePago('${r.f.id}','${valesMes}')"
+                     ${contaPadrao?'':'disabled title="Escolha a conta de pagamento acima primeiro"'}>Marcar pago</button>`}</td>
             <td><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button></td>
           </tr>`;}).join('')}
           </tbody>
@@ -4531,7 +4659,7 @@ function renderVales(){
             <th colspan="4" style="text-align:right;">TOTAL</th>
             <th class="num">${fmtMoney(totalVT)}</th><th class="num">${fmtMoney(totalVR)}</th>
             <th colspan="3"></th>
-            <th class="num">${fmtMoney(totalPagar)}</th><th></th>
+            <th class="num">${fmtMoney(totalPagar)}</th><th colspan="2"></th>
           </tr></tfoot>
         </table>` : `<div class="empty">Nenhum funcionário fichado com desconto de VT ativado. Ative na ficha do funcionário.</div>`}
       </div>
@@ -4556,9 +4684,91 @@ function setDiasVale(valor){
 }
 function setValeCampo(funcId, campo, valor){
   const v = getVale(funcId, valesMes);
+  if(v.pago){ toast('Este vale já está marcado como pago — desmarque para editar.'); renderVales(); return; }
   if(campo==='dias') v.dias = valor==='' ? '' : Math.max(0, parseInt(valor)||0);
   else v[campo] = valor==='' ? '' : (parseFloat(valor)||0);
   saveDB(); renderVales();
+}
+
+/* ---------------------------------------------------------
+   RECALCULAR TUDO
+   Segurança contra edição sem querer (rolar o mouse sobre um campo
+   numérico focado muda o valor — por isso os campos também ganharam
+   onwheel="this.blur()"). Um clique volta dias e descontos de quem ainda
+   NÃO foi pago para o cálculo automático. Quem já foi pago não é tocado:
+   o valor dele já saiu de caixa, mexer mudaria o líquido sem mudar o
+   lançamento já criado no financeiro.
+   --------------------------------------------------------- */
+function recalcularVales(){
+  const fichados = ativosNoMes(valesMes).filter(f=>f.tipo==='fichado' && recebeAlgumVale(f));
+  const pendentes = fichados.filter(f=>!getVale(f.id, valesMes).pago);
+  if(!pendentes.length){ toast('Nada para recalcular — todo mundo já está marcado como pago.'); return; }
+  const pagosQtd = fichados.length - pendentes.length;
+  if(!confirm(`Recalcular ${pendentes.length} funcionário(s)?\n\n`
+    + `Isso apaga ajustes manuais de dias e descontos e volta ao cálculo automático.`
+    + (pagosQtd ? `\n\n${pagosQtd} já pago(s) não são tocados.` : ''))) return;
+  pendentes.forEach(f=>{
+    const v = getVale(f.id, valesMes);
+    v.dias = ''; v.descontoFaltas = ''; v.descontoOutros = 0;
+  });
+  saveDB(); renderVales();
+  toast(`${pendentes.length} funcionário(s) recalculado(s).`);
+}
+
+/* ---------------------------------------------------------
+   MARCAR PAGO — a ponte com o financeiro (01/09/2026)
+   Marcar cria (e já dá baixa n)o lançamento de despesa sozinho, na conta e
+   categoria escolhidas acima — é o que evita redigitar o pagamento do vale
+   na tela de Lançamentos. Desmarcar apaga esse lançamento: o vale marcado
+   é o dono do lançamento, não faz sentido os dois discordarem.
+   --------------------------------------------------------- */
+function toggleValePago(funcId, mes){
+  const f = func(funcId);
+  const v = getVale(funcId, mes);
+
+  if(v.pago){
+    if(!confirm(`Desmarcar o vale de ${f.nome} como pago?\n\n`
+      + `Isso apaga o lançamento criado no financeiro e volta a liberar os campos para editar.`)) return;
+    if(v.pagoLancamentoId) DB.lancamentos = DB.lancamentos.filter(l=>l.id!==v.pagoLancamentoId);
+    v.pago = false; v.pagoQuando = ''; v.pagoLancamentoId = '';
+    saveDB(); renderVales();
+    toast('Vale desmarcado.');
+    return;
+  }
+
+  const contaId = DB.config.valesContaPadrao;
+  if(!contaId){ toast('Escolha antes de qual conta sai o pagamento (acima da lista).'); return; }
+  const ct = conta(contaId);
+  if(!ct){ toast('A conta configurada não existe mais — escolha outra.'); return; }
+
+  const r = calcVale(f, mes);
+  const hoje = todayISO();
+  v.pago = true; v.pagoQuando = hoje;
+
+  /* líquido zero ou negativo (descontos comeram o vale inteiro): marca como
+     pago, mas não há dinheiro saindo — não cria lançamento nenhum */
+  if(r.liquido <= 0){
+    v.pagoLancamentoId = '';
+    saveDB(); renderVales();
+    toast(`${f.nome}: marcado, mas o líquido é ${fmtMoney(r.liquido)} — nenhum lançamento foi criado.`);
+    return;
+  }
+
+  const lanc = {
+    id: uid(), baixas: [], origem: 'rh', origemRef: `vale_${f.id}_${mes}`,
+    tipo: 'despesa', natureza: 'operacao',
+    empresaId: ct.empresaId, contaId,
+    categoriaId: DB.config.valesCategoriaPadrao || '',
+    obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+    descricao: `Vale-transporte/refeição — ${f.nome} — ${monthLabel(mes)}`,
+    valor: r.liquido, vencimento: hoje, obs: ''
+  };
+  lanc.baixas.push({id: uid(), data: hoje, valor: r.liquido, contaId});
+  DB.lancamentos.push(lanc);
+  v.pagoLancamentoId = lanc.id;
+
+  saveDB(); renderVales();
+  toast(`Vale de ${f.nome} marcado como pago — lançamento de ${fmtMoney(r.liquido)} criado no financeiro.`);
 }
 
 function reciboValeHTML(funcId){
@@ -7398,8 +7608,10 @@ function renderLancamentos(){
           </select>
         </div>
         <div class="field"><label>Mês</label>
-          <input type="month" value="${lancMes}" ${lancPeriodo==='mes'?'':'disabled'}
+          <input type="month" value="${lancMes}"
                  onchange="lancMes=this.value; lancPeriodo='mes'; render();">
+          <p class="help" style="margin:2px 0 0;">Escolher um mês aqui já troca sozinho o
+            "Mostrar" para "Um mês" — não precisa mexer nos dois campos.</p>
         </div>
         <div class="field"><label>Empresa</label>
           <select onchange="lancEmpresa=this.value; render();">
@@ -7520,6 +7732,13 @@ function openLancModal(id, tipoPadrao){
       </div>
       <div class="field"><label>Obra (opcional)</label>
         <select id="l_obra">${opcoesObra(l?l.obraId:'')}</select></div>
+      <div class="field"><label>Operação (opcional)</label>
+        <select id="l_tipoServico">
+          <option value="">— não classificado —</option>
+          ${Object.keys(SERVICO_LABEL).map(k=>
+            `<option value="${k}" ${l&&l.tipoServico===k?'selected':''}>${SERVICO_LABEL[k]}</option>`).join('')}
+        </select>
+      </div>
       <div class="field"><label>Conta prevista</label>
         <select id="l_conta">
           <option value="">— escolha na baixa —</option>
@@ -7603,7 +7822,7 @@ function saveLanc(id, irParaBaixa){
   const dados = {
     tipo: val('l_tipo'), empresaId: emp, vencimento: venc, valor,
     descricao: desc, categoriaId: val('l_categoria'), obraId: val('l_obra'),
-    contaId: val('l_conta'), natureza,
+    tipoServico: val('l_tipoServico'), contaId: val('l_conta'), natureza,
     socio: natureza === 'particular' ? val('l_socio').trim() : '',
     pagoNaContaDe: val('l_pagoNaContaDe').trim(), obs: val('l_obs').trim()
   };
@@ -7658,6 +7877,7 @@ function openLancDetalhe(id){
           : `<tr><th>Categoria</th><td>${esc(l.categoriaId?categoriaNome(l.categoriaId):'—')}</td></tr>
              <tr><th>Conta prevista</th><td>${esc(l.contaId?contaNome(l.contaId):'— escolhida na baixa —')}</td></tr>`}
         <tr><th>Obra</th><td>${l.obraId?esc(obraNome(l.obraId)):'—'}</td></tr>
+        ${l.tipo!=='transferencia'?`<tr><th>Operação</th><td>${l.tipoServico?esc(SERVICO_LABEL[l.tipoServico]):'— não classificado —'}</td></tr>`:''}
         <tr><th>Natureza</th><td>${NATUREZA_LABEL[l.natureza]||'Operação'}${
             l.natureza==='particular'?' <span class="help" style="display:inline;">(fica fora do resultado)</span>':''}${
             l.socio?` · ${esc(l.socio)}`:''}</td></tr>
@@ -8051,7 +8271,7 @@ function renderFluxo(){
   initFluxo();
   const c = document.getElementById('content');
   if(!financeiroPronto()){ c.innerHTML = avisoPrimeiroUso(); return; }
-  c.innerHTML = blocoProjecao() + blocoResultado() + blocoPorObra() + blocoContaCorrente();
+  c.innerHTML = blocoProjecao() + blocoResultado() + blocoPorObra() + blocoPorOperacao() + blocoContaCorrente();
 }
 
 /* =========================================================
@@ -8345,6 +8565,55 @@ function blocoPorObra(){
       diária, encargos, vales, EPI — está em <b>Custo Consolidado</b>, no RH, e ainda não é
       somado automaticamente aqui. Enquanto isso não for ligado, a margem desta tabela é
       <b>maior do que a real</b>.
+    </p>
+  </div>`;
+}
+
+/* =========================================================
+   3b. RESULTADO POR OPERAÇÃO (Homem-Hora × Empreitada)
+
+   Pedido do Maycon em 01/09/2026: as duas formas de cobrar têm margens
+   diferentes (Homem-Hora é diária por função; Empreitada é preço fechado por
+   serviço medido), e ele precisa ver o resultado de cada uma separado, não só
+   misturado no resultado geral. Usa `l.tipoServico` (12_lancamentos.js) — o
+   mesmo campo e o mesmo rótulo (`SERVICO_LABEL`) do funcionário, para não
+   inventar um enum novo. Lançamento sem essa escolha cai em "Não
+   classificado", separado, em vez de sumir da conta — do mesmo jeito que
+   `blocoPorObra()` trata quem não tem obra.
+   ========================================================= */
+
+function blocoPorOperacao(){
+  const chaves = [...Object.keys(SERVICO_LABEL), ''];
+  const linhas = chaves.map(k=>{
+    let rec = 0, des = 0;
+    DB.lancamentos.forEach(l=>{
+      if((l.tipoServico||'') !== k) return;
+      if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+      const v = valorNoMes(l, fluxoMes, fluxoRegime);
+      if(!v) return;
+      if(l.tipo === 'receita') rec += v; else des += v;
+    });
+    return {nome: k ? SERVICO_LABEL[k] : 'Não classificado', rec, des, res: Math.round((rec-des)*100)/100};
+  }).filter(x=>x.rec || x.des);
+
+  return `
+  <div class="card">
+    <h2 style="margin-top:0;">Resultado por operação — ${monthLabel(fluxoMes)}</h2>
+    <div class="table-wrap">
+      ${linhas.length ? `<table>
+        <thead><tr><th>Operação</th><th class="num">Recebido</th><th class="num">Custo</th><th class="num">Resultado</th><th class="num">Margem</th></tr></thead>
+        <tbody>${linhas.map(x=>`<tr>
+          <td><b>${esc(x.nome)}</b></td>
+          <td class="num">${fmtMoney(x.rec)}</td>
+          <td class="num">${fmtMoney(x.des)}</td>
+          <td class="num" style="font-weight:700;color:${x.res<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(x.res)}</td>
+          <td class="num">${x.rec?fmtNum(x.res/x.rec*100,1)+'%':'—'}</td>
+        </tr>`).join('')}</tbody></table>`
+      : '<div class="empty">Nenhum lançamento classificado por operação neste mês. Escolha "Operação" no lançamento (Homem-Hora ou Empreitada) para aparecer aqui.</div>'}
+    </div>
+    <p class="help" style="margin-bottom:0;">
+      Igual ao resultado por obra: só entra o que foi lançado no financeiro. O custo da mão
+      de obra ainda não é somado sozinho aqui — ver o aviso em <b>Resultado por obra</b>.
     </p>
   </div>`;
 }
