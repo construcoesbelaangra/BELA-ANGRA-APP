@@ -688,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-01 · 29';
+const VERSAO = '2026-09-01 · 30';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -8984,22 +8984,28 @@ window.addEventListener('resize', function(){
   let gisPronto   = false;
   let sincronizando = false;
 
-  /* Guardado em sessionStorage, NUNCA em localStorage nem em DB: sobrevive a
-     recarregar a página (sessionStorage aguenta F5/reabrir a aba, ao
-     contrário de uma variável solta em memória), mas some sozinho quando a
-     aba/app fecha de verdade — não é um token "para sempre" espalhado pelo
-     aparelho, e nunca viaja na sincronização (não é dado do app).
+  /* Guardado em localStorage — NUNCA no DB, que viaja na sincronização e o
+     token não pode ir junto (não é dado do app, é credencial deste aparelho).
 
-     Antes disso (até 01/09/2026) o token vivia só na variável acima, e por
-     isso se perdia a CADA recarregamento de página — não só quando o Google
-     de fato expirava o acesso (~1h). Isso fazia parecer que o Google
-     "desconectava toda hora": bastava abrir o app de novo para pedir login,
-     mesmo minutos depois de já ter conectado. Relatado pelo Maycon em
-     01/09/2026. */
+     Precisa ser localStorage, não sessionStorage: o Maycon usa o app
+     INSTALADO (Edge no PC, "Adicionar à Tela de Início" no iPhone), não uma
+     aba de navegador que fica aberta o dia todo. Fechar e reabrir um app
+     instalado destrói a sessionStorage de qualquer jeito — ela está presa à
+     janela/aba que fechou, não ao site — então guardar lá só ajudava dentro
+     de uma ÚNICA sessão contínua (ex.: um F5), quase nunca o caso real.
+
+     Antes disso (até 01/09/2026) o token vivia só numa variável em memória, e
+     por isso se perdia a CADA recarregamento de página — não só quando o
+     Google de fato expirava o acesso (~1h). Isso fazia parecer que o Google
+     "desconectava toda hora": bastava fechar e reabrir o app para pedir login
+     de novo, mesmo minutos depois de já ter conectado. O token continua
+     expirando sozinho no mesmo prazo de sempre (`tokenAte`, ~1h) — só que
+     agora reabrir o app DENTRO desse prazo não pede login à toa. Relatado
+     pelo Maycon em 01/09/2026. */
   const TOKEN_KEY = 'belaAngraDriveToken';
   (function carregarTokenSalvo(){
     try{
-      const obj = JSON.parse(sessionStorage.getItem(TOKEN_KEY) || 'null');
+      const obj = JSON.parse(localStorage.getItem(TOKEN_KEY) || 'null');
       if(obj && obj.token && obj.ate && Date.now() < obj.ate){
         token = obj.token; tokenAte = obj.ate;
       }
@@ -9007,8 +9013,8 @@ window.addEventListener('resize', function(){
   })();
   function salvarTokenSessao(){
     try{
-      if(token && tokenAte) sessionStorage.setItem(TOKEN_KEY, JSON.stringify({token, ate: tokenAte}));
-      else sessionStorage.removeItem(TOKEN_KEY);
+      if(token && tokenAte) localStorage.setItem(TOKEN_KEY, JSON.stringify({token, ate: tokenAte}));
+      else localStorage.removeItem(TOKEN_KEY);
     }catch(e){}
   }
 
