@@ -688,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-01 · 27';
+const VERSAO = '2026-09-01 · 28';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4199,6 +4199,26 @@ function openAdiantamentoModal(id){
       </div>
     </div>
     <div id="a_destino" class="card" style="background:var(--azul-claro);border-color:#c9d6f7;padding:12px 14px;"></div>
+    <div class="grid grid-2" style="margin-top:12px;">
+      <div class="field"><label>De qual conta saiu o dinheiro *</label>
+        <select id="a_conta">
+          <option value="">— escolha —</option>
+          ${DB.contas.map(ct=>`<option value="${ct.id}" ${a.contaId===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Categoria (opcional)</label>
+        <select id="a_categoria">
+          <option value="">— sem categoria —</option>
+          ${categoriasDe('despesa').map(ct=>`<option value="${ct.id}" ${a.categoriaId===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <p class="help" style="margin-bottom:0;">
+      O dinheiro do vale <b>sai da conta agora</b>, no dia do adiantamento — por isso entra
+      sozinho no financeiro, já com baixa nesta data. O desconto do funcionário (na sexta ou
+      no vale de VT/VR) é <b>separado</b> e não duplica isto: os dois juntos fecham no total
+      certo, só a data em que o dinheiro saiu de fato é diferente da data do desconto.
+    </p>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveAdiantamento('${a.id}')">Salvar vale</button>
@@ -4243,11 +4263,45 @@ function atualizaDestinoVale(){
   }
 }
 
+/* Ponte com o financeiro (01/09/2026): o vale/adiantamento é dinheiro que sai
+   da conta NA HORA em que é entregue — bem antes do desconto (na sexta do
+   diarista, ou no vale de VT/VR do fichado, meses depois). Sem lançar isso já
+   no dia do adiantamento, o saldo do app fica maior do que o saldo real do
+   banco enquanto o desconto não chega (foi exatamente o que o Maycon achou:
+   R$ 150 de vales dados a José Carlos e Victor Hugo que ainda não tinham
+   saído de lugar nenhum no app). O desconto futuro (fechamento ou vale de
+   VT/VR) já sai pelo LÍQUIDO — bruto menos vale — então lançar os dois nunca
+   duplica: a soma bate com o custo total, só a data de cada pedaço é
+   diferente. */
+function sincronizaLancamentoAdiantamento(a){
+  const existente = a.lancamentoId && DB.lancamentos.find(l=>l.id===a.lancamentoId);
+  const f = func(a.funcionarioId);
+  const ct = conta(a.contaId);
+  if(!ct) return;
+  const campos = {
+    tipo:'despesa', natureza:'operacao', empresaId: ct.empresaId, contaId: a.contaId,
+    categoriaId: a.categoriaId || '', obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+    descricao: `Vale/adiantamento — ${f.nome}${a.descricao?' — '+a.descricao:''}`,
+    valor: a.valor, vencimento: a.data, obs: ''
+  };
+  if(existente){
+    Object.assign(existente, campos);
+    existente.baixas = [{id: existente.baixas[0]?existente.baixas[0].id:uid(), data: a.data, valor: a.valor, contaId: a.contaId}];
+  }else{
+    const lanc = Object.assign({id: uid(), baixas: [], origem: 'rh', origemRef: `adiantamento_${a.id}`}, campos);
+    lanc.baixas.push({id: uid(), data: a.data, valor: a.valor, contaId: a.contaId});
+    DB.lancamentos.push(lanc);
+    a.lancamentoId = lanc.id;
+  }
+}
+
 function saveAdiantamento(id){
   const valor = numVal('a_valor');
   if(valor<=0){ alert('Informe o valor do vale.'); return; }
   const f = func(val('a_func'));
   if(!f){ alert('Escolha o funcionário.'); return; }
+  const contaId = val('a_conta');
+  if(!contaId){ alert('Escolha de qual conta saiu o dinheiro — é o que mantém o saldo do app batendo com o do banco.'); return; }
   const fichado = f.tipo === 'fichado';
   const dataISO = val('a_data');
   const data = {
@@ -4255,16 +4309,23 @@ function saveAdiantamento(id){
     descricao: val('a_desc').trim(),
     modo: fichado ? 'fichado_vale' : 'diarista_semana',
     parcelas: fichado ? Math.max(1, parseInt(val('a_parcelas'))||1) : 1,
-    mesInicio: fichado ? (val('a_mesInicio') || mesMais(dataISO.slice(0,7), 1)) : ''
+    mesInicio: fichado ? (val('a_mesInicio') || mesMais(dataISO.slice(0,7), 1)) : '',
+    contaId, categoriaId: val('a_categoria'),
+    lancamentoId: (DB.adiantamentos.find(x=>x.id===id)||{}).lancamentoId || ''
   };
+  sincronizaLancamentoAdiantamento(data);
   const idx = DB.adiantamentos.findIndex(x=>x.id===id);
   if(idx>=0) DB.adiantamentos[idx]=data; else DB.adiantamentos.push(data);
   saveDB(); closeModal(); renderAdiantamentos();
   toast('Vale lançado — ' + destinoVale(data).texto);
 }
 function deleteAdiantamento(id){
-  if(!confirm('Excluir este vale?')) return;
-  DB.adiantamentos = DB.adiantamentos.filter(a=>a.id!==id);
+  const a = DB.adiantamentos.find(x=>x.id===id);
+  if(!a) return;
+  const aviso = a.lancamentoId ? '\n\nO lançamento de saída criado no financeiro também será excluído.' : '';
+  if(!confirm('Excluir este vale?' + aviso)) return;
+  if(a.lancamentoId) DB.lancamentos = DB.lancamentos.filter(l=>l.id!==a.lancamentoId);
+  DB.adiantamentos = DB.adiantamentos.filter(x=>x.id!==id);
   saveDB(); renderAdiantamentos(); toast('Vale excluído.');
 }
 /* =========================================================
