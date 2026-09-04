@@ -688,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-04 · 31';
+const VERSAO = '2026-09-04 · 32';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -793,6 +793,13 @@ function defaultDB(){
        saída — é a ponte já pensada entre o RH e o financeiro. */
     pagamentos: [],
     vales: [],            // VT/VR dos fichados
+    /* Fechamento dos fichados (04/09/2026): {id, funcionarioId, mes, liquidoContabilidade,
+       adiantamentoPago, adiantamentoQuando, adiantamentoLancamentoId,
+       saldoPago, saldoQuando, saldoLancamentoId}. O líquido é o valor que a
+       contabilidade manda no holerite (bruto menos faltas e outros descontos) —
+       o Maycon digita esse número direto aqui; o app só desconta o adiantamento
+       de 40% por cima, que é o único desconto que a contabilidade não sabe. */
+    fechFichados: [],
     holerites: [],
     epiEntradas: [],
     epiSaidas: [],
@@ -861,6 +868,10 @@ function defaultDB(){
       // (05_diarista.js) — de onde sai o pagamento da diária
       fechamentoContaPadrao: '',
       fechamentoCategoriaPadrao: '',
+      // mesma ponte, para o adiantamento (dia 20) e o saldo (5º dia útil) dos
+      // fichados (05b_fichados.js)
+      fichadosContaPadrao: '',
+      fichadosCategoriaPadrao: '',
       // códigos das rubricas do holerite (conforme a contabilidade)
       codigos: {
         saldoSalario:'001', difSalario:'108', salarioFamilia:'230',
@@ -1278,14 +1289,20 @@ function ultimoDiaMes(ym){
   const [y,m] = ym.split('-').map(Number);
   return `${ym}-${String(daysInMonth(y,m)).padStart(2,'0')}`;
 }
-/* 5º dia útil do mês — data em que o salário do mês anterior é pago.
-   Feriado não é dia útil, então não conta e não pode ser o próprio dia do
-   pagamento (o banco/escritório não abre). */
+/* 5º dia útil do mês — data em que o saldo de salário do fichado é pago.
+   Aqui "dia útil" é o dia útil DA FOLHA/contabilidade, que conta SÁBADO
+   também — só domingo e feriado ficam de fora. É diferente do "dia útil" do
+   vale de VT/VR (`diasDeSemanaDoMes`, seg-sex) e do dia trabalhado do
+   diarista, que não contam sábado — não confundir os dois. Confirmado com o
+   Maycon em 04/09/2026: o app dizia que o 5º dia útil de setembro/2026 caía
+   dia 08/09 (pulando sábado 05 e domingo 06), quando a conta certa da
+   contabilidade dá 05/09 (sábado conta, e ainda não tinha chegado num
+   feriado para pular). */
 function quintoDiaUtil(ym){
   let iso = primeiroDiaMes(ym), n = 0;
   while(true){
     const dw = dowOf(iso);
-    if(dw>=1 && dw<=5 && !isFeriado(iso)) n++;
+    if(dw!==0 && !isFeriado(iso)) n++;
     if(n===5) return iso;
     iso = addDays(iso, 1);
   }
@@ -3875,22 +3892,15 @@ function renderFechamento(){
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th style="width:34px;">Pago</th>
               <th>Funcionário</th><th>Vínculo</th><th class="num">Diárias</th>
               <th class="num">Faltas</th><th class="num">Valor diária</th><th class="num">Bruto</th>
-              <th class="num">Vales</th><th class="num">Líquido</th><th></th>
+              <th class="num">Vales</th><th class="num">Líquido</th><th style="width:60px;">Pago</th><th></th>
             </tr></thead>
             <tbody>
               ${grupo.map(x=>{
                 const per = x.f.periodicidade;
                 const pg = pagamentoDe(x.f.id, fcSexta, per);
                 return `<tr${pg?' style="background:#f4faf6;"':''}>
-                <td class="num">
-                  <input type="checkbox" ${pg?'checked':''} style="width:17px;height:17px;cursor:pointer;"
-                    ${!pg && !DB.config.fechamentoContaPadrao?'disabled title="Escolha a conta de pagamento acima primeiro"':
-                      `title="${pg?`Pago em ${fmtDate(pg.quando)} — clique para desmarcar`:'Marcar como pago'}"`}
-                    onclick="togglePago('${x.f.id}','${fcSexta}','${per}',${x.liquido})">
-                </td>
                 <td><b>${esc(x.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(x.f.funcao||'')} · ${SERVICO_LABEL[x.f.tipoServico]||''}</span></td>
                 <td><span class="badge ${per==='quinzenal'?'badge-purple':'badge-gray'}">${PERIODICIDADE_LABEL[per]}</span></td>
                 <td class="num">${x.totalDias}</td>
@@ -3899,13 +3909,19 @@ function renderFechamento(){
                 <td class="num">${fmtMoney(x.bruto)}</td>
                 <td class="num" style="color:var(--vermelho);">${x.totalVales?'- '+fmtMoney(x.totalVales):''}</td>
                 <td class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(x.liquido)}</td>
+                <td class="num">
+                  <input type="checkbox" ${pg?'checked':''} style="width:17px;height:17px;cursor:pointer;"
+                    ${!pg && !DB.config.fechamentoContaPadrao?'disabled title="Escolha a conta de pagamento acima primeiro"':
+                      `title="${pg?`Pago em ${fmtDate(pg.quando)} — clique para desmarcar`:'Marcar como pago'}"`}
+                    onclick="togglePago('${x.f.id}','${fcSexta}','${per}',${x.liquido})">
+                </td>
                 <td style="white-space:nowrap;">
                   <button class="btn btn-secondary btn-sm" onclick="abrirMensagem('${x.f.id}','${per}')" title="Texto pronto para o WhatsApp">Mensagem</button>
                   <button class="btn btn-secondary btn-sm" onclick="printRecibaDiarista('${x.f.id}')">Recibo</button>
                 </td>
               </tr>`;}).join('')}
             </tbody>
-            <tfoot><tr><th colspan="8" style="text-align:right;">Subtotal da obra</th><th class="num">${fmtMoney(sub)}</th><th></th></tr></tfoot>
+            <tfoot><tr><th colspan="7" style="text-align:right;">Subtotal da obra</th><th class="num">${fmtMoney(sub)}</th><th></th><th></th></tr></tfoot>
           </table>
         </div>`;
       }).join('') : `<div class="empty">Nenhum lançamento de ponto para diaristas nesta sexta. Lance o ponto em "Ponto", na folha Diaristas.</div>`}
@@ -4332,27 +4348,155 @@ function deleteAdiantamento(id){
    FECHAMENTO DOS FICHADOS
    Dia 20 → adiantamento de 40% do salário
    5º dia útil do mês seguinte → pagamento do saldo do mês
+
+   Redesenhado em 04/09/2026, a pedido do Maycon. Antes, o "líquido" e os
+   "descontos" vinham do holerite detalhado (rubrica por rubrica), que é uma
+   tela separada — e ele achou confuso não saber de onde vinham os números.
+   Na prática, todo mês a contabilidade já manda o LÍQUIDO PRONTO (bruto menos
+   faltas, INSS e outros descontos) — a única coisa que falta descontar é o
+   adiantamento, que a contabilidade não sabe que existe. Por isso agora ele
+   só digita esse número final aqui:
+
+       Saldo a pagar = Líquido informado pela contabilidade − Adiantamento
+
+   As duas datas (dia 20 e 5º dia útil) viram DUAS marcas de pago
+   independentes — cada uma cria (e apaga, se desmarcada) o próprio
+   lançamento no financeiro, na mesma ponte já usada no fechamento dos
+   diaristas e no vale de VT/VR.
    ========================================================= */
 let fcMesFichados = null;
+
+/* registro do fechamento de um fichado no mês: o líquido digitado e as duas marcas de pago */
+function getFechFichado(funcId, mes){
+  let r = DB.fechFichados.find(x=>x.funcionarioId===funcId && x.mes===mes);
+  if(!r){
+    r = {id:uid(), funcionarioId:funcId, mes, liquidoContabilidade:'',
+         adiantamentoPago:false, adiantamentoQuando:'', adiantamentoLancamentoId:'',
+         saldoPago:false, saldoQuando:'', saldoLancamentoId:''};
+    DB.fechFichados.push(r); saveDB();
+  }
+  return r;
+}
 
 function calcFichado(f, mes){
   const salario = Number(f.salario)||0;
   const pctAdiant = Number(DB.config.adiantamentoPercent)||40;
-  const adiantamento = Math.round(salario*pctAdiant/100*100)/100;
+  const dataAdiantamento = `${mes}-20`;
+  /* quem foi admitido depois do dia 20 não recebeu adiantamento nenhum —
+     só vai receber o saldo do mês inteiro, sem desconto nenhum */
+  const temDireitoAdiantamento = !f.admissao || f.admissao <= dataAdiantamento;
+  const adiantamento = temDireitoAdiantamento ? Math.round(salario*pctAdiant/100*100)/100 : 0;
 
-  /* descontos: usa o holerite do mês, se já estiver preenchido */
-  const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===mes);
-  const t = h ? totaisHolerite(f, h) : null;
-  const temHolerite = !!(t && t.totalVenc > 0);
+  const reg = getFechFichado(f.id, mes);
+  const liquido = (reg.liquidoContabilidade==='' || reg.liquidoContabilidade===null || reg.liquidoContabilidade===undefined)
+    ? null : Number(reg.liquidoContabilidade);
+  const saldo = liquido===null ? null : Math.round((liquido-adiantamento)*100)/100;
 
-  const bruto = temHolerite ? t.totalVenc : salario;
-  const descontos = temHolerite ? t.totalDesc : 0;
-  const liquido = bruto - descontos;
-  const saldo = Math.round((liquido - adiantamento)*100)/100;
+  return {f, mes, reg, salario, pctAdiant, adiantamento, temDireitoAdiantamento,
+          liquido, saldo, dataAdiantamento, dataPagamento: quintoDiaUtil(mesMais(mes, 1))};
+}
 
-  return {f, mes, salario, pctAdiant, adiantamento, temHolerite, bruto, descontos, liquido, saldo,
-          dataAdiantamento: `${mes}-20`,
-          dataPagamento: quintoDiaUtil(mesMais(mes, 1))};
+function setLiquidoContabilidade(funcId, mes, valor){
+  const reg = getFechFichado(funcId, mes);
+  if(reg.saldoPago){ toast('O saldo deste mês já está marcado como pago — desmarque para editar.'); renderFechamento(); return; }
+  reg.liquidoContabilidade = valor==='' ? '' : (parseFloat(valor)||0);
+  saveDB(); renderFechamento();
+}
+
+/* ---------------------------------------------------------
+   PONTE COM O FINANCEIRO — mesma ideia do fechamento dos diaristas
+   (togglePago, 05_diarista.js) e do vale VT/VR (toggleValePago,
+   06a_vales.js): marcar cria o lançamento já com baixa; desmarcar apaga.
+   A data usada é a do PRÓPRIO evento (dia 20 / 5º dia útil), não o dia do
+   clique — mesmo motivo de sempre: lançar com atraso não pode bagunçar o mês.
+   --------------------------------------------------------- */
+function toggleAdiantamentoFichadoPago(funcId, mes){
+  const f = func(funcId);
+  const reg = getFechFichado(funcId, mes);
+
+  if(reg.adiantamentoPago){
+    if(!confirm(`Desmarcar o adiantamento de ${f.nome} como pago?\n\nIsso apaga o lançamento criado no financeiro.`)) return;
+    if(reg.adiantamentoLancamentoId) DB.lancamentos = DB.lancamentos.filter(l=>l.id!==reg.adiantamentoLancamentoId);
+    reg.adiantamentoPago = false; reg.adiantamentoQuando = ''; reg.adiantamentoLancamentoId = '';
+    saveDB(); renderFechamento();
+    toast('Adiantamento desmarcado.');
+    return;
+  }
+
+  const c = calcFichado(f, mes);
+  if(!c.temDireitoAdiantamento){ toast(`${f.nome} foi admitido depois do dia 20 — não há adiantamento a marcar.`); return; }
+
+  const contaId = DB.config.fichadosContaPadrao;
+  if(!contaId){ toast('Escolha antes de qual conta sai o pagamento (acima da lista).'); return; }
+  const ct = conta(contaId);
+  if(!ct){ toast('A conta configurada não existe mais — escolha outra.'); return; }
+
+  reg.adiantamentoPago = true; reg.adiantamentoQuando = todayISO();
+
+  const lanc = {
+    id: uid(), baixas: [], origem: 'rh', origemRef: `adiantfichado_${f.id}_${mes}`,
+    tipo: 'despesa', natureza: 'operacao',
+    empresaId: ct.empresaId, contaId,
+    categoriaId: DB.config.fichadosCategoriaPadrao || '',
+    obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+    descricao: `Adiantamento de salário (dia 20) — ${f.nome} — ${monthLabel(mes)}`,
+    valor: c.adiantamento, vencimento: c.dataAdiantamento, obs: ''
+  };
+  lanc.baixas.push({id: uid(), data: c.dataAdiantamento, valor: c.adiantamento, contaId});
+  DB.lancamentos.push(lanc);
+  reg.adiantamentoLancamentoId = lanc.id;
+
+  saveDB(); renderFechamento();
+  toast(`Adiantamento de ${f.nome} marcado como pago — lançamento de ${fmtMoney(c.adiantamento)} criado no financeiro.`);
+}
+
+function toggleSaldoFichadoPago(funcId, mes){
+  const f = func(funcId);
+  const reg = getFechFichado(funcId, mes);
+
+  if(reg.saldoPago){
+    if(!confirm(`Desmarcar o saldo de ${f.nome} como pago?\n\nIsso apaga o lançamento criado no financeiro.`)) return;
+    if(reg.saldoLancamentoId) DB.lancamentos = DB.lancamentos.filter(l=>l.id!==reg.saldoLancamentoId);
+    reg.saldoPago = false; reg.saldoQuando = ''; reg.saldoLancamentoId = '';
+    saveDB(); renderFechamento();
+    toast('Saldo desmarcado.');
+    return;
+  }
+
+  const c = calcFichado(f, mes);
+  if(c.liquido===null){ toast('Preencha o líquido informado pela contabilidade antes de marcar o saldo como pago.'); return; }
+
+  const contaId = DB.config.fichadosContaPadrao;
+  if(!contaId){ toast('Escolha antes de qual conta sai o pagamento (acima da lista).'); return; }
+  const ct = conta(contaId);
+  if(!ct){ toast('A conta configurada não existe mais — escolha outra.'); return; }
+
+  reg.saldoPago = true; reg.saldoQuando = todayISO();
+
+  /* saldo zero ou negativo (o adiantamento já cobriu o líquido inteiro):
+     marca como pago, mas não há dinheiro saindo — não cria lançamento */
+  if(c.saldo <= 0){
+    reg.saldoLancamentoId = '';
+    saveDB(); renderFechamento();
+    toast(`${f.nome}: marcado, mas o saldo é ${fmtMoney(c.saldo)} — nenhum lançamento foi criado.`);
+    return;
+  }
+
+  const lanc = {
+    id: uid(), baixas: [], origem: 'rh', origemRef: `saldofichado_${f.id}_${mes}`,
+    tipo: 'despesa', natureza: 'operacao',
+    empresaId: ct.empresaId, contaId,
+    categoriaId: DB.config.fichadosCategoriaPadrao || '',
+    obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+    descricao: `Saldo de salário (5º dia útil) — ${f.nome} — ${monthLabel(mes)}`,
+    valor: c.saldo, vencimento: c.dataPagamento, obs: ''
+  };
+  lanc.baixas.push({id: uid(), data: c.dataPagamento, valor: c.saldo, contaId});
+  DB.lancamentos.push(lanc);
+  reg.saldoLancamentoId = lanc.id;
+
+  saveDB(); renderFechamento();
+  toast(`Saldo de ${f.nome} marcado como pago — lançamento de ${fmtMoney(c.saldo)} criado no financeiro.`);
 }
 
 function renderFechamentoFichados(){
@@ -4364,12 +4508,17 @@ function renderFechamentoFichados(){
   const rows = fichados.map(f=>calcFichado(f, mes));
 
   const totAdiant = rows.reduce((s,r)=>s+r.adiantamento,0);
-  const totSaldo  = rows.reduce((s,r)=>s+r.saldo,0);
-  const totLiq    = rows.reduce((s,r)=>s+r.liquido,0);
+  const totLiq    = rows.reduce((s,r)=>s+(r.liquido||0),0);
+  const totSaldo  = rows.reduce((s,r)=>s+(r.saldo||0),0);
   const pct = rows.length ? rows[0].pctAdiant : (Number(DB.config.adiantamentoPercent)||40);
   const dataAdiant = `${mes}-20`;
   const dataPag = quintoDiaUtil(mesMais(mes,1));
-  const semHolerite = rows.filter(r=>!r.temHolerite).length;
+  const semLiquido = rows.filter(r=>r.liquido===null).length;
+  const contaPadrao = DB.config.fichadosContaPadrao;
+
+  const adiantElegiveis = rows.filter(r=>r.temDireitoAdiantamento);
+  const adiantPagos = adiantElegiveis.filter(r=>r.reg.adiantamentoPago);
+  const saldoPagos = rows.filter(r=>r.reg.saldoPago);
 
   c.innerHTML = `
     <div class="card">
@@ -4386,13 +4535,46 @@ function renderFechamentoFichados(){
           <div class="l">Adiantamento de ${pct}% — dia 20</div></div>
         <div class="kpi"><div class="v" style="font-size:15px;">${fmtDate(dataPag)}</div>
           <div class="l">Saldo — 5º dia útil de ${monthLabel(mesMais(mes,1))}</div></div>
-        <div class="kpi"><div class="v">${fmtMoney(totLiq)}</div><div class="l">Folha líquida do mês</div></div>
+        <div class="kpi"><div class="v">${fmtMoney(totLiq)}</div><div class="l">Folha líquida do mês${semLiquido?` · falta ${semLiquido}`:''}</div></div>
       </div>
 
-      ${semHolerite ? `<p class="help" style="margin:10px 0 0;padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
-        <b>${semHolerite}</b> funcionário(s) ainda sem holerite preenchido em ${monthLabel(mes)} — para esses o saldo está
-        calculado só com o salário, <b>sem os descontos</b> (INSS, faltas). Preencha na tela Holerite para o número ficar exato.
+      ${semLiquido ? `<p class="help" style="margin:10px 0 0;padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
+        <b>${semLiquido}</b> funcionário(s) ainda sem o <b>líquido informado pela contabilidade</b> em ${monthLabel(mes)} —
+        preencha na coluna abaixo (é o valor que vem no holerite que ela manda) para o saldo a pagar aparecer.
       </p>` : ''}
+
+      ${rows.length ? `
+      <div style="margin:14px 0 0;padding:10px 14px;border-radius:8px;background:#f3f4f7;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div style="font-size:12.5px;">
+            <b>${adiantPagos.length} de ${adiantElegiveis.length}</b> adiantamento(s) pago(s)
+            &nbsp;·&nbsp; <b>${saldoPagos.length} de ${rows.length}</b> saldo(s) pago(s)
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
+            <span>De onde sai o pagamento:
+              <select style="margin-left:4px;" onchange="DB.config.fichadosContaPadrao=this.value; saveDB(); renderFechamento();">
+                <option value="">— escolha a conta —</option>
+                ${DB.contas.map(ct=>`<option value="${ct.id}" ${contaPadrao===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('')}
+              </select>
+            </span>
+            <span>Categoria:
+              <select style="margin-left:4px;" onchange="DB.config.fichadosCategoriaPadrao=this.value; saveDB(); renderFechamento();">
+                <option value="">— sem categoria —</option>
+                ${categoriasDe('despesa').map(ct=>`<option value="${ct.id}" ${DB.config.fichadosCategoriaPadrao===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+              </select>
+            </span>
+          </div>
+        </div>
+        <span class="help" style="display:block;margin-top:3px;">
+          Marque o quadradinho conforme for pagando — adiantamento e saldo são marcas independentes.
+          Cada uma já cria o lançamento de saída no financeiro (na conta escolhida acima), sem redigitar.
+        </span>
+      </div>
+      ${!contaPadrao?`<p class="help" style="margin:8px 0 0;color:var(--vermelho);">
+        Escolha acima de qual conta sai o pagamento — sem isso, marcar <b>Pago</b> não lança nada no financeiro.
+        ${DB.contas.length?'':'Não há conta cadastrada ainda: '}
+        ${DB.contas.length?'':'<a href="#" onclick="goTo(\'caixa\'); return false;">cadastre uma em Caixa e Contas</a>.'}
+      </p>`:''}` : ''}
 
       <div class="table-wrap" style="margin-top:14px;">
         ${rows.length ? `
@@ -4400,27 +4582,48 @@ function renderFechamentoFichados(){
           <thead><tr>
             <th>Funcionário</th><th class="num">Salário</th>
             <th class="num">Adiantamento (${pct}%)</th>
-            <th class="num">Descontos</th><th class="num">Líquido do mês</th>
-            <th class="num">Saldo a pagar</th><th></th>
+            <th class="num" style="min-width:130px;">Líquido do mês<br><span style="font-weight:400;text-transform:none;font-size:10px;">informado pela contabilidade</span></th>
+            <th class="num">Saldo a pagar</th>
+            <th style="width:70px;">Adiant.<br>pago</th><th style="width:70px;">Saldo<br>pago</th><th></th>
           </tr></thead>
           <tbody>
-            ${rows.map(r=>`<tr>
-              <td><b>${esc(r.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(r.f.funcao||'')}${r.temHolerite?'':' · sem holerite'}</span></td>
+            ${rows.map(r=>{
+              const dis = r.reg.saldoPago ? 'disabled title="Saldo já pago — desmarque para editar"' : '';
+              return `<tr>
+              <td><b>${esc(r.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(r.f.funcao||'')}</span></td>
               <td class="num">${fmtMoney(r.salario)}</td>
-              <td class="num" style="color:var(--azul-esc);font-weight:700;">${fmtMoney(r.adiantamento)}</td>
-              <td class="num" style="color:var(--vermelho);">${r.descontos?'- '+fmtMoney(r.descontos):'—'}</td>
-              <td class="num">${fmtMoney(r.liquido)}</td>
-              <td class="num" style="font-weight:800;color:${r.saldo<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(r.saldo)}</td>
-              <td><button class="btn btn-secondary btn-sm" onclick="printReciboAdiantamento('${r.f.id}')">Recibo do adiant.</button></td>
-            </tr>`).join('')}
+              <td class="num" style="color:var(--azul-esc);font-weight:700;">${r.temDireitoAdiantamento?fmtMoney(r.adiantamento):'—'}
+                ${r.temDireitoAdiantamento?'':'<br><span style="font-size:10px;color:#9aa0ab;">admitido após o dia 20</span>'}</td>
+              <td class="num">
+                <input type="number" step="0.01" style="min-width:90px;text-align:right;" value="${r.liquido===null?'':r.liquido}"
+                  placeholder="0,00" ${dis} onwheel="this.blur()"
+                  onchange="setLiquidoContabilidade('${r.f.id}','${mes}',this.value)">
+              </td>
+              <td class="num" style="font-weight:800;color:${r.saldo===null?'#9aa0ab':(r.saldo<0?'var(--vermelho)':'var(--verde)')};">
+                ${r.saldo===null?'—':fmtMoney(r.saldo)}</td>
+              <td class="num">
+                ${r.temDireitoAdiantamento ? `<input type="checkbox" ${r.reg.adiantamentoPago?'checked':''} style="width:17px;height:17px;cursor:pointer;"
+                    ${!r.reg.adiantamentoPago && !contaPadrao?'disabled title="Escolha a conta de pagamento acima primeiro"':
+                      `title="${r.reg.adiantamentoPago?`Pago em ${fmtDate(r.reg.adiantamentoQuando)} — clique para desmarcar`:'Marcar como pago'}"`}
+                    onclick="toggleAdiantamentoFichadoPago('${r.f.id}','${mes}')">`
+                  : '<span style="color:#9aa0ab;">—</span>'}
+              </td>
+              <td class="num">
+                <input type="checkbox" ${r.reg.saldoPago?'checked':''} style="width:17px;height:17px;cursor:pointer;"
+                  ${!r.reg.saldoPago && (!contaPadrao || r.liquido===null)?`disabled title="${r.liquido===null?'Preencha o líquido do mês primeiro':'Escolha a conta de pagamento acima primeiro'}"`:
+                    `title="${r.reg.saldoPago?`Pago em ${fmtDate(r.reg.saldoQuando)} — clique para desmarcar`:'Marcar como pago'}"`}
+                  onclick="toggleSaldoFichadoPago('${r.f.id}','${mes}')">
+              </td>
+              <td><button class="btn btn-secondary btn-sm" onclick="printReciboAdiantamento('${r.f.id}')" ${r.temDireitoAdiantamento?'':'disabled'}>Recibo do adiant.</button></td>
+            </tr>`;}).join('')}
           </tbody>
           <tfoot><tr>
             <th style="text-align:right;">TOTAL</th>
             <th class="num">${fmtMoney(rows.reduce((s,r)=>s+r.salario,0))}</th>
             <th class="num">${fmtMoney(totAdiant)}</th>
-            <th class="num">${fmtMoney(rows.reduce((s,r)=>s+r.descontos,0))}</th>
             <th class="num">${fmtMoney(totLiq)}</th>
-            <th class="num">${fmtMoney(totSaldo)}</th><th></th>
+            <th class="num">${fmtMoney(totSaldo)}</th>
+            <th></th><th></th><th></th>
           </tr></tfoot>
         </table>` : '<div class="empty">Nenhum funcionário fichado ativo.</div>'}
       </div>
@@ -4431,7 +4634,8 @@ function renderFechamentoFichados(){
         <button class="btn btn-secondary" onclick="printTodosAdiantamentos()">Recibos de adiantamento (PDF)</button>
       </div>` : ''}
       <p class="help">
-        O adiantamento sai sempre no <b>dia 20</b> e o saldo no <b>5º dia útil do mês seguinte</b>.
+        O adiantamento sai sempre no <b>dia 20</b> e o saldo no <b>5º dia útil do mês seguinte</b> —
+        aqui "dia útil" conta sábado também, só domingo e feriado ficam de fora.
         O percentual do adiantamento fica em Configurações.
       </p>
     </div>
@@ -4467,13 +4671,16 @@ function reciboAdiantamentoHTML(r){
   </div>`;
 }
 function printReciboAdiantamento(funcId){
-  doPrint(reciboAdiantamentoHTML(calcFichado(func(funcId), fcMesFichados)));
+  const r = calcFichado(func(funcId), fcMesFichados);
+  if(!r.temDireitoAdiantamento){ alert('Este funcionário foi admitido depois do dia 20 — não há adiantamento neste mês.'); return; }
+  doPrint(reciboAdiantamentoHTML(r));
 }
 function printTodosAdiantamentos(){
   const rows = ativosNoMes(fcMesFichados).filter(f=>f.tipo==='fichado')
     .sort(cmpFuncionarios)
-    .map(f=>calcFichado(f, fcMesFichados));
-  if(!rows.length){ alert('Nenhum fichado ativo.'); return; }
+    .map(f=>calcFichado(f, fcMesFichados))
+    .filter(r=>r.temDireitoAdiantamento);
+  if(!rows.length){ alert('Nenhum fichado com adiantamento a receber neste mês.'); return; }
   doPrint(rows.map((r,i)=>`<div class="${i<rows.length-1?'pagebreak':''}">${reciboAdiantamentoHTML(r)}</div>`).join(''));
 }
 
@@ -4491,25 +4698,26 @@ function printFolhaFichados(){
     <table class="dtab">
       <thead><tr><th>#</th><th>Funcionário</th><th>Função</th><th>Obra</th>
         <th style="text-align:right;">Salário</th><th style="text-align:right;">Adiant. (dia 20)</th>
-        <th style="text-align:right;">Descontos</th><th style="text-align:right;">Líquido</th>
+        <th style="text-align:right;">Líquido (contabilidade)</th>
         <th style="text-align:right;">Saldo (5º d.u.)</th></tr></thead>
       <tbody>${rows.map((r,i)=>`<tr>
         <td class="c">${i+1}</td><td>${esc(r.f.nome)}</td><td>${esc(r.f.funcao||'—')}</td>
         <td>${esc(obraNome(r.f.obraPadrao))}</td>
-        <td class="n">${fmtNum(r.salario)}</td><td class="n">${fmtNum(r.adiantamento)}</td>
-        <td class="n">${r.descontos?fmtNum(r.descontos):'—'}</td>
-        <td class="n">${fmtNum(r.liquido)}</td><td class="n"><b>${fmtNum(r.saldo)}</b></td>
+        <td class="n">${fmtNum(r.salario)}</td>
+        <td class="n">${r.temDireitoAdiantamento?fmtNum(r.adiantamento):'—'}</td>
+        <td class="n">${r.liquido===null?'(pendente)':fmtNum(r.liquido)}</td>
+        <td class="n"><b>${r.saldo===null?'(pendente)':fmtNum(r.saldo)}</b></td>
       </tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="4" style="text-align:right;">TOTAL</td>
         <td class="n">${fmtNum(rows.reduce((s,r)=>s+r.salario,0))}</td>
         <td class="n">${fmtNum(rows.reduce((s,r)=>s+r.adiantamento,0))}</td>
-        <td class="n">${fmtNum(rows.reduce((s,r)=>s+r.descontos,0))}</td>
-        <td class="n">${fmtNum(rows.reduce((s,r)=>s+r.liquido,0))}</td>
-        <td class="n">${fmtNum(rows.reduce((s,r)=>s+r.saldo,0))}</td></tr></tfoot>
+        <td class="n">${fmtNum(rows.reduce((s,r)=>s+(r.liquido||0),0))}</td>
+        <td class="n">${fmtNum(rows.reduce((s,r)=>s+(r.saldo||0),0))}</td></tr></tfoot>
     </table>
     <p class="dnote">Adiantamento de ${rows[0].pctAdiant}% pago em ${fmtDate(dataAdiant)}.
-    Saldo pago no 5º dia útil de ${monthLabel(mesMais(mes,1))}, em ${fmtDate(dataPag)}.
-    ${rows.some(r=>!r.temHolerite)?'Funcionários sem holerite preenchido aparecem sem descontos.':''}</p>
+    Saldo pago no 5º dia útil de ${monthLabel(mesMais(mes,1))}, em ${fmtDate(dataPag)} (conta sábado também).
+    O líquido vem do holerite que a contabilidade envia; funcionários ainda sem esse número
+    aparecem como "(pendente)".</p>
     <div class="assinatura"><div>${esc(DB.empresa.razaoSocial)}</div><div>Responsável</div></div>
     ${docFoot()}
   </div>`);
@@ -4709,10 +4917,12 @@ function renderVales(){
                 pago && r.v.pagoLancamentoId
                   ? (DB.lancamentos.find(l=>l.id===r.v.pagoLancamentoId) || {valor:r.liquido}).valor
                   : r.liquido)}</td>
-            <td>${pago
-                ? `<button class="btn btn-secondary btn-sm" style="background:#1f8a4c;color:#fff;border-color:#1f8a4c;" onclick="toggleValePago('${r.f.id}','${valesMes}')" title="Pago em ${fmtDate(r.v.pagoQuando)} — clique para desmarcar">✓ Pago</button>`
-                : `<button class="btn btn-secondary btn-sm" onclick="toggleValePago('${r.f.id}','${valesMes}')"
-                     ${contaPadrao?'':'disabled title="Escolha a conta de pagamento acima primeiro"'}>Marcar pago</button>`}</td>
+            <td class="num">
+              <input type="checkbox" ${pago?'checked':''} style="width:17px;height:17px;cursor:pointer;"
+                ${!pago && !contaPadrao?'disabled title="Escolha a conta de pagamento acima primeiro"':
+                  `title="${pago?`Pago em ${fmtDate(r.v.pagoQuando)} — clique para desmarcar`:'Marcar como pago'}"`}
+                onclick="toggleValePago('${r.f.id}','${valesMes}')">
+            </td>
             <td><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button></td>
           </tr>`;}).join('')}
           </tbody>
@@ -6261,7 +6471,7 @@ function removerFeriado(id){
 const DEV_KEY = 'belaAngraRH_dispositivo';
 
 /* coleções em lista, identificadas por id */
-const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','pagamentos','vales','holerites','epiEntradas','epiSaidas',
+const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','pagamentos','vales','fechFichados','holerites','epiEntradas','epiSaidas',
   /* financeiro (30/08/2026). Sem entrar nesta lista o módulo funciona num PC só
      e o outro nunca fica sabendo — é o erro mais fácil de cometer aqui.
      As BAIXAS viajam dentro do próprio lançamento: são um campo dele, não uma
