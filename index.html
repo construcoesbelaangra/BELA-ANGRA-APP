@@ -688,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-04 · 32';
+const VERSAO = '2026-09-04 · 33';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4382,17 +4382,35 @@ function calcFichado(f, mes){
   const salario = Number(f.salario)||0;
   const pctAdiant = Number(DB.config.adiantamentoPercent)||40;
   const dataAdiantamento = `${mes}-20`;
+  const primeiroDia = primeiroDiaMes(mes), ultimoDia = ultimoDiaMes(mes);
+  const nd = daysInMonth(...mes.split('-').map(Number));
+
+  /* Quem foi admitido DENTRO do próprio mês (mesmo antes do dia 20) não
+     trabalhou o mês inteiro, e o adiantamento tem que ser proporcional aos
+     dias — não os 40% do salário cheio. Confirmado com o Maycon em
+     04/09/2026, contra a planilha real de agosto: admitido no dia 3 (29 dias
+     restantes de um mês de 31) rendeu R$ 713,96 de adiantamento para um
+     salário de R$ 1.908 — bate exato com 1908/31*29*40%. Quem já trabalhava
+     desde antes do mês (a maioria) usa o salário cheio, sem proporção. */
+  const admitidoNesteMes = !!f.admissao && f.admissao >= primeiroDia && f.admissao <= ultimoDia;
+  const diaAdmissao = admitidoNesteMes ? Number(f.admissao.slice(8,10)) : null;
+  const diasProporcionais = admitidoNesteMes ? (nd - diaAdmissao + 1) : null;
+  const salarioProporcional = admitidoNesteMes
+    ? Math.round(salario/nd*diasProporcionais*100)/100
+    : salario;
+
   /* quem foi admitido depois do dia 20 não recebeu adiantamento nenhum —
      só vai receber o saldo do mês inteiro, sem desconto nenhum */
   const temDireitoAdiantamento = !f.admissao || f.admissao <= dataAdiantamento;
-  const adiantamento = temDireitoAdiantamento ? Math.round(salario*pctAdiant/100*100)/100 : 0;
+  const adiantamento = temDireitoAdiantamento ? Math.round(salarioProporcional*pctAdiant/100*100)/100 : 0;
 
   const reg = getFechFichado(f.id, mes);
   const liquido = (reg.liquidoContabilidade==='' || reg.liquidoContabilidade===null || reg.liquidoContabilidade===undefined)
     ? null : Number(reg.liquidoContabilidade);
   const saldo = liquido===null ? null : Math.round((liquido-adiantamento)*100)/100;
 
-  return {f, mes, reg, salario, pctAdiant, adiantamento, temDireitoAdiantamento,
+  return {f, mes, reg, salario, salarioProporcional, admitidoNesteMes, diasProporcionais, nd,
+          pctAdiant, adiantamento, temDireitoAdiantamento,
           liquido, saldo, dataAdiantamento, dataPagamento: quintoDiaUtil(mesMais(mes, 1))};
 }
 
@@ -4593,7 +4611,8 @@ function renderFechamentoFichados(){
               <td><b>${esc(r.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(r.f.funcao||'')}</span></td>
               <td class="num">${fmtMoney(r.salario)}</td>
               <td class="num" style="color:var(--azul-esc);font-weight:700;">${r.temDireitoAdiantamento?fmtMoney(r.adiantamento):'—'}
-                ${r.temDireitoAdiantamento?'':'<br><span style="font-size:10px;color:#9aa0ab;">admitido após o dia 20</span>'}</td>
+                ${!r.temDireitoAdiantamento?'<br><span style="font-size:10px;color:#9aa0ab;">admitido após o dia 20</span>'
+                  :(r.admitidoNesteMes?`<br><span style="font-size:10px;color:#9aa0ab;">proporcional a ${r.diasProporcionais}/${r.nd} dias</span>`:'')}</td>
               <td class="num">
                 <input type="number" step="0.01" style="min-width:90px;text-align:right;" value="${r.liquido===null?'':r.liquido}"
                   placeholder="0,00" ${dis} onwheel="this.blur()"
@@ -4653,12 +4672,14 @@ function reciboAdiantamentoHTML(r){
             <td style="width:24%"><b>Percentual</b></td><td class="n">${fmtNum(r.pctAdiant,0)}%</td></tr>
         <tr><td><b>CPF</b></td><td>${esc(r.f.cpf||'—')}</td>
             <td><b>Admissão</b></td><td>${r.f.admissao?fmtDate(r.f.admissao):'—'}</td></tr>
+        ${r.admitidoNesteMes ? `<tr><td><b>Salário proporcional</b></td><td class="n">${fmtNum(r.salarioProporcional)}</td>
+            <td><b>Dias no mês</b></td><td class="n">${r.diasProporcionais} de ${r.nd}</td></tr>` : ''}
       </tbody>
     </table>
     <table class="dtab" style="margin-top:8px;">
       <thead><tr><th>Descrição</th><th style="width:24%;text-align:right;">Valor (R$)</th></tr></thead>
       <tbody>
-        <tr><td>Adiantamento de ${fmtNum(r.pctAdiant,0)}% do salário de ${monthLabel(r.mes)}</td>
+        <tr><td>Adiantamento de ${fmtNum(r.pctAdiant,0)}% do salário${r.admitidoNesteMes?` proporcional (${r.diasProporcionais}/${r.nd} dias)`:''} de ${monthLabel(r.mes)}</td>
             <td class="n">${fmtNum(r.adiantamento)}</td></tr>
       </tbody>
       <tfoot><tr><td style="text-align:right;">TOTAL RECEBIDO</td><td class="n">${fmtNum(r.adiantamento)}</td></tr></tfoot>
