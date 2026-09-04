@@ -688,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-01 · 30';
+const VERSAO = '2026-09-04 · 31';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -9020,10 +9020,24 @@ window.addEventListener('resize', function(){
 
   /* ---------------------------------------------------------
      Carregar a biblioteca do Google
-     --------------------------------------------------------- */
-  (function carregarGIS(){
+
+     Antes disso, uma falha (blip de rede, bloqueador de anúncio/rastreio
+     travando accounts.google.com — é um domínio comum de bloquear) deixava
+     `gisPronto` em `false` PARA SEMPRE: a tag `<script>` só era criada uma
+     vez, no carregamento da página, e sem recarregar tudo o cartão do Drive
+     ficava preso na mensagem de erro mesmo com a internet voltando sozinha.
+     Relatado pelo Maycon em 01/09/2026 ("mas to com internet"). Agora
+     `carregarGIS()` pode ser chamada de novo: tenta sozinha mais duas vezes
+     (com espera crescente, para não bater na hora de um blip) e o cartão
+     ganha um botão "Tentar de novo" para o caso de ainda falhar depois
+     disso — sem precisar dar F5 na página. */
+  let tentativasGIS = 0;
+  function carregarGIS(){
+    if(gisPronto) return;
     const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
+    /* querystring evita que o navegador sirva do cache uma tentativa que já
+       falhou (alguns bloqueadores cacheiam o próprio erro de rede) */
+    s.src = 'https://accounts.google.com/gsi/client?tentativa=' + (++tentativasGIS);
     s.async = true; s.defer = true;
     s.onload = function(){
       gisPronto = true;
@@ -9031,10 +9045,21 @@ window.addEventListener('resize', function(){
     };
     s.onerror = function(){
       gisPronto = false;
+      if(tentativasGIS <= 2) setTimeout(carregarGIS, tentativasGIS * 4000);
       if(currentPage === 'sync') renderSync();
     };
     document.head.appendChild(s);
-  })();
+  }
+  carregarGIS();
+
+  /* botão "Tentar de novo" do cartão de erro — reseta a contagem para dar
+     mais duas tentativas automáticas a partir daqui, e já redesenha a tela
+     na hora (sem esperar o onload/onerror) para o clique parecer responder */
+  function tentarCarregarGISDeNovo(){
+    tentativasGIS = 0;
+    carregarGIS();
+    if(currentPage === 'sync') renderSync();
+  }
 
   function driveDisponivel(){
     return gisPronto && window.google
@@ -9290,10 +9315,16 @@ window.addEventListener('resize', function(){
       return '<div class="card" style="border-left:4px solid var(--amarelo);">'
            + '<h2>Sincronização automática com o Drive</h2>'
            + '<p class="help">Não consegui carregar a biblioteca do Google — '
-           + 'normalmente é falta de internet. Ela volta sozinha quando você '
-           + 'abrir o app com sinal.<br><br>'
+           + 'normalmente é falta de internet, mas também acontece com '
+           + 'bloqueador de anúncio/rastreio (alguns travam accounts.google.com) '
+           + 'ou um blip de rede passageiro.<br><br>'
+           + 'Já tentei sozinho ' + tentativasGIS + ' vez(es). Se você já está '
+           + 'com sinal, toque no botão abaixo para tentar de novo agora — não '
+           + 'precisa recarregar a página.<br><br>'
            + 'Enquanto isso, os modos manuais abaixo continuam funcionando '
-           + 'igual.</p></div>';
+           + 'igual.</p>'
+           + '<button class="btn btn-secondary" onclick="tentarCarregarGISDeNovo()">'
+           + '↻ Tentar de novo</button></div>';
     }
 
     return '<div class="card" style="border-left:4px solid '
@@ -9349,6 +9380,7 @@ window.addEventListener('resize', function(){
 
   window.sincronizarDrive  = sincronizarDrive;
   window.desconectarDrive  = desconectarDrive;
+  window.tentarCarregarGISDeNovo = tentarCarregarGISDeNovo;
 
 })();
 /* =========================================================
