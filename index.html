@@ -517,6 +517,15 @@ tr:hover td{background:#fafbfd;}
      documento deste app precisa de paisagem. */
   @page{size:A4 portrait;margin:10mm;}
 
+  /* Página nomeada (05/09/2026), só para documentos CURTOS de verdade (recibo
+     de vale, por exemplo): pedido do Maycon para não desperdiçar uma folha A4
+     quase toda em branco. Em A5 cabe deitado sem sobrar espaço à toa — dá
+     `page:recibo` num elemento e ele usa este tamanho, sem mexer no `@page`
+     geral (que continua A4 retrato para todo o resto, ex.: a folha da
+     contabilidade, que precisa da largura toda). */
+  .doc-recibo{page:recibo;}
+  @page recibo{size:A5 landscape;margin:8mm;}
+
   /* O app sai da impressão com display:none, NÃO com visibility:hidden.
      `visibility:hidden` esconde mas mantém o espaço ocupado: a altura da tela
      do app continuava contando e saíam páginas em branco no fim de todo
@@ -695,7 +704,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-05 · 38';
+const VERSAO = '2026-09-05 · 39';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4337,7 +4346,7 @@ function reciboDiaristaHTML(x){
   if(x.totalDias) linhas.push({d:'Diárias trabalhadas', ref:`${x.totalDias} × ${fmtMoney(x.vd)}`, v:x.bruto});
 
   return `
-  <div class="doc">
+  <div class="doc doc-recibo">
     ${docHead('Recibo de Pagamento — Diarista', `${esc(f.nome)} — ${esc(f.funcao||'')}`,
       `Pagamento em<br><b>${fmtDate(x.periodo.fim)}</b><br>${PERIODICIDADE_LABEL[f.periodicidade]}`)}
 
@@ -4380,7 +4389,7 @@ function reciboDiaristaHTML(x){
 function printRecibaDiarista(funcId){
   const f = func(funcId);
   const periodo = periodoDaSexta(fcSexta, f.periodicidade);
-  doPrint(reciboDiaristaHTML(calcDiarista(f, periodo)));
+  doPrint(reciboDiaristaHTML(calcDiarista(f, periodo)), `Recibo Diária - ${fmtDate(fcSexta)} - ${f.nome}`);
 }
 
 function printTodosRecibos(){
@@ -4390,7 +4399,8 @@ function printTodosRecibos(){
     .filter(x=>x.totalDias>0 || x.totalVales>0)
     .sort((a,b)=>cmpFuncionarios(a.f,b.f));
   if(!calcs.length){ alert('Nenhum recibo a gerar nesta sexta.'); return; }
-  doPrint(calcs.map((x,i)=>`<div class="${i<calcs.length-1?'pagebreak':''}">${reciboDiaristaHTML(x)}</div>`).join(''));
+  doPrint(calcs.map((x,i)=>`<div class="${i<calcs.length-1?'pagebreak':''}">${reciboDiaristaHTML(x)}</div>`).join(''),
+    `Recibos Diária - ${fmtDate(fcSexta)}`);
 }
 
 /* ---- Fechamento consolidado do período (folha de ponto) ---- */
@@ -5086,7 +5096,7 @@ function renderFechamentoFichados(){
 
 function reciboAdiantamentoHTML(r){
   return `
-  <div class="doc">
+  <div class="doc doc-recibo">
     ${docHead('Recibo de Adiantamento de Salário', `${esc(r.f.nome)} — ${esc(r.f.funcao||'')}`,
       `Referência<br><b>${monthLabel(r.mes)}</b><br>${fmtDate(r.dataAdiantamento)}`)}
     <table class="dtab">
@@ -5117,7 +5127,7 @@ function reciboAdiantamentoHTML(r){
 function printReciboAdiantamento(funcId){
   const r = calcFichado(func(funcId), fcMesFichados);
   if(!r.temDireitoAdiantamento){ alert('Este funcionário foi admitido depois do dia 20 — não há adiantamento neste mês.'); return; }
-  doPrint(reciboAdiantamentoHTML(r));
+  doPrint(reciboAdiantamentoHTML(r), `Recibo Adiantamento - ${monthLabel(fcMesFichados)} - ${r.f.nome}`);
 }
 function printTodosAdiantamentos(){
   const rows = ativosNoMes(fcMesFichados).filter(f=>f.tipo==='fichado')
@@ -5125,7 +5135,8 @@ function printTodosAdiantamentos(){
     .map(f=>calcFichado(f, fcMesFichados))
     .filter(r=>r.temDireitoAdiantamento);
   if(!rows.length){ alert('Nenhum fichado com adiantamento a receber neste mês.'); return; }
-  doPrint(rows.map((r,i)=>`<div class="${i<rows.length-1?'pagebreak':''}">${reciboAdiantamentoHTML(r)}</div>`).join(''));
+  doPrint(rows.map((r,i)=>`<div class="${i<rows.length-1?'pagebreak':''}">${reciboAdiantamentoHTML(r)}</div>`).join(''),
+    `Recibos Adiantamento - ${monthLabel(fcMesFichados)}`);
 }
 
 function printFolhaFichados(){
@@ -5521,7 +5532,7 @@ function reciboValeHTML(funcId){
   ].filter(Boolean);
 
   return `
-  <div class="doc">
+  <div class="doc doc-recibo">
     ${docHead('Recibo de Vale — Transporte e Alimentação', `${esc(f.nome)} — ${esc(f.funcao||'')}`,
       `Referência<br><b>${monthLabel(valesMes)}</b>`)}
     <table class="dtab">
