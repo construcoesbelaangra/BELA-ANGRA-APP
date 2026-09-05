@@ -690,7 +690,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-05 · 36';
+const VERSAO = '2026-09-05 · 37';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -5184,6 +5184,18 @@ function parcelasValeDoMes(funcId, mes){
   return res;
 }
 
+/* Texto curto tipo "2 falta(s) + 1 atestado" — usado no badge da tela e no
+   recibo, para o Maycon ver DE ONDE veio o desconto sugerido, não só o total. */
+function resumoNaoEfetivados(fal){
+  const partes = [];
+  if(fal.injustificada) partes.push(`${fal.injustificada} falta(s)`);
+  if(fal.justificada) partes.push(`${fal.justificada} falta(s) justificada(s)`);
+  if(fal.atestado) partes.push(`${fal.atestado} atestado(s)`);
+  if(fal.licenca) partes.push(`${fal.licenca} licença(s)`);
+  if(fal.folga) partes.push(`${fal.folga} folga(s)`);
+  return partes.join(' + ') || 'nenhum dia a descontar';
+}
+
 function calcVale(f, mes){
   const v = getVale(f.id, mes);
   const dias = diasValeFunc(f, mes);
@@ -5192,10 +5204,19 @@ function calcVale(f, mes){
   const totalVR = Math.round(vrDia*dias*100)/100;
 
   /* O vale é pago ADIANTADO, no começo do período — quando as faltas ainda não
-     aconteceram. Por isso as faltas de um mês só são descontadas no mês seguinte. */
+     aconteceram. Por isso as faltas de um mês só são descontadas no mês seguinte.
+     Achado pelo Maycon (05/09/2026): não é só falta injustificada — atestado,
+     falta justificada, licença e folga TAMBÉM são dias em que ele não foi
+     trabalhar de verdade, então não teve o custo de passagem nem de
+     alimentação naquele dia. Antes só a injustificada entrava aqui; agora todo
+     dia que não é 'trabalhado' desconta, pelo mesmo motivo e no mesmo mês
+     seguinte (não dava pra prever nenhum desses tipos com mais antecedência
+     que os outros). */
   const mesAnterior = mesAnteriorDe(mes);
   const falAnt = getFaltasMes(f.id, mesAnterior);
-  const sugDescFaltas = Math.round((vtDia+vrDia)*falAnt.injustificada*100)/100;
+  const diasNaoEfetivadosAnt = falAnt.injustificada + falAnt.justificada + falAnt.atestado
+                              + falAnt.licenca + falAnt.folga;
+  const sugDescFaltas = Math.round((vtDia+vrDia)*diasNaoEfetivadosAnt*100)/100;
   const descFaltas = (v.descontoFaltas===''||v.descontoFaltas===null||v.descontoFaltas===undefined)
                      ? sugDescFaltas : Number(v.descontoFaltas)||0;
 
@@ -5205,7 +5226,7 @@ function calcVale(f, mes){
 
   const descOutros = Number(v.descontoOutros)||0;
   return {f, v, dias, vtDia, vrDia, totalVT, totalVR, bruto: totalVT+totalVR,
-          mesAnterior, falAnt, sugDescFaltas, descFaltas,
+          mesAnterior, falAnt, diasNaoEfetivadosAnt, sugDescFaltas, descFaltas,
           parcelas, totalParcelas, descOutros,
           liquido: totalVT+totalVR-descFaltas-totalParcelas-descOutros};
 }
@@ -5255,8 +5276,10 @@ function renderVales(){
         Ainda assim dá para corrigir a coluna <b>Dias</b> de uma pessoa específica.
       </p>
       <p class="help" style="margin:0 0 14px;padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
-        <b>Como as faltas entram:</b> o vale é pago adiantado, antes de o mês acontecer — então não dá para prever falta.
-        As faltas de <b>${monthLabel(mesAnteriorDe(valesMes))}</b> é que são descontadas aqui, no vale de ${monthLabel(valesMes)}.
+        <b>Como as faltas entram:</b> o vale é pago adiantado, antes de o mês acontecer — então não dá para prever falta,
+        atestado, licença ou folga. <b>Todo dia que não foi efetivamente trabalhado</b> em
+        <b>${monthLabel(mesAnteriorDe(valesMes))}</b> (falta, falta justificada, atestado, licença ou folga) é descontado
+        aqui, no vale de ${monthLabel(valesMes)} — só quem esteve de fato na obra teve o custo de passagem e alimentação.
         O mesmo vale para empréstimos: são descontados no mês seguinte ao que você emprestou, podendo ser parcelados.
       </p>
 
@@ -5318,9 +5341,9 @@ function renderVales(){
             <td class="num">${fmtMoney(r.totalVT)}</td>
             <td class="num">${fmtMoney(r.totalVR)}</td>
             <td><input type="number" step="0.01" value="${r.descFaltas}" onwheel="this.blur()" ${dis} onchange="setValeCampo('${r.f.id}','descontoFaltas',this.value)">
-                ${r.falAnt.injustificada
-                  ? `<span style="font-size:10px;color:var(--vermelho);">${r.falAnt.injustificada} falta(s) em ${monthLabel(r.mesAnterior).slice(0,3)}</span>`
-                  : '<span style="font-size:10px;color:#9aa0ab;">sem faltas no mês anterior</span>'}
+                ${r.diasNaoEfetivadosAnt
+                  ? `<span style="font-size:10px;color:var(--vermelho);">${resumoNaoEfetivados(r.falAnt)} em ${monthLabel(r.mesAnterior).slice(0,3)}</span>`
+                  : '<span style="font-size:10px;color:#9aa0ab;">sem dias a descontar no mês anterior</span>'}
                 ${!pago && Math.abs(r.descFaltas - r.sugDescFaltas) > 0.01
                   ? `<button class="btn btn-secondary btn-sm" style="margin-top:3px;padding:2px 6px;font-size:10px;"
                        onclick="setValeCampo('${r.f.id}','descontoFaltas',${r.sugDescFaltas})"
@@ -5491,7 +5514,7 @@ function reciboValeHTML(funcId){
                 : ` (01 à ${nd} de ${MESES[m-1]})`}</td>
             <td class="n" style="font-weight:800;">${fmtNum(r.bruto)}</td></tr>
         ${r.descFaltas ? `<tr><td>Desconto referente a dias não efetivados em ${mesAnterior}</td>
-            <td>${r.falAnt.injustificada?r.falAnt.injustificada+' dia(s)':''}</td><td class="n">- ${fmtNum(r.descFaltas)}</td></tr>` : ''}
+            <td>${r.diasNaoEfetivadosAnt?resumoNaoEfetivados(r.falAnt):''}</td><td class="n">- ${fmtNum(r.descFaltas)}</td></tr>` : ''}
         ${r.parcelas.map(p=>`<tr><td>${esc(p.a.descricao||'Empréstimo')}${p.total>1?` — parcela ${p.parcela} de ${p.total}`:''}</td>
             <td>${fmtDate(p.a.data)}</td><td class="n">- ${fmtNum(p.valor)}</td></tr>`).join('')}
         ${r.descOutros ? `<tr><td>Outros descontos</td><td></td><td class="n">- ${fmtNum(r.descOutros)}</td></tr>` : ''}
