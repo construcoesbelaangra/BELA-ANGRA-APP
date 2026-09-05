@@ -688,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-04 · 34';
+const VERSAO = '2026-09-04 · 35';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -783,7 +783,7 @@ function defaultDB(){
     funcionarios: [],
     obras: [],
     diasUteisMes: {},     // 'YYYY-MM' -> nº de dias trabalhados usado no vale daquele mês
-    pontoMensal: {},      // `${funcId}_${YYYY-MM}` -> {dias:{'YYYY-MM-DD':status}}
+    pontoMensal: {},      // `${funcId}_${YYYY-MM}` -> {dias:{'YYYY-MM-DD':status}, obraDia:{'YYYY-MM-DD':obraId}}
     pontoDiarista: [],    // {id, funcionarioId, obraId, data, status, quentinha}
     adiantamentos: [],    // {id, funcionarioId, data, valor, descricao}
     /* Pagamentos já feitos, marcados à mão no fechamento enquanto ele paga um a
@@ -923,6 +923,7 @@ function migrate(db){
   db._meta = Object.assign({tombstones:{}, mapaTs:{}, objetoTs:{}, ultimaSync:null, ultimaEdicao:null, arquivoNome:''}, db._meta||{});
   Object.keys(db.pontoMensal||{}).forEach(k=>{
     const r = db.pontoMensal[k]; r.dias = r.dias||{}; r.ts = r.ts||{};
+    r.obraDia = r.obraDia||{};   // exceção pontual de obra por dia (04/09/2026)
   });
   /* separa o antigo campo único `vt` em dois: transporte e refeição */
   (db.funcionarios||[]).forEach(f=>{
@@ -1187,17 +1188,33 @@ function filtraObra(lista, obraId){
   return obraId ? lista.filter(f=>f.obraPadrao===obraId) : lista;
 }
 
-/* Obra de um FICHADO num dia específico — não confundir com `f.obraPadrao`, que
-   é só a obra ATUAL. Criado para a Medição HH (04/09/2026): um homem-hora
-   transferido de obra no meio do período não pode ter os dias de ANTES da
-   transferência contados na obra nova. `f.obraHistorico` é preenchido por
-   `transferirObraFunc` (03_func.js); quem nunca foi transferido tem uma única
-   entrada de backfill (`migrate()`). Diarista não usa isto — o dia dele já
-   carrega o próprio `obraId` em `DB.pontoDiarista`. */
-function obraDoFuncionarioEm(f, iso){
+/* Obra DEFINITIVA de um FICHADO num dia específico — não confundir com
+   `f.obraPadrao`, que é só a obra atual (sem olhar o histórico). Criado para a
+   Medição HH (04/09/2026): um homem-hora transferido de obra no meio do
+   período não pode ter os dias de ANTES da transferência contados na obra
+   nova. `f.obraHistorico` é preenchido por `transferirObraFunc` (03_func.js) —
+   é para deslocamento QUE FICA (o funcionário não volta mais); quem nunca foi
+   transferido tem uma única entrada de backfill (`migrate()`). */
+function obraHistoricaEm(f, iso){
   const hist = (f.obraHistorico||[]).filter(h=>h.inicio<=iso);
   if(hist.length) return hist[hist.length-1].obraId;
   return f.obraPadrao || '';
+}
+
+/* Obra de um FICHADO num dia específico, já considerando uma eventual
+   EXCEÇÃO PONTUAL daquele dia (04/09/2026, 2ª parte): pedido do Maycon depois
+   de explicar que às vezes empresta um homem-hora para outra obra só num dia
+   e no dia seguinte ele já volta para a obra de sempre — isso NÃO é uma
+   transferência (não teria fim), é só aquele dia. A exceção mora dentro do
+   próprio registro de ponto do mês, `reg.obraDia[iso]` (ver
+   `abrirObraDoDiaModal`/`salvarObraDoDia`, 04_obras_ponto.js) — não mexe no
+   `obraHistorico`. Sem marcar nada, vale a obra definitiva de sempre.
+   Diarista não usa nada disto — o dia dele já carrega o próprio `obraId` em
+   `DB.pontoDiarista`. Usada pela Medição HH em vez de `obraHistoricaEm`. */
+function obraDoFuncionarioEm(f, iso){
+  const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
+  const excecao = reg && reg.obraDia ? reg.obraDia[iso] : '';
+  return excecao || obraHistoricaEm(f, iso);
 }
 
 /* Ponto não pode ser lançado fora do vínculo. Devolve 'antes', 'depois' ou ''. */
@@ -1802,7 +1819,10 @@ function transferirObraFunc(id){
     </div>
     <p class="help">
       Os dias já lançados ANTES desta data continuam contando para a obra antiga na Medição
-      HH; a partir desta data, contam para a nova.
+      HH; a partir desta data, contam para a nova. <b>Use isto só para deslocamento
+      DEFINITIVO</b> (ele não volta mais para a obra antiga). Se for só emprestar a pessoa
+      para outra obra por um dia ou dois e ela voltar, marque isso direto no calendário —
+      <b>Ponto → Fichados → Ver o mês</b>, no ícone 🏗️ de cada dia.
     </p>
     <div class="modal-actions">
       <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -2557,8 +2577,9 @@ function renderPontoMensal(){
 function pmKey(){ return `${pmFuncId}_${pmAno}-${String(pmMes).padStart(2,'0')}`; }
 
 function renderCalendarMensal(){
-  const reg = DB.pontoMensal[pmKey()] || {dias:{}, auto:{}};
+  const reg = DB.pontoMensal[pmKey()] || {dias:{}, auto:{}, obraDia:{}};
   const auto = reg.auto || {};
+  const obraDia = reg.obraDia || {};
   const nd = daysInMonth(pmAno, pmMes);
   const firstDow = new Date(pmAno, pmMes-1, 1).getDay();
 
@@ -2577,13 +2598,20 @@ function renderCalendarMensal(){
        (ex.: trabalhado) mantém a cor do status, e a 🎉 já avisa que era
        feriado. */
     const fer = feriadoDoDia(iso);
+    /* exceção pontual de obra NESTE dia (04/09/2026) — ver `obraDoFuncionarioEm`
+       (02_core.js). Só um jeito de marcar "hoje ele foi emprestado para outra
+       obra e amanhã já volta"; não é transferência (essa é permanente, ver
+       "Transferir de obra" na lista de Funcionários). */
+    const excObra = obraDia[iso] || '';
     let titulo = STATUS_LABEL[st] || 'Sem lançamento';
     if(fer) titulo = `${fer.nome} (feriado)${st?' — '+titulo:''}`;
     if(bloqueado) titulo = motivoBloqueio(f, iso);
     cells += `<div class="day ${st} ${bloqueado?'fora':''} ${porConfirmar?'aconfirmar':''} ${fer&&!st?'feriado':''}" onclick="cycleDia('${iso}')"
-        title="${titulo}${porConfirmar?' — presumido, ainda não confirmado':''}">
+        title="${titulo}${porConfirmar?' — presumido, ainda não confirmado':''}${excObra?' — hoje na obra '+esc(obraNome(excObra)):''}">
       <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
-      <div class="st">${bloqueado?'<span style="color:#9aa0ab;">—</span>':(STATUS_SIGLA[st]||'')}</div></div>`;
+      <div class="st">${bloqueado?'<span style="color:#9aa0ab;">—</span>':(STATUS_SIGLA[st]||'')}</div>
+      ${bloqueado?'':`<span class="qbtn ${excObra?'on':''}" onclick="event.stopPropagation(); abrirObraDoDiaModal('${iso}')"
+        title="${excObra?'Hoje na obra '+esc(obraNome(excObra))+' — clique para mudar':'Obra é a de sempre — clique para marcar outra só hoje'}">🏗️</span>`}</div>`;
   }
 
   const fal = getFaltasMes(pmFuncId, `${pmAno}-${String(pmMes).padStart(2,'0')}`);
@@ -2629,6 +2657,57 @@ function cycleDia(iso){
   reg.dias[iso] = next;              // vazio em vez de apagar, para a sincronização enxergar a mudança
   delete reg.auto[iso];              // tocar no dia confirma: deixa de ser presunção
   saveDB(); renderPontoMensal();
+}
+
+/* --------- OBRA SÓ NESTE DIA (04/09/2026) ---------
+   Pedido do Maycon: às vezes empresta um homem-hora para outra obra só por um
+   dia (ex.: terça no Rogério, quarta no Gustavo, quinta de volta no Neymar) —
+   isso NÃO é uma transferência (não fica, volta sozinho no dia seguinte), então
+   não faz sentido mexer em `obraHistorico`/`obraPadrao` (isso é para
+   deslocamento DEFINITIVO — botão "Transferir de obra", em Funcionários).
+   A exceção mora dentro do próprio registro de ponto do mês
+   (`reg.obraDia[iso]`), e `obraDoFuncionarioEm()` (02_core.js) já sabe olhar
+   ela primeiro antes de cair na obra definitiva. */
+function abrirObraDoDiaModal(iso){
+  const f = func(pmFuncId);
+  if(!f) return;
+  if(antesDaAdmissao(f, iso)){ avisaAdmissao(f, iso); return; }
+  const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`] || {};
+  const excecaoAtual = (reg.obraDia||{})[iso] || '';
+  const definitiva = obraHistoricaEm(f, iso);
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Obra do dia — ${fmtDate(iso)}</h2>
+    <p class="help">
+      Obra definitiva de <b>${esc(f.nome)}</b>: <b>${esc(obraNome(definitiva))}</b>.
+      Escolha outra só se ele foi deslocado PARA ESTE DIA — a obra definitiva dele não muda.
+    </p>
+    <div class="field"><label>Obra neste dia</label>
+      <select id="od_obra">
+        <option value="">— obra definitiva (${esc(obraNome(definitiva))}) —</option>
+        ${DB.obras.filter(o=>o.id!==definitiva).map(o=>`<option value="${o.id}" ${excecaoAtual===o.id?'selected':''}>${esc(o.nome)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="salvarObraDoDia('${iso}')">Salvar</button>
+    </div>
+  `);
+}
+
+function salvarObraDoDia(iso){
+  const f = func(pmFuncId);
+  if(!f) return;
+  const key = `${f.id}_${iso.slice(0,7)}`;
+  const reg = DB.pontoMensal[key] = DB.pontoMensal[key] || {dias:{}, ts:{}, auto:{}};
+  reg.obraDia = reg.obraDia || {};
+  const obraEscolhida = val('od_obra');
+  if(obraEscolhida) reg.obraDia[iso] = obraEscolhida;
+  else delete reg.obraDia[iso];
+  saveDB(); closeModal(); renderPontoMensal();
+  toast(obraEscolhida
+    ? `Dia ${fmtDate(iso)} marcado na obra ${obraNome(obraEscolhida)}.`
+    : `Exceção removida — volta a valer a obra definitiva neste dia.`);
 }
 
 function preencherMesUtil(){
@@ -9180,17 +9259,30 @@ function blocosSemanaMedicao(ini, fim){
 function medicaoHH(id){ return DB.medicoesHH.find(m=>m.id===id); }
 
 /* Um dia conta para a medição de `obraId` quando: o funcionário tinha vínculo
-   naquele dia, ESTAVA naquela obra naquele dia (histórico para fichado, o
-   próprio lançamento para diarista) e foi marcado como trabalhado. */
+   naquele dia e ESTAVA naquela obra naquele dia (histórico para fichado, o
+   próprio lançamento para diarista).
+
+   Devolve 'trabalhado', 'abonado' ou null (não conta). Pedido do Maycon
+   (04/09/2026): atestado e falta justificada são ABONADOS — a Bandeira paga a
+   diária mesmo assim, então ENTRAM na medição pelo preço cheio da categoria,
+   igual um dia trabalhado. Só o benefício do dia (alimentação/VT) é descontado
+   à parte, porque a pessoa não esteve de fato na obra — daí a distinção
+   'trabalhado' × 'abonado' (ver `sugestaoDesconto` em `calcMedicaoHH`).
+   Isso só existe para FICHADO: diarista não tem atestado/falta justificada no
+   ponto dele (vocabulário mais simples, só trabalhado/falta), e diarista não
+   recebe VT/VR à parte mesmo (a diária já engloba tudo). */
 function diaContaNaMedicaoHH(f, iso, obraId){
-  if(foraDoVinculo(f, iso)) return false;
+  if(foraDoVinculo(f, iso)) return null;
   if(f.tipo === 'fichado'){
-    if(obraDoFuncionarioEm(f, iso) !== obraId) return false;
+    if(obraDoFuncionarioEm(f, iso) !== obraId) return null;
     const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
-    return !!(reg && reg.dias && reg.dias[iso] === 'trabalhado');
+    const st = reg && reg.dias ? (reg.dias[iso]||'') : '';
+    if(st === 'trabalhado') return 'trabalhado';
+    if(st === 'atestado' || st === 'falta_justificada') return 'abonado';
+    return null;
   }
   const r = DB.pontoDiarista.find(p=>p.funcionarioId===f.id && p.data===iso);
-  return !!(r && r.obraId === obraId && r.status === 'trabalhado');
+  return (r && r.obraId === obraId && r.status === 'trabalhado') ? 'trabalhado' : null;
 }
 
 /* O cálculo inteiro — usado tanto pela tela (rascunho, ao vivo) quanto por
@@ -9207,15 +9299,19 @@ function calcMedicaoHH(obraId, ini, fim){
 
   blocos.forEach((dias, iBloco)=>{
     funcionarios.forEach(f=>{
-      let diasNoBloco = 0;
+      let diasNoBloco = 0, abonadosNoBloco = 0;
       dias.forEach(iso=>{
         if(iso < ini || iso > fim) return;   // o bloco pode passar do intervalo pedido
-        if(diaContaNaMedicaoHH(f, iso, obraId)) diasNoBloco++;
+        const st = diaContaNaMedicaoHH(f, iso, obraId);
+        if(!st) return;
+        diasNoBloco++;
+        if(st === 'abonado') abonadosNoBloco++;
       });
       if(diasNoBloco <= 0) return;
-      if(!linhasPorFunc[f.id]) linhasPorFunc[f.id] = {funcionario:f, porSemana:{}, total:0};
+      if(!linhasPorFunc[f.id]) linhasPorFunc[f.id] = {funcionario:f, porSemana:{}, total:0, abonados:0};
       linhasPorFunc[f.id].porSemana[iBloco] = diasNoBloco;
       linhasPorFunc[f.id].total += diasNoBloco;
+      linhasPorFunc[f.id].abonados += abonadosNoBloco;
     });
   });
 
@@ -9234,11 +9330,22 @@ function calcMedicaoHH(obraId, ini, fim){
   const totalMedicao = Math.round(
     Object.values(porCategoria).reduce((s,c)=>s+c.valor,0) * 100) / 100;
 
+  /* Sugestão de desconto: alimentação + VT dos dias ABONADOS (atestado/falta
+     justificada) de cada fichado — é exatamente o desconto que a própria
+     medição da Bandeira já descreve ("desconto de alimentação e vale
+     transporte... e abono médico"). Só uma sugestão: o campo continua editável,
+     porque o Maycon pode saber de algum ajuste que o cálculo não capta. */
+  let sugestaoDesconto = 0;
+  Object.values(linhasPorFunc).forEach(l=>{
+    if(l.abonados > 0) sugestaoDesconto += l.abonados * (vtPorDia(l.funcionario) + vrPorDia(l.funcionario));
+  });
+  sugestaoDesconto = Math.round(sugestaoDesconto * 100) / 100;
+
   return {
     obraId, ini, fim, blocos,
     linhas: Object.values(linhasPorFunc).filter(l=>l.categoria)
       .sort((a,b)=>cmpFuncionarios(a.funcionario,b.funcionario)),
-    porCategoria, semCategoria,
+    porCategoria, semCategoria, sugestaoDesconto,
     totalMedicao
   };
 }
@@ -9248,6 +9355,73 @@ function calcMedicaoHH(obraId, ini, fim){
 let medHHObraSel = '';
 let medHHIni = '';
 let medHHFim = '';
+let medHHCalMes = todayISO().slice(0,7);
+
+/* Pedido do Maycon (04/09/2026): nada de digitar "de/até" — escolher o período
+   igual a um seletor de férias, DUAS semanas completas com dois cliques.
+   Semana sempre SEGUNDA A DOMINGO (não domingo a sábado, que é o padrão do
+   `<input type="date">` do navegador — por isso o calendário é feito à mão). */
+function navMesHH(delta){
+  const [y, m] = medHHCalMes.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  medHHCalMes = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  renderMedicaoHH();
+}
+
+function limparPeriodoHH(){
+  medHHIni = ''; medHHFim = '';
+  renderMedicaoHH();
+}
+
+/* 1º clique: escolhe a SEMANA (segunda a domingo) de início.
+   2º clique: escolhe a semana final — se for antes da semana de início, os dois
+   se trocam sozinhos, para o período nunca sair invertido. */
+function cliquePeriodoHH(iso){
+  if(!medHHIni || medHHFim){
+    medHHIni = segundaDaSemana(iso);
+    medHHFim = '';
+  }else{
+    const fimClicado = addDays(segundaDaSemana(iso), 6);
+    if(fimClicado < medHHIni){
+      medHHFim = addDays(segundaDaSemana(medHHIni), 6);
+      medHHIni = segundaDaSemana(iso);
+    }else{
+      medHHFim = fimClicado;
+    }
+  }
+  renderMedicaoHH();
+}
+
+function renderCalendarioPeriodoHH(){
+  const [ano, mes] = medHHCalMes.split('-').map(Number);
+  const nd = daysInMonth(ano, mes);
+  const primeiro = `${medHHCalMes}-01`;
+  const dowSeg = (dowOf(primeiro) + 6) % 7;   // 0 = segunda, ao contrário do getDay() (0=domingo)
+  const fimParcial = medHHIni ? addDays(segundaDaSemana(medHHIni), 6) : '';
+
+  let cells = '';
+  for(let i=0; i<dowSeg; i++) cells += `<div class="day blank"></div>`;
+  for(let d=1; d<=nd; d++){
+    const iso = `${medHHCalMes}-${String(d).padStart(2,'0')}`;
+    const limite = medHHFim || fimParcial;
+    const dentro = medHHIni && iso >= medHHIni && limite && iso <= limite;
+    const ponta = iso===medHHIni || iso===medHHFim || (!medHHFim && iso===fimParcial);
+    cells += `<div class="day" style="cursor:pointer;${dentro?'background:var(--azul-claro);':''}${ponta?'border:2px solid var(--azul-esc);':''}"
+        onclick="cliquePeriodoHH('${iso}')" title="Semana de ${fmtDate(segundaDaSemana(iso))} a ${fmtDate(addDays(segundaDaSemana(iso),6))}">
+      <div class="nd">${d}</div>
+    </div>`;
+  }
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;max-width:420px;">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="navMesHH(-1)">‹</button>
+      <b>${monthLabel(medHHCalMes)}</b>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="navMesHH(1)">›</button>
+    </div>
+    <div class="calendar" style="margin-top:8px;max-width:420px;">
+      ${['SEG','TER','QUA','QUI','SEX','SAB','DOM'].map(d=>`<div class="dow">${d}</div>`).join('')}${cells}
+    </div>`;
+}
 
 function novaMedicaoHHRascunho(){
   if(!medHHObraSel){ toast('Escolha a obra.'); return; }
@@ -9336,18 +9510,25 @@ function renderMedicaoHH(abrirId){
         categoria — para você cobrar e conferir contra o que a Bandeira manda. O custo de
         mão de obra continua no <b>Custo Consolidado</b>, no RH.
       </p>
-      <div class="grid grid-3">
-        <div class="field"><label>Obra</label>
-          <select onchange="medHHObraSel=this.value; renderMedicaoHH();">${opcoesObra(medHHObraSel)}</select>
-        </div>
-        <div class="field"><label>De</label>
-          <input type="date" value="${medHHIni}" onchange="medHHIni=this.value;"></div>
-        <div class="field"><label>Até</label>
-          <input type="date" value="${medHHFim}" onchange="medHHFim=this.value;"></div>
+      <div class="field"><label>Obra</label>
+        <select onchange="medHHObraSel=this.value; renderMedicaoHH();">${opcoesObra(medHHObraSel)}</select>
       </div>
-      ${medHHObraSel
+
+      <label style="display:block;margin-top:12px;">Período (clique na semana de início e depois na semana final)</label>
+      ${renderCalendarioPeriodoHH()}
+      <p class="help" style="margin-top:8px;">
+        ${medHHIni && medHHFim
+          ? `Período escolhido: <b>${fmtDate(medHHIni)} (segunda) a ${fmtDate(medHHFim)} (domingo)</b> —
+             ${Math.round(((parseISO(medHHFim)-parseISO(medHHIni))/86400000 + 1) / 7)} semana(s).
+             <a href="#" onclick="limparPeriodoHH(); return false;">limpar</a>`
+          : medHHIni
+            ? `Início escolhido: <b>${fmtDate(medHHIni)}</b> — clique agora na semana em que a medição termina.
+               <a href="#" onclick="limparPeriodoHH(); return false;">limpar</a>`
+            : 'Clique numa semana no calendário para começar.'}
+      </p>
+      ${medHHObraSel && medHHIni && medHHFim
         ? `<button class="btn btn-primary" onclick="novaMedicaoHHRascunho()">+ Nova medição desta obra e período</button>`
-        : '<p class="help">Escolha a obra para poder gerar uma medição nova.</p>'}
+        : `<p class="help">Escolha a obra e o período completo (início e fim) para poder gerar uma medição nova.</p>`}
 
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12.5px;margin-top:14px;">
         <span>Empresa da receita quando aprovar:
@@ -9420,11 +9601,15 @@ function detalheMedicaoHH(m){
           <td>${esc(l.funcionario.nome)}</td>
           <td>${CATEGORIA_HH_LABEL[l.categoria]}</td>
           ${blocos.map((b,i)=>`<td class="num">${l.porSemana[i]||''}</td>`).join('')}
-          <td class="num"><b>${l.total}</b></td>
+          <td class="num"><b>${l.total}</b>${l.abonados?`<br><span style="font-weight:400;font-size:10px;color:#9aa0ab;">${l.abonados} abonado${l.abonados>1?'s':''}</span>`:''}</td>
           <td class="num">${fmtMoney(l.subtotal)}</td>
         </tr>`).join('')}</tbody>
       </table>
     </div>`}
+    ${calc.linhas.some(l=>l.abonados) ? `<p class="help">
+      "Abonado" = dia de atestado ou falta justificada — a Bandeira paga a diária mesmo
+      assim, então entra na medição pelo preço cheio. Só o vale-transporte/alimentação
+      desse dia é descontado à parte (ver sugestão de desconto abaixo).</p>` : ''}
 
     <div class="table-wrap" style="margin-top:12px;max-width:520px;">
       <table>
@@ -9442,6 +9627,10 @@ function detalheMedicaoHH(m){
               ? fmtMoney(m.desconto)
               : `<input type="number" step="0.01" style="width:100px;text-align:right;" value="${m.desconto}"
                    onchange="setDescontoMedicaoHH('${m.id}', this.value)">`}</th></tr>
+          ${m.status!=='aprovada' && calc.sugestaoDesconto ? `<tr><td colspan="4" style="text-align:right;font-weight:400;">
+            <span class="help">Sugestão automática: ${fmtMoney(calc.sugestaoDesconto)} (VT/VR dos dias abonados) —
+            <a href="#" onclick="setDescontoMedicaoHH('${m.id}', ${calc.sugestaoDesconto}); return false;">usar esta sugestão</a></span>
+          </td></tr>` : ''}
           <tr><th colspan="3" style="text-align:right;">TOTAL GERAL</th>
             <th class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(totalGeral)}</th></tr>
         </tfoot>
