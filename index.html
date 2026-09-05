@@ -688,7 +688,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-04 · 33';
+const VERSAO = '2026-09-04 · 34';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -810,6 +810,14 @@ function defaultDB(){
        usuário cadastra à mão, com o próprio nome. */
     feriados: [],
 
+    /* Medição Homem-Hora (04/09/2026): {id, obraId, dataInicio, dataFim,
+       status:'rascunho'|'aprovada', desconto, observacoes,
+       itensCongelados, totalMedicaoCongelado, totalGeralCongelado, lancamentoId}.
+       Gera a medição a partir do ponto já lançado (não redigita nada) e, ao ser
+       aprovada, congela os números e cria o lançamento de receita — ver
+       `fonte/14_medicao_hh.js` e "SINCRONIA CLAUDE/PROXIMO - Financeiro e Medicoes.md". */
+    medicoesHH: [],
+
     /* ---------- FINANCEIRO ----------
        Tudo aqui nasce VAZIO pelo mesmo motivo de `empresa` e `obras`: o app é
        publicado num repositório PÚBLICO. O nome das empresas do grupo é o nome
@@ -872,6 +880,13 @@ function defaultDB(){
       // fichados (05b_fichados.js)
       fichadosContaPadrao: '',
       fichadosCategoriaPadrao: '',
+      // preço da diária de Homem-Hora por categoria (Medição HH, 04/09/2026) —
+      // editável, porque muda de contrato para contrato; valores de partida são
+      // os praticados com a Bandeira em 2026 (ver PROXIMO - Financeiro e Medicoes.md)
+      tabelaHH: {servente:315, meioOficial:367, profissional:459, eletricista:560},
+      // de qual empresa/categoria sai a receita quando uma Medição HH é aprovada
+      medicaoHHEmpresaPadrao: '',
+      medicaoHHCategoriaPadrao: '',
       // códigos das rubricas do holerite (conforme a contabilidade)
       codigos: {
         saldoSalario:'001', difSalario:'108', salarioFamilia:'230',
@@ -891,6 +906,8 @@ function migrate(db){
   db.config        = Object.assign({}, base.config, db.config||{});
   db.config.encargosAtivos = Object.assign({}, base.config.encargosAtivos, db.config.encargosAtivos||{});
   db.config.codigos        = Object.assign({}, base.config.codigos, db.config.codigos||{});
+  db.config.tabelaHH       = Object.assign({}, base.config.tabelaHH, db.config.tabelaHH||{});
+  db.medicoesHH    = db.medicoesHH    || [];
   db.adiantamentos = db.adiantamentos || [];
   db.pagamentos    = db.pagamentos    || [];   /* marca de pago no fechamento */
   db.diasUteisMes  = db.diasUteisMes  || {};
@@ -919,6 +936,16 @@ function migrate(db){
     dependentes: [],
     cbo: '', matricula: ''
   }, f));
+  /* Histórico de obra (04/09/2026), para a Medição HH não atribuir os dias de
+     antes de uma transferência à obra nova. Quem nunca foi transferido ganha
+     uma única entrada de backfill a partir da admissão (ou de uma data bem
+     antiga, se não tiver admissão) — é a melhor suposição possível para dado
+     que já existia antes do histórico existir. */
+  (db.funcionarios||[]).forEach(f=>{
+    if(!f.obraHistorico){
+      f.obraHistorico = f.obraPadrao ? [{obraId: f.obraPadrao, inicio: f.admissao || '0001-01-01'}] : [];
+    }
+  });
   return db;
 }
 
@@ -1160,6 +1187,19 @@ function filtraObra(lista, obraId){
   return obraId ? lista.filter(f=>f.obraPadrao===obraId) : lista;
 }
 
+/* Obra de um FICHADO num dia específico — não confundir com `f.obraPadrao`, que
+   é só a obra ATUAL. Criado para a Medição HH (04/09/2026): um homem-hora
+   transferido de obra no meio do período não pode ter os dias de ANTES da
+   transferência contados na obra nova. `f.obraHistorico` é preenchido por
+   `transferirObraFunc` (03_func.js); quem nunca foi transferido tem uma única
+   entrada de backfill (`migrate()`). Diarista não usa isto — o dia dele já
+   carrega o próprio `obraId` em `DB.pontoDiarista`. */
+function obraDoFuncionarioEm(f, iso){
+  const hist = (f.obraHistorico||[]).filter(h=>h.inicio<=iso);
+  if(hist.length) return hist[hist.length-1].obraId;
+  return f.obraPadrao || '';
+}
+
 /* Ponto não pode ser lançado fora do vínculo. Devolve 'antes', 'depois' ou ''. */
 function foraDoVinculo(f, iso){
   if(!f) return '';
@@ -1355,6 +1395,7 @@ const PAGES = [
   {id:'caixa',        secao:'Financeiro', label:'Caixa e Contas',            icon:'cofre',    sub:'Saldo de cada conta, por empresa e consolidado'},
   {id:'lancamentos',  secao:'Financeiro', label:'A Pagar / A Receber',       icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
   {id:'fluxo',        secao:'Financeiro', label:'Fluxo de Caixa',            icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
+  {id:'medicaoHH',    secao:'Financeiro', label:'Medição Homem-Hora',        icon:'regua',    sub:'Gera a medição a partir do ponto e vira conta a receber'},
 
   {id:'sync',         secao:'Sistema',    label:'Sincronizar (Drive)',       icon:'nuvem',    sub:'Juntar os dados entre os computadores'},
   {id:'config',       secao:'Sistema',    label:'Configurações',             icon:'engrenagem',sub:'Empresa, encargos e parâmetros de cálculo'}
@@ -1381,6 +1422,7 @@ const ICONES = {
   cofre:     '<rect x="3.2" y="4.5" width="17.6" height="15" rx="2"/><circle cx="10.5" cy="12" r="3.4"/><path d="M10.5 8.6v6.8M7.1 12h6.8M17.4 9.4v5.2"/>',
   lista:     '<path d="M9 7h11M9 12h11M9 17h11"/><path d="m4 6.6 1.1 1.1L7 5.8M4 11.6l1.1 1.1L7 10.8M4 16.6l1.1 1.1L7 15.8"/>',
   fluxo:     '<path d="M4 20h16"/><path d="M4.5 16.2 9 10.4l3.6 3 5.9-7.2"/><path d="M18.5 6.2h-3.4M18.5 6.2v3.4"/>',
+  regua:     '<rect x="3" y="9" width="18" height="6" rx="1.2"/><path d="M7 9v3M11 9v3M15 9v3M19 9v2.5"/>',
   seta:      '<path d="M9 5l7 7-7 7"/>'
 };
 function icone(nome){
@@ -1462,7 +1504,7 @@ function render(){
     ponto: renderPonto, fechamento: renderFechamento,
     adiantamentos: renderAdiantamentos, vales: renderVales, holerite: renderHolerite,
     estoque: renderEstoque, custos: renderCustos,
-    caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo,
+    caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, medicaoHH: renderMedicaoHH,
     sync: renderSync, config: renderConfig
   };
   document.getElementById('content').innerHTML = '';
@@ -1653,6 +1695,7 @@ function renderFuncionarios(){
                 <td style="white-space:nowrap;">
                   <button class="btn btn-secondary btn-sm" onclick="openFuncModal('${f.id}')">Editar</button>
                   <button class="btn btn-secondary btn-sm" onclick="printFicha('${f.id}')">Ficha PDF</button>
+                  <button class="btn btn-secondary btn-sm" onclick="transferirObraFunc('${f.id}')">Transferir de obra</button>
                   ${f.demissao
                     ? `<button class="btn btn-secondary btn-sm" onclick="readmitirFunc('${f.id}')">Readmitir</button>`
                     : `<button class="btn btn-secondary btn-sm" onclick="demitirFunc('${f.id}')">Demitir</button>`}
@@ -1734,6 +1777,55 @@ function readmitirFunc(id){
   saveDB(); renderFuncionarios(); toast(`${f.nome} voltou para a lista de ativos.`);
 }
 
+/* --------- TRANSFERÊNCIA DE OBRA (04/09/2026) ---------
+   Pedido do Maycon: um homem-hora pode ser tirado de uma obra e levado para outra
+   no meio do mês, e isso já aconteceu de verdade. `obraPadrao` só guarda a obra
+   ATUAL — sem histórico, a Medição HH atribuiria os dias inteiros do período à
+   obra de hoje, mesmo os dias em que a pessoa estava em outra. Esta ação grava a
+   transferência com data em `f.obraHistorico` (ver `obraDoFuncionarioEm` em
+   02_core.js) e também atualiza `obraPadrao`, para as outras telas continuarem
+   mostrando a obra de hoje sem precisar mudar nada nelas. */
+function transferirObraFunc(id){
+  const f = func(id);
+  if(!f) return;
+  const obrasOpts = DB.obras.filter(o=>o.id!==f.obraPadrao)
+    .map(o=>`<option value="${o.id}">${esc(o.nome)}</option>`).join('');
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Transferir de obra — ${esc(f.nome)}</h2>
+    <p class="help">Obra atual: <b>${esc(obraNome(f.obraPadrao))}</b></p>
+    <div class="grid grid-2">
+      <div class="field"><label>Nova obra</label>
+        <select id="to_obra"><option value="">— escolha —</option>${obrasOpts}</select></div>
+      <div class="field"><label>A partir de qual dia</label>
+        <input type="date" id="to_data" value="${todayISO()}" ${f.admissao?`min="${f.admissao}"`:''}></div>
+    </div>
+    <p class="help">
+      Os dias já lançados ANTES desta data continuam contando para a obra antiga na Medição
+      HH; a partir desta data, contam para a nova.
+    </p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="confirmarTransferenciaObra('${id}')">Transferir</button>
+    </div>
+  `);
+}
+function confirmarTransferenciaObra(id){
+  const f = func(id);
+  if(!f) return;
+  const novaObra = val('to_obra');
+  const data = val('to_data');
+  if(!novaObra){ alert('Escolha a nova obra.'); return; }
+  if(!data){ alert('Informe a data da transferência.'); return; }
+  if(f.admissao && data < f.admissao){ alert('A transferência não pode ser antes da admissão.'); return; }
+  f.obraHistorico = f.obraHistorico || [];
+  f.obraHistorico.push({obraId: novaObra, inicio: data});
+  f.obraHistorico.sort((a,b)=>a.inicio.localeCompare(b.inicio));
+  f.obraPadrao = novaObra;
+  saveDB(); closeModal(); renderFuncionarios();
+  toast(`${f.nome} transferido para ${obraNome(novaObra)} a partir de ${fmtDate(data)}.`);
+}
+
 let modalDependentes = [];
 
 function openFuncModal(id){
@@ -1793,6 +1885,20 @@ function openFuncModal(id){
       <p class="help" style="margin-top:-6px;">
         Preenchendo a data de demissão o funcionário some das telas de ponto e não dá mais para apontar dia
         depois dela. Ele continua aparecendo no fechamento e no holerite do período em que saiu, para o acerto.
+      </p>
+      <div id="wrap_folhaContabil" style="${f.tipo==='diarista'?'':'display:none;'}">
+        <label class="check"><input type="checkbox" id="f_apareceNaFolhaContabil" ${f.apareceNaFolhaContabil?'checked':''}>
+          Incluir na folha de ponto mensal da contabilidade, mesmo sendo diarista</label>
+        <p class="help" style="margin-top:-6px;">
+          Use isto quando a contabilidade trata esta pessoa como fichada (mesmo pagando por diária/quinzena de
+          verdade) — evita ter que duplicar o cadastro só para ela aparecer na folha de "Ponto → Fichados → Ver o mês".
+        </p>
+      </div>
+      <label class="check"><input type="checkbox" id="f_duplicataSoContabil" ${f.duplicataSoContabil?'checked':''}>
+        Cadastro duplicado, só para a folha da contabilidade — não contar em relatórios (medição etc.)</label>
+      <p class="help" style="margin-top:-6px;">
+        Rede de segurança para qualquer outra duplicata que aparecer no futuro — não é mais necessária para
+        quem usar a caixinha acima.
       </p>
       <div class="grid grid-3">
         <div class="field"><label>Função / cargo</label><input id="f_funcao" value="${esc(f.funcao||'')}" placeholder="Ex: ARMA, CARP, SERV, ENCA, PEDR"></div>
@@ -1924,6 +2030,7 @@ function toggleFuncTipo(){
   const diarista = tipo==='diarista';
   document.getElementById('wrap_diaria').style.display = diarista ? '' : 'none';
   document.getElementById('wrap_periodicidade').style.display = diarista ? '' : 'none';
+  document.getElementById('wrap_folhaContabil').style.display = diarista ? '' : 'none';
   document.getElementById('wrap_salario').style.display = diarista ? 'none' : '';
   const reg = document.getElementById('f_regimePagamento');
   if(reg && !reg.dataset.touched) reg.value = diarista ? 'dia' : 'mes';
@@ -1971,6 +2078,8 @@ function saveFunc(id){
     regimePagamento: val('f_regimePagamento'),
     /* quem tem data de saída fica inativo por definição — é o que tira ele do ponto */
     status: dDem ? 'inativo' : val('f_status'),
+    duplicataSoContabil: checked('f_duplicataSoContabil'),
+    apareceNaFolhaContabil: checked('f_apareceNaFolhaContabil'),
     obraPadrao: val('f_obraPadrao'),
     admissao: val('f_admissao'),
     demissao: val('f_demissao'),
@@ -3086,6 +3195,23 @@ function executarPreenchimento(tipo){
    a pagamento em dobro (isso é combinado fora do app, na folha de pagamento).
    ========================================================= */
 
+/* Status de um dia, PARA ESTA FOLHA, seja o funcionário fichado ou diarista.
+   Pedido do Maycon (04/09/2026): a contabilidade trata alguns diaristas (pagos
+   por diária/quinzena de verdade) como se fossem fichados, e eles precisam
+   aparecer aqui — mas o ponto de diarista mora em `DB.pontoDiarista`, num
+   vocabulário mais simples ('trabalhado'/'falta'/''), diferente do
+   `STATUS_CYCLE` do fichado. `f.apareceNaFolhaContabil` (03_func.js) é quem liga
+   isso, funcionário por funcionário — sem precisar duplicar o cadastro dele. */
+function statusParaFolhaContabil(f, iso, ym){
+  if(f.tipo === 'fichado'){
+    const reg = DB.pontoMensal[`${f.id}_${ym}`] || {dias:{}};
+    return reg.dias[iso] || '';
+  }
+  const r = DB.pontoDiarista.find(p=>p.funcionarioId===f.id && p.data===iso);
+  if(!r || !r.status) return '';
+  return r.status === 'trabalhado' ? 'trabalhado' : 'falta_injustificada';
+}
+
 /* status do app -> sigla da planilha da contabilidade */
 const SIGLA_CONTABIL = {
   trabalhado:          '1',
@@ -3152,7 +3278,7 @@ function printFolhaContabilidade(){
      filtro de obra da tela. `ativosNoMes` é o que mantém na folha quem foi
      demitido no meio do mês — senão não haveria como pagar o acerto dele. */
   const equipe = ordenarFuncionarios(
-    filtraObra(ativosNoMes(ym).filter(f=>f.tipo==='fichado'), pmObraFiltro));
+    filtraObra(ativosNoMes(ym).filter(f=>f.tipo==='fichado' || f.apareceNaFolhaContabil), pmObraFiltro));
 
   if(!equipe.length){
     alert('Nenhum fichado com vínculo ativo neste mês'
@@ -3186,8 +3312,7 @@ function printFolhaContabilidade(){
           return `<td class="c fora">${MESES[parseInt(iso.slice(5,7),10)-1].toUpperCase().slice(0,3)}</td>`;
         }
         if(foraDoVinculo(f, iso)) return `<td class="c fora">X</td>`;
-        const reg = DB.pontoMensal[`${f.id}_${ym}`] || {dias:{}};
-        const st = reg.dias[iso] || '';
+        const st = statusParaFolhaContabil(f, iso, ym);
         const sig = SIGLA_CONTABIL[st] || '';
         if(sig === '1') total++;
         return `<td class="c">${sig}</td>`;
@@ -3240,7 +3365,7 @@ function printFolhaContabilidade(){
       ${pag.join('')}
       ${i === paginas.length-1 ? `
         <div class="dtotais">
-          ${equipe.length} funcionário(s) fichado(s) · ${MESES[mes-1]} de ${ano}
+          ${equipe.length} funcionário(s) · ${MESES[mes-1]} de ${ano}
         </div>
         ${docFoot()}` : ''}
     </div>`).join('');
@@ -3266,7 +3391,6 @@ function printFolhaContabilidade(){
    ========================================================= */
 function resumoMesFuncionario(f, ym){
   const ini = primeiroDiaMes(ym), fim = ultimoDiaMes(ym);
-  const reg = DB.pontoMensal[`${f.id}_${ym}`] || {dias:{}};
   const r = {uteis:0, comVinculo:0, trabalhado:0, injustificada:0, justificada:0,
              atestado:0, licenca:0, folga:0, feriado:0, semLancamento:0};
   let iso = ini;
@@ -3276,7 +3400,7 @@ function resumoMesFuncionario(f, ym){
       r.uteis++;
       if(!foraDoVinculo(f, iso)){
         r.comVinculo++;
-        const st = reg.dias[iso] || '';
+        const st = statusParaFolhaContabil(f, iso, ym);
         /* feriado sem lançamento é o esperado (ninguém trabalha) — não é
            "furo" de apontamento, igual sábado/domingo já não entram em
            `uteis`. Só cai em "sem lançamento" quando NÃO é feriado. */
@@ -3301,7 +3425,7 @@ function printResumoMensal(){
   const ini = primeiroDiaMes(ym), fim = ultimoDiaMes(ym);
 
   const equipe = ordenarFuncionarios(
-    filtraObra(ativosNoMes(ym).filter(f=>f.tipo==='fichado'), pmObraFiltro));
+    filtraObra(ativosNoMes(ym).filter(f=>f.tipo==='fichado' || f.apareceNaFolhaContabil), pmObraFiltro));
 
   if(!equipe.length){
     alert('Nenhum fichado com vínculo ativo neste mês'
@@ -6187,6 +6311,24 @@ function renderConfig(){
     </div>
 
     <div class="card">
+      <h2>Tabela de preço da diária — Medição Homem-Hora</h2>
+      <p class="help" style="margin-top:0;">
+        Usada em <b>Medição Homem-Hora</b> para calcular quanto cobrar por dia trabalhado,
+        por categoria. Muda de contrato para contrato — os valores de partida são os
+        praticados com a Bandeira em 2026.
+      </p>
+      <div class="grid grid-4">
+        <div class="field"><label>Servente (R$)</label><input type="number" step="0.01" id="c_hhServente" value="${cfg.tabelaHH.servente}"></div>
+        <div class="field"><label>Meio-oficial (R$)</label><input type="number" step="0.01" id="c_hhMeioOficial" value="${cfg.tabelaHH.meioOficial}"></div>
+        <div class="field"><label>Profissional — pedreiro, carpinteiro, armador (R$)</label><input type="number" step="0.01" id="c_hhProfissional" value="${cfg.tabelaHH.profissional}"></div>
+        <div class="field"><label>Eletricista (R$)</label><input type="number" step="0.01" id="c_hhEletricista" value="${cfg.tabelaHH.eletricista}"></div>
+      </div>
+      <button class="btn btn-primary" onclick="saveTabelaHH()">Salvar tabela de preço</button>
+      <p class="help">Encarregado e administrativo não têm preço de HH — só entram em
+        serviços de empreitada.</p>
+    </div>
+
+    <div class="card">
       <h2>Desconto de INSS do funcionário</h2>
       <div class="table-wrap">
         <table>
@@ -6374,6 +6516,13 @@ function saveConfig(){
   });
   saveDB(); toast('Alíquotas salvas.'); renderConfig();
 }
+function saveTabelaHH(){
+  DB.config.tabelaHH = {
+    servente: numVal('c_hhServente'), meioOficial: numVal('c_hhMeioOficial'),
+    profissional: numVal('c_hhProfissional'), eletricista: numVal('c_hhEletricista')
+  };
+  saveDB(); toast('Tabela de preço da diária salva.'); renderConfig();
+}
 function restaurarPadraoEncargos(){
   if(!confirm('Restaurar as alíquotas padrão da construção civil (20% + 3% + 5,8% + 8% + 3,2% + 8,33% + 11,11%)?')) return;
   const d = defaultDB().config;
@@ -6500,7 +6649,10 @@ const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','p
      a versão mais recente. Se os dois derem baixa no mesmo lançamento antes de
      sincronizar, vale a última — a mesma limitação já avisada na tela. */
   'empresas','contas','categorias','lancamentos','recorrentes',
-  'feriados'];
+  'feriados',
+  /* Medição HH (04/09/2026) — mesmo motivo: sem entrar aqui, uma medição
+     aprovada num PC (e o lançamento que ela criou) não aparece no outro. */
+  'medicoesHH'];
 /* mapas de dia: {chave: {dias:{iso:status}, ts:{iso:hora}}} */
 const SYNC_MAPAS_DIA = ['pontoMensal'];
 /* mapas simples: {chave: valor} com hora paralela em _meta */
@@ -8968,6 +9120,389 @@ function blocoContaCorrente(){
       empresa do grupo. Lançar como retirada erra o resultado e esta tabela ao mesmo tempo.
     </p>
   </div>`;
+}
+/* =========================================================
+   MEDIÇÃO HOMEM-HORA (04/09/2026) — etapa 3 do financeiro, parte 1
+
+   Escopo e decisões inteiras em
+   "SINCRONIA CLAUDE/PROXIMO - Financeiro e Medicoes.md". Resumo do que importa
+   para quem mexer aqui:
+
+   - Gera a medição A PARTIR DO PONTO JÁ LANÇADO — não redigita nada. Cobrança
+     por diária, com preço por categoria (`DB.config.tabelaHH`).
+   - O período é LIVRE (2, 3, 4, 5, 6... semanas, sempre segunda a domingo) —
+     depende da obra/cliente, não existe cadência fixa. Não travar número de
+     semanas em lugar nenhum.
+   - Só a Homem-Hora está pronta aqui. A Empreitada (previsto × realizado ×
+     saldo, por etapa/serviço) depende de importar o quantitativo do Gustavo
+     Adolpho e fica para uma etapa seguinte.
+   - A comparação linha a linha contra o PDF que a Bandeira manda TAMBÉM fica
+     para depois — esta etapa só gera A MINHA medição.
+   - Encarregado e administrativo NÃO têm preço de HH (confirmado no `PROXIMO`:
+     "o encarregado entra só em serviços de empreitada"). Quem cair aqui entra
+     numa lista de aviso, não trava a medição.
+   - Fichado transferido de obra no meio do período: ver `obraDoFuncionarioEm`
+     (02_core.js) e `transferirObraFunc` (03_func.js) — sem isso, os dias de
+     ANTES da transferência entrariam errado na obra nova.
+   - `f.duplicataSoContabil` (03_func.js): cadastro duplicado só para a folha da
+     contabilidade — nunca entra aqui, para não contar a mesma pessoa duas vezes.
+   ========================================================= */
+
+/* Função/cargo -> categoria de preço de HH. Reaproveita `cargoRank`/`ORDEM_CARGOS`
+   (02_core.js) em vez de inventar uma segunda lista — profissional agrupa
+   armador+carpinteiro+pedreiro, exatamente como a medição da Bandeira já escreve
+   "PROFISSIONAL (PEDREIRO, CARPINTEIRO, ARMADOR)" no quadro dela. */
+function categoriaHH(funcao){
+  const r = cargoRank(funcao);
+  if(r===2 || r===3 || r===4) return 'profissional';
+  if(r===5) return 'eletricista';
+  if(r===6) return 'meioOficial';
+  if(r===7) return 'servente';
+  return null;   // encarregado / administrativo / desconhecido / sem cargo
+}
+const CATEGORIA_HH_LABEL = {servente:'Servente', meioOficial:'Meio-oficial', profissional:'Profissional', eletricista:'Eletricista'};
+
+/* Blocos de segunda a domingo cobrindo [ini, fim] inteiro — não só um mês, ao
+   contrário de `semanasDoMes` (04c_folha_contabil.js), porque a medição pode
+   atravessar vários meses. */
+function blocosSemanaMedicao(ini, fim){
+  const blocos = [];
+  let seg = segundaDaSemana(ini);
+  while(seg <= fim){
+    const dias = [];
+    for(let i=0;i<7;i++) dias.push(addDays(seg, i));
+    blocos.push(dias);
+    seg = addDays(seg, 7);
+  }
+  return blocos;
+}
+
+function medicaoHH(id){ return DB.medicoesHH.find(m=>m.id===id); }
+
+/* Um dia conta para a medição de `obraId` quando: o funcionário tinha vínculo
+   naquele dia, ESTAVA naquela obra naquele dia (histórico para fichado, o
+   próprio lançamento para diarista) e foi marcado como trabalhado. */
+function diaContaNaMedicaoHH(f, iso, obraId){
+  if(foraDoVinculo(f, iso)) return false;
+  if(f.tipo === 'fichado'){
+    if(obraDoFuncionarioEm(f, iso) !== obraId) return false;
+    const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
+    return !!(reg && reg.dias && reg.dias[iso] === 'trabalhado');
+  }
+  const r = DB.pontoDiarista.find(p=>p.funcionarioId===f.id && p.data===iso);
+  return !!(r && r.obraId === obraId && r.status === 'trabalhado');
+}
+
+/* O cálculo inteiro — usado tanto pela tela (rascunho, ao vivo) quanto por
+   `aprovarMedicaoHH` (o resultado vira o que fica congelado). */
+function calcMedicaoHH(obraId, ini, fim){
+  const blocos = blocosSemanaMedicao(ini, fim);
+  const funcionarios = ativosNoPeriodo(ini, fim)
+    .filter(f=>f.tipoServico==='homem_hora' && !f.duplicataSoContabil);
+  const precos = DB.config.tabelaHH || {};
+
+  const porCategoria = {servente:{dias:0,valor:0}, meioOficial:{dias:0,valor:0},
+                         profissional:{dias:0,valor:0}, eletricista:{dias:0,valor:0}};
+  const linhasPorFunc = {};
+
+  blocos.forEach((dias, iBloco)=>{
+    funcionarios.forEach(f=>{
+      let diasNoBloco = 0;
+      dias.forEach(iso=>{
+        if(iso < ini || iso > fim) return;   // o bloco pode passar do intervalo pedido
+        if(diaContaNaMedicaoHH(f, iso, obraId)) diasNoBloco++;
+      });
+      if(diasNoBloco <= 0) return;
+      if(!linhasPorFunc[f.id]) linhasPorFunc[f.id] = {funcionario:f, porSemana:{}, total:0};
+      linhasPorFunc[f.id].porSemana[iBloco] = diasNoBloco;
+      linhasPorFunc[f.id].total += diasNoBloco;
+    });
+  });
+
+  const semCategoria = [];
+  Object.values(linhasPorFunc).forEach(l=>{
+    const cat = categoriaHH(l.funcionario.funcao);
+    l.categoria = cat;
+    if(!cat){ semCategoria.push({funcionario:l.funcionario, dias:l.total}); return; }
+    const preco = Number(precos[cat]) || 0;
+    l.precoUnit = preco;
+    l.subtotal = Math.round(l.total * preco * 100) / 100;
+    porCategoria[cat].dias += l.total;
+    porCategoria[cat].valor += l.subtotal;
+  });
+
+  const totalMedicao = Math.round(
+    Object.values(porCategoria).reduce((s,c)=>s+c.valor,0) * 100) / 100;
+
+  return {
+    obraId, ini, fim, blocos,
+    linhas: Object.values(linhasPorFunc).filter(l=>l.categoria)
+      .sort((a,b)=>cmpFuncionarios(a.funcionario,b.funcionario)),
+    porCategoria, semCategoria,
+    totalMedicao
+  };
+}
+
+/* ---------------- TELA ---------------- */
+
+let medHHObraSel = '';
+let medHHIni = '';
+let medHHFim = '';
+
+function novaMedicaoHHRascunho(){
+  if(!medHHObraSel){ toast('Escolha a obra.'); return; }
+  if(!medHHIni || !medHHFim){ toast('Escolha o período (de / até).'); return; }
+  if(medHHFim < medHHIni){ toast('A data final não pode ser antes da inicial.'); return; }
+  const m = {
+    id: uid(), obraId: medHHObraSel, dataInicio: medHHIni, dataFim: medHHFim,
+    status: 'rascunho', desconto: 0, observacoes: '',
+    itensCongelados: null, totalMedicaoCongelado: null, totalGeralCongelado: null,
+    lancamentoId: ''
+  };
+  DB.medicoesHH.push(m);
+  saveDB(); renderMedicaoHH(m.id);
+}
+
+function setDescontoMedicaoHH(id, valor){
+  const m = medicaoHH(id);
+  if(!m || m.status==='aprovada') return;
+  m.desconto = Number(valor) || 0;
+  saveDB(); renderMedicaoHH(id);
+}
+
+function aprovarMedicaoHH(id){
+  const m = medicaoHH(id);
+  if(!m || m.status==='aprovada') return;
+  const calc = calcMedicaoHH(m.obraId, m.dataInicio, m.dataFim);
+  const totalGeral = Math.round((calc.totalMedicao - (Number(m.desconto)||0)) * 100) / 100;
+  if(totalGeral <= 0){ toast('O total geral precisa ser maior que zero para aprovar.'); return; }
+  const empresaId = DB.config.medicaoHHEmpresaPadrao;
+  if(!empresaId){ toast('Escolha antes a empresa da receita, logo acima da lista de medições.'); return; }
+  if(!confirm(`Aprovar esta medição?\n\nOs números ficam congelados (não mudam mais se o ponto for editado depois) e um lançamento de receita de ${fmtMoney(totalGeral)} é criado, em aberto, para você dar baixa quando receber.`)) return;
+
+  const lanc = {
+    id: uid(), baixas: [], origem: 'medicao', origemRef: `medicaoHH_${m.id}`,
+    tipo: 'receita', natureza: 'operacao', empresaId, contaId: '',
+    categoriaId: DB.config.medicaoHHCategoriaPadrao || '',
+    obraId: m.obraId, tipoServico: 'homem_hora',
+    descricao: `Medição HH — ${obraNome(m.obraId)} — ${fmtDate(m.dataInicio)} a ${fmtDate(m.dataFim)}`,
+    valor: totalGeral, vencimento: m.dataFim, obs: '',
+    socio: '', pagoNaContaDe: ''
+  };
+  DB.lancamentos.push(lanc);
+
+  m.itensCongelados = calc;
+  m.totalMedicaoCongelado = calc.totalMedicao;
+  m.totalGeralCongelado = totalGeral;
+  m.status = 'aprovada';
+  m.lancamentoId = lanc.id;
+  saveDB(); renderMedicaoHH(id);
+  toast('Medição aprovada — lançamento criado em "A Pagar / A Receber" (em aberto).');
+}
+
+function reabrirMedicaoHH(id){
+  const m = medicaoHH(id);
+  if(!m || m.status!=='aprovada') return;
+  if(!confirm('Reabrir esta medição? O lançamento de receita que ela criou vai ser apagado do financeiro.')) return;
+  DB.lancamentos = DB.lancamentos.filter(l=>l.id!==m.lancamentoId);
+  m.status = 'rascunho';
+  m.itensCongelados = null; m.totalMedicaoCongelado = null; m.totalGeralCongelado = null;
+  m.lancamentoId = '';
+  saveDB(); renderMedicaoHH(id);
+  toast('Medição reaberta — volte a mexer no desconto e aprove de novo quando estiver certa.');
+}
+
+function excluirMedicaoHH(id){
+  const m = medicaoHH(id);
+  if(!m) return;
+  if(m.status==='aprovada'){ toast('Reabra a medição antes de excluir — ela ainda tem um lançamento vinculado.'); return; }
+  if(!confirm('Excluir esta medição?')) return;
+  DB.medicoesHH = DB.medicoesHH.filter(x=>x.id!==id);
+  saveDB(); renderMedicaoHH();
+}
+
+function renderMedicaoHH(abrirId){
+  const c = document.getElementById('content');
+  const lista = DB.medicoesHH
+    .filter(m=>!medHHObraSel || m.obraId===medHHObraSel)
+    .sort((a,b)=>b.dataInicio.localeCompare(a.dataInicio));
+  const aberta = abrirId ? medicaoHH(abrirId) : null;
+
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Medição Homem-Hora</h2>
+      <p class="help">
+        Gera a medição a partir do ponto já lançado, por semana (segunda a domingo) e por
+        categoria — para você cobrar e conferir contra o que a Bandeira manda. O custo de
+        mão de obra continua no <b>Custo Consolidado</b>, no RH.
+      </p>
+      <div class="grid grid-3">
+        <div class="field"><label>Obra</label>
+          <select onchange="medHHObraSel=this.value; renderMedicaoHH();">${opcoesObra(medHHObraSel)}</select>
+        </div>
+        <div class="field"><label>De</label>
+          <input type="date" value="${medHHIni}" onchange="medHHIni=this.value;"></div>
+        <div class="field"><label>Até</label>
+          <input type="date" value="${medHHFim}" onchange="medHHFim=this.value;"></div>
+      </div>
+      ${medHHObraSel
+        ? `<button class="btn btn-primary" onclick="novaMedicaoHHRascunho()">+ Nova medição desta obra e período</button>`
+        : '<p class="help">Escolha a obra para poder gerar uma medição nova.</p>'}
+
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12.5px;margin-top:14px;">
+        <span>Empresa da receita quando aprovar:
+          <select style="margin-left:4px;" onchange="DB.config.medicaoHHEmpresaPadrao=this.value; saveDB(); renderMedicaoHH('${abrirId||''}');">
+            <option value="">— escolha —</option>
+            ${DB.empresas.map(e=>`<option value="${e.id}" ${DB.config.medicaoHHEmpresaPadrao===e.id?'selected':''}>${esc(e.apelido||e.nome)}</option>`).join('')}
+          </select>
+        </span>
+        <span>Categoria:
+          <select style="margin-left:4px;" onchange="DB.config.medicaoHHCategoriaPadrao=this.value; saveDB(); renderMedicaoHH('${abrirId||''}');">
+            <option value="">— sem categoria —</option>
+            ${categoriasDe('receita').map(ct=>`<option value="${ct.id}" ${DB.config.medicaoHHCategoriaPadrao===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+          </select>
+        </span>
+      </div>
+      ${!DB.empresas.length ? `<p class="help" style="color:var(--vermelho);">
+        Nenhuma empresa cadastrada ainda — <a href="#" onclick="goTo('caixa'); return false;">cadastre em Caixa e Contas</a>
+        antes de aprovar uma medição.</p>` : ''}
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Medições já feitas${medHHObraSel?` — ${esc(obraNome(medHHObraSel))}`:''}</h2>
+      <div class="table-wrap">
+        ${lista.length ? `<table>
+          <thead><tr><th>Obra</th><th>Período</th><th>Status</th><th class="num">Total geral</th><th></th></tr></thead>
+          <tbody>${lista.map(m=>`<tr style="cursor:pointer;" onclick="renderMedicaoHH('${m.id}')">
+            <td>${esc(obraNome(m.obraId))}</td>
+            <td>${fmtDate(m.dataInicio)} a ${fmtDate(m.dataFim)}</td>
+            <td><span class="badge ${m.status==='aprovada'?'badge-green':'badge-gray'}">${m.status==='aprovada'?'Aprovada':'Rascunho'}</span></td>
+            <td class="num">${m.status==='aprovada'?fmtMoney(m.totalGeralCongelado):'—'}</td>
+            <td style="white-space:nowrap;" onclick="event.stopPropagation()">
+              ${m.status!=='aprovada'?`<button class="btn btn-danger btn-sm" onclick="excluirMedicaoHH('${m.id}')">Excluir</button>`:''}
+            </td>
+          </tr>`).join('')}</tbody></table>`
+        : '<div class="empty">Nenhuma medição ainda. Escolha a obra e o período acima e clique em "Nova medição".</div>'}
+      </div>
+    </div>
+
+    ${aberta ? detalheMedicaoHH(aberta) : ''}
+  `;
+}
+
+function detalheMedicaoHH(m){
+  const calc = m.status==='aprovada' ? m.itensCongelados : calcMedicaoHH(m.obraId, m.dataInicio, m.dataFim);
+  const totalGeral = m.status==='aprovada'
+    ? m.totalGeralCongelado
+    : Math.round((calc.totalMedicao - (Number(m.desconto)||0)) * 100) / 100;
+  const blocos = calc.blocos;
+
+  return `
+  <div class="card">
+    <h2 style="margin-top:0;">${esc(obraNome(m.obraId))} — ${fmtDate(m.dataInicio)} a ${fmtDate(m.dataFim)}
+      <span class="badge ${m.status==='aprovada'?'badge-green':'badge-gray'}" style="margin-left:8px;">
+        ${m.status==='aprovada'?'Aprovada':'Rascunho'}
+      </span>
+    </h2>
+
+    ${calc.semCategoria.length ? `<p class="help" style="color:var(--vermelho);">
+      Sem categoria de HH, não entram no valor: ${calc.semCategoria.map(s=>
+        `${esc(s.funcionario.nome)} (${s.dias} dia${s.dias>1?'s':''})`).join(', ')}.
+      Encarregado e administrativo não têm preço de diária de HH.</p>` : ''}
+    ${!calc.linhas.length ? `<div class="empty">Nenhum dia trabalhado de Homem-Hora encontrado
+      nesta obra e período.</div>` : `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Funcionário</th><th>Categoria</th>
+          ${blocos.map((b,i)=>`<th class="num">Sem. ${i+1}<br><span style="font-weight:400;font-size:10px;color:#9aa0ab;">${fmtDateShort(b[0])}–${fmtDateShort(b[6])}</span></th>`).join('')}
+          <th class="num">Total dias</th><th class="num">Valor</th></tr></thead>
+        <tbody>${calc.linhas.map(l=>`<tr>
+          <td>${esc(l.funcionario.nome)}</td>
+          <td>${CATEGORIA_HH_LABEL[l.categoria]}</td>
+          ${blocos.map((b,i)=>`<td class="num">${l.porSemana[i]||''}</td>`).join('')}
+          <td class="num"><b>${l.total}</b></td>
+          <td class="num">${fmtMoney(l.subtotal)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`}
+
+    <div class="table-wrap" style="margin-top:12px;max-width:520px;">
+      <table>
+        <thead><tr><th>Categoria</th><th class="num">Diária</th><th class="num">Dias</th><th class="num">Total</th></tr></thead>
+        <tbody>${Object.keys(CATEGORIA_HH_LABEL).filter(k=>calc.porCategoria[k].dias>0).map(k=>`<tr>
+          <td>${CATEGORIA_HH_LABEL[k]}</td>
+          <td class="num">${fmtMoney(DB.config.tabelaHH[k])}</td>
+          <td class="num">${calc.porCategoria[k].dias}</td>
+          <td class="num">${fmtMoney(calc.porCategoria[k].valor)}</td>
+        </tr>`).join('')}</tbody>
+        <tfoot>
+          <tr><th colspan="3" style="text-align:right;">TOTAL DA MEDIÇÃO</th><th class="num">${fmtMoney(calc.totalMedicao)}</th></tr>
+          <tr><th colspan="3" style="text-align:right;">Desconto (alimentação/VT dos dias compensados, abono médico)</th>
+            <th class="num">${m.status==='aprovada'
+              ? fmtMoney(m.desconto)
+              : `<input type="number" step="0.01" style="width:100px;text-align:right;" value="${m.desconto}"
+                   onchange="setDescontoMedicaoHH('${m.id}', this.value)">`}</th></tr>
+          <tr><th colspan="3" style="text-align:right;">TOTAL GERAL</th>
+            <th class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(totalGeral)}</th></tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="modal-actions" style="justify-content:flex-start;margin-top:14px;">
+      <button class="btn btn-secondary" onclick="printMedicaoHH('${m.id}')">PDF</button>
+      ${m.status==='aprovada'
+        ? `<button class="btn btn-secondary" onclick="reabrirMedicaoHH('${m.id}')">Reabrir</button>`
+        : `<button class="btn btn-primary" onclick="aprovarMedicaoHH('${m.id}')">Aprovar (cria a receita)</button>`}
+    </div>
+  </div>`;
+}
+
+/* ---------------- PDF ----------------
+   Mesmo padrão dos outros documentos (docHead/docFoot/doPrint, ver 02_core.js).
+   Sem as colunas 50/70/100% de hora extra da medição da Bandeira — o app não
+   controla hora extra, mesma decisão já tomada na folha da contabilidade
+   (04c_folha_contabil.js). Sem paginação própria nesta primeira versão: para o
+   tamanho normal de uma medição (uma obra, algumas semanas) cabe folgado numa
+   página ou quebra sozinha sem gerar o bug do <thead> repetido (não há thead
+   repetido aqui — só um cabeçalho, não vazio no Safari). */
+function printMedicaoHH(id){
+  const m = medicaoHH(id);
+  if(!m) return;
+  const calc = m.status==='aprovada' ? m.itensCongelados : calcMedicaoHH(m.obraId, m.dataInicio, m.dataFim);
+  const totalGeral = m.status==='aprovada'
+    ? m.totalGeralCongelado
+    : Math.round((calc.totalMedicao - (Number(m.desconto)||0)) * 100) / 100;
+  const blocos = calc.blocos;
+
+  const html = `<div class="doc">
+    ${docHead('Medição de Homem-Hora',
+      `${esc(obraNome(m.obraId))} — Período de ${fmtDate(m.dataInicio)} a ${fmtDate(m.dataFim)}`,
+      `Emitida em<br><b>${fmtDate(todayISO())}</b>`)}
+
+    <div class="table-wrap"><table class="dtab">
+      <thead><tr><th>Funcionário</th><th>Cargo</th>
+        ${blocos.map((b,i)=>`<th>Sem.${i+1}</th>`).join('')}<th>Total</th></tr></thead>
+      <tbody>${calc.linhas.map(l=>`<tr>
+        <td>${esc(l.funcionario.nome)}</td><td>${esc((l.funcionario.funcao||'').toUpperCase())}</td>
+        ${blocos.map((b,i)=>`<td>${l.porSemana[i]||''}</td>`).join('')}
+        <td><b>${l.total}</b></td></tr>`).join('')}</tbody>
+    </table></div>
+
+    <div class="table-wrap" style="margin-top:10px;"><table class="dtab">
+      <thead><tr><th>Categoria</th><th>Diária</th><th>Dias</th><th>Total</th></tr></thead>
+      <tbody>${Object.keys(CATEGORIA_HH_LABEL).filter(k=>calc.porCategoria[k].dias>0).map(k=>`<tr>
+        <td>${CATEGORIA_HH_LABEL[k]}</td><td>${fmtMoney(DB.config.tabelaHH[k])}</td>
+        <td>${calc.porCategoria[k].dias}</td><td>${fmtMoney(calc.porCategoria[k].valor)}</td></tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr><th colspan="3">TOTAL DA MEDIÇÃO</th><th>${fmtMoney(calc.totalMedicao)}</th></tr>
+        <tr><th colspan="3">DESCONTO</th><th>${fmtMoney(m.desconto)}</th></tr>
+        <tr><th colspan="3">TOTAL GERAL</th><th>${fmtMoney(totalGeral)}</th></tr>
+      </tfoot>
+    </table></div>
+    ${docFoot()}
+  </div>`;
+  doPrint(html);
 }
 /* =========================================================
    AJUSTES DE TELA PEQUENA
