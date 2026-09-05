@@ -510,7 +510,12 @@ tr:hover td{background:#fafbfd;}
 /* =========== PRINT / DOCUMENTOS =========== */
 #printArea{display:none;}
 @media print{
-  @page{size:A4;margin:10mm;}
+  /* "portrait" explícito (05/09/2026): sem isso, alguns navegadores lembram a
+     orientação da ÚLTIMA impressão feita (ex.: uma tela larga) e aplicam nos
+     próximos documentos também — foi o que aconteceu com os recibos de vale
+     VT/VR, que saíram deitados sem motivo nenhum no documento em si. Nenhum
+     documento deste app precisa de paisagem. */
+  @page{size:A4 portrait;margin:10mm;}
 
   /* O app sai da impressão com display:none, NÃO com visibility:hidden.
      `visibility:hidden` esconde mas mantém o espaço ocupado: a altura da tela
@@ -690,7 +695,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-05 · 37';
+const VERSAO = '2026-09-05 · 38';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1591,9 +1596,29 @@ function docFoot(){
   return `<div class="dfoot">Documento gerado pelo Sistema de RH${
     DB.empresa.razaoSocial ? ' · ' + esc(DB.empresa.razaoSocial) : ''} · ${fmtDate(todayISO())}</div>`;
 }
-function doPrint(html){
+/* Nome de arquivo seguro: tira caractere que barra (ou vira separador de
+   pasta) em Windows/Mac/Linux — usado por `doPrint`, abaixo. */
+function nomeArquivoSeguro(s){
+  return String(s||'').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/* `nomeArquivo` (05/09/2026), opcional: o navegador NÃO deixa uma página salvar
+   arquivo sozinha, sem nenhum diálogo — é bloqueado por segurança, não tem
+   como automatizar isso. O que dá para fazer: o diálogo "Salvar como PDF" da
+   impressão sugere um nome baseado no título da aba — por isso trocamos o
+   título só durante a impressão, para o nome sugerido já vir certo (ex.: "Vale
+   VT-VR - Agosto 2026 - Fulano"), sem precisar digitar nada — só escolher a
+   pasta. O título volta ao normal logo depois. */
+function doPrint(html, nomeArquivo){
   document.getElementById('printArea').innerHTML = html;
-  window.print();
+  if(nomeArquivo){
+    const tituloAntigo = document.title;
+    document.title = nomeArquivoSeguro(nomeArquivo);
+    window.print();
+    setTimeout(()=>{ document.title = tituloAntigo; }, 800);
+  } else {
+    window.print();
+  }
 }
 /* =========================================================
    DASHBOARD
@@ -5530,11 +5555,15 @@ function reciboValeHTML(funcId){
     ${docFoot()}
   </div>`;
 }
-function printRecibo(funcId){ doPrint(reciboValeHTML(funcId)); }
+function printRecibo(funcId){
+  const f = func(funcId);
+  doPrint(reciboValeHTML(funcId), `Vale VT-VR - ${monthLabel(valesMes)} - ${f.nome}`);
+}
 function printTodosRecibosVale(){
   const fichados = ativosNoMes(valesMes).filter(f=>f.tipo==='fichado' && recebeAlgumVale(f));
   if(!fichados.length){ alert('Nenhum recibo a gerar.'); return; }
-  doPrint(fichados.map((f,i)=>`<div class="${i<fichados.length-1?'pagebreak':''}">${reciboValeHTML(f.id)}</div>`).join(''));
+  doPrint(fichados.map((f,i)=>`<div class="${i<fichados.length-1?'pagebreak':''}">${reciboValeHTML(f.id)}</div>`).join(''),
+    `Vale VT-VR - ${monthLabel(valesMes)} - Todos`);
 }
 function printResumoVales(){
   const rows = ativosNoMes(valesMes).filter(f=>f.tipo==='fichado' && recebeAlgumVale(f))
@@ -5564,7 +5593,7 @@ function printResumoVales(){
         <td class="n">${fmtNum(rows.reduce((s,r)=>s+r.liquido,0))}</td></tr></tfoot>
     </table>
     ${docFoot()}
-  </div>`);
+  </div>`, `Resumo Vale VT-VR - ${monthLabel(valesMes)}`);
 }
 /* =========================================================
    HOLERITE — Recibo de pagamento + Demonstrativo de encargos
