@@ -517,15 +517,6 @@ tr:hover td{background:#fafbfd;}
      documento deste app precisa de paisagem. */
   @page{size:A4 portrait;margin:10mm;}
 
-  /* Página nomeada (05/09/2026), só para documentos CURTOS de verdade (recibo
-     de vale, por exemplo): pedido do Maycon para não desperdiçar uma folha A4
-     quase toda em branco. Em A5 cabe deitado sem sobrar espaço à toa — dá
-     `page:recibo` num elemento e ele usa este tamanho, sem mexer no `@page`
-     geral (que continua A4 retrato para todo o resto, ex.: a folha da
-     contabilidade, que precisa da largura toda). */
-  .doc-recibo{page:recibo;}
-  @page recibo{size:A5 landscape;margin:8mm;}
-
   /* O app sai da impressão com display:none, NÃO com visibility:hidden.
      `visibility:hidden` esconde mas mantém o espaço ocupado: a altura da tela
      do app continuava contando e saíam páginas em branco no fim de todo
@@ -648,6 +639,15 @@ tr:hover td{background:#fafbfd;}
 .dtotais b{font-size:14px;color:#123a9e;}
 .dnote{font-size:9.5px;line-height:1.6;margin:10px 0 0;}
 </style>
+<!-- Tamanho de página por impressão (05/09/2026) — `doPrint()` escreve aqui um
+     `@page{size:...}` só quando o documento é um recibo curto (classe
+     `doc-recibo`), e limpa de volta depois. Existe SÓ por causa de uma
+     "página nomeada" (`page:recibo` + `@page recibo{...}`) ter dado uma folha
+     A4 em branco extra ao lado do recibo A5 — o Chromium não lida bem com
+     duas regras @page diferentes coexistindo na mesma folha de estilo.
+     Trocar o conteúdo de UM <style> só, sem folha nomeada nenhuma, imprime
+     sempre uma única regra @page por vez e não teve esse problema. -->
+<style id="printPageStyle"></style>
 </head>
 <body>
 <div id="app">
@@ -704,7 +704,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-05 · 39';
+const VERSAO = '2026-09-05 · 40';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1618,8 +1618,22 @@ function nomeArquivoSeguro(s){
    título só durante a impressão, para o nome sugerido já vir certo (ex.: "Vale
    VT-VR - Agosto 2026 - Fulano"), sem precisar digitar nada — só escolher a
    pasta. O título volta ao normal logo depois. */
+/* Tamanho de página (05/09/2026): documento com a classe `doc-recibo` (recibo
+   de vale, diarista, adiantamento — curtos de propósito) imprime em A5
+   deitado, para não desperdiçar quase uma folha A4 inteira em branco. Escreve
+   a regra `@page` num `<style>` dedicado (`#printPageStyle`, `01_head.html`)
+   em vez de usar "página nomeada" (`page:`/`@page nome{}`) — a página nomeada
+   chegou a ser tentada e o Chromium imprimia uma folha A4 EM BRANCO extra do
+   lado do recibo A5 (duas regras `@page` diferentes coexistindo não é bem
+   suportado). Com um `<style>` só, sempre existe UMA regra `@page` de cada
+   vez, e não teve esse problema. */
 function doPrint(html, nomeArquivo){
   document.getElementById('printArea').innerHTML = html;
+  const estiloPagina = document.getElementById('printPageStyle');
+  if(estiloPagina){
+    estiloPagina.textContent = html.indexOf('doc-recibo') >= 0
+      ? '@page{size:A5 landscape;margin:8mm;}' : '';
+  }
   if(nomeArquivo){
     const tituloAntigo = document.title;
     document.title = nomeArquivoSeguro(nomeArquivo);
