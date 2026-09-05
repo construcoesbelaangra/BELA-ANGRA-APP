@@ -461,6 +461,8 @@ tr:hover td{background:#fafbfd;}
 .calendar .day .pend{color:var(--amarelo);font-size:15px;line-height:0;margin-left:3px;}
 .calendar .day .qbtn{position:absolute;bottom:3px;right:4px;font-size:12px;opacity:.28;}
 .calendar .day .qbtn.on{opacity:1;}
+.calendar .day .qbtn2{position:absolute;bottom:3px;left:4px;font-size:12px;opacity:.28;}
+.calendar .day .qbtn2.on{opacity:1;}
 .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:11.5px;color:var(--chumbo-claro);}
 .legend span{display:inline-flex;align-items:center;gap:5px;}
 .dot{width:10px;height:10px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.08);}
@@ -688,7 +690,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-04 · 35';
+const VERSAO = '2026-09-05 · 36';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -783,8 +785,8 @@ function defaultDB(){
     funcionarios: [],
     obras: [],
     diasUteisMes: {},     // 'YYYY-MM' -> nº de dias trabalhados usado no vale daquele mês
-    pontoMensal: {},      // `${funcId}_${YYYY-MM}` -> {dias:{'YYYY-MM-DD':status}, obraDia:{'YYYY-MM-DD':obraId}}
-    pontoDiarista: [],    // {id, funcionarioId, obraId, data, status, quentinha}
+    pontoMensal: {},      // `${funcId}_${YYYY-MM}` -> {dias:{'YYYY-MM-DD':status}, excecaoDia:{'YYYY-MM-DD':{obraId,funcao,comissao}}}
+    pontoDiarista: [],    // {id, funcionarioId, obraId, data, status, quentinha, funcao, comissao}
     adiantamentos: [],    // {id, funcionarioId, data, valor, descricao}
     /* Pagamentos já feitos, marcados à mão no fechamento enquanto ele paga um a
        um. Serve para não pagar duas vezes nem esquecer alguém no meio da lista.
@@ -923,7 +925,16 @@ function migrate(db){
   db._meta = Object.assign({tombstones:{}, mapaTs:{}, objetoTs:{}, ultimaSync:null, ultimaEdicao:null, arquivoNome:''}, db._meta||{});
   Object.keys(db.pontoMensal||{}).forEach(k=>{
     const r = db.pontoMensal[k]; r.dias = r.dias||{}; r.ts = r.ts||{};
-    r.obraDia = r.obraDia||{};   // exceção pontual de obra por dia (04/09/2026)
+    /* exceção pontual do dia (04-05/09/2026): obra, função e comissão, um
+       objeto só. Quem tinha o formato antigo (`obraDia[iso]` = string com o id
+       da obra, direto) ganha a conversão automática, sem perder nada. */
+    r.excecaoDia = r.excecaoDia || {};
+    if(r.obraDia){
+      Object.keys(r.obraDia).forEach(iso=>{
+        if(!r.excecaoDia[iso]) r.excecaoDia[iso] = {obraId: r.obraDia[iso], funcao:'', comissao:0};
+      });
+      delete r.obraDia;
+    }
   });
   /* separa o antigo campo único `vt` em dois: transporte e refeição */
   (db.funcionarios||[]).forEach(f=>{
@@ -1202,19 +1213,51 @@ function obraHistoricaEm(f, iso){
 }
 
 /* Obra de um FICHADO num dia específico, já considerando uma eventual
-   EXCEÇÃO PONTUAL daquele dia (04/09/2026, 2ª parte): pedido do Maycon depois
-   de explicar que às vezes empresta um homem-hora para outra obra só num dia
-   e no dia seguinte ele já volta para a obra de sempre — isso NÃO é uma
+   EXCEÇÃO PONTUAL daquele dia (04-05/09/2026): pedido do Maycon depois de
+   explicar que às vezes empresta um homem-hora para outra obra só num dia e
+   no dia seguinte ele já volta para a obra de sempre — isso NÃO é uma
    transferência (não teria fim), é só aquele dia. A exceção mora dentro do
-   próprio registro de ponto do mês, `reg.obraDia[iso]` (ver
-   `abrirObraDoDiaModal`/`salvarObraDoDia`, 04_obras_ponto.js) — não mexe no
+   próprio registro de ponto do mês, `reg.excecaoDia[iso]` (ver
+   `abrirExcecaoDiaModal`/`salvarExcecaoDia`, 04_obras_ponto.js) — não mexe no
    `obraHistorico`. Sem marcar nada, vale a obra definitiva de sempre.
    Diarista não usa nada disto — o dia dele já carrega o próprio `obraId` em
    `DB.pontoDiarista`. Usada pela Medição HH em vez de `obraHistoricaEm`. */
 function obraDoFuncionarioEm(f, iso){
   const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
-  const excecao = reg && reg.obraDia ? reg.obraDia[iso] : '';
-  return excecao || obraHistoricaEm(f, iso);
+  const exc = reg && reg.excecaoDia ? reg.excecaoDia[iso] : null;
+  return (exc && exc.obraId) || obraHistoricaEm(f, iso);
+}
+
+/* Função EFETIVA de um funcionário num dia específico — pedido do Maycon
+   (05/09/2026): às vezes um homem-hora faz um serviço diferente do cargo dele
+   naquele dia (ex.: servente que trabalhou de eletricista), e isso precisa
+   valer para cobrar a categoria certa da Bandeira na Medição HH. Vale para os
+   DOIS vínculos: fichado (via `reg.excecaoDia[iso].funcao`, mesmo lugar da
+   obra do dia) e diarista (o próprio registro do dia em `DB.pontoDiarista` já
+   pode carregar uma `funcao`). Sem exceção, cai na função do cadastro
+   (`f.funcao`) — a mesma coisa de sempre. */
+function funcaoEfetivaNoDia(f, iso){
+  if(f.tipo === 'fichado'){
+    const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
+    const exc = reg && reg.excecaoDia ? reg.excecaoDia[iso] : null;
+    return (exc && exc.funcao) || f.funcao;
+  }
+  const r = DB.pontoDiarista.find(p=>p.funcionarioId===f.id && p.data===iso);
+  return (r && r.funcao) || f.funcao;
+}
+
+/* Comissão paga NAQUELE DIA especificamente — dinheiro extra por ter feito o
+   serviço diferente (ver `funcaoEfetivaNoDia`, acima). Só afeta o PAGAMENTO
+   (soma no Fechamento) — nunca a Medição HH, que não cobra a comissão da
+   Bandeira, só a categoria certa do dia. */
+function comissaoNoDia(f, iso){
+  if(f.tipo === 'fichado'){
+    const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
+    const exc = reg && reg.excecaoDia ? reg.excecaoDia[iso] : null;
+    return (exc && Number(exc.comissao)) || 0;
+  }
+  const r = DB.pontoDiarista.find(p=>p.funcionarioId===f.id && p.data===iso);
+  return (r && Number(r.comissao)) || 0;
 }
 
 /* Ponto não pode ser lançado fora do vínculo. Devolve 'antes', 'depois' ou ''. */
@@ -2577,9 +2620,9 @@ function renderPontoMensal(){
 function pmKey(){ return `${pmFuncId}_${pmAno}-${String(pmMes).padStart(2,'0')}`; }
 
 function renderCalendarMensal(){
-  const reg = DB.pontoMensal[pmKey()] || {dias:{}, auto:{}, obraDia:{}};
+  const reg = DB.pontoMensal[pmKey()] || {dias:{}, auto:{}, excecaoDia:{}};
   const auto = reg.auto || {};
-  const obraDia = reg.obraDia || {};
+  const excecaoDia = reg.excecaoDia || {};
   const nd = daysInMonth(pmAno, pmMes);
   const firstDow = new Date(pmAno, pmMes-1, 1).getDay();
 
@@ -2598,20 +2641,26 @@ function renderCalendarMensal(){
        (ex.: trabalhado) mantém a cor do status, e a 🎉 já avisa que era
        feriado. */
     const fer = feriadoDoDia(iso);
-    /* exceção pontual de obra NESTE dia (04/09/2026) — ver `obraDoFuncionarioEm`
-       (02_core.js). Só um jeito de marcar "hoje ele foi emprestado para outra
-       obra e amanhã já volta"; não é transferência (essa é permanente, ver
+    /* exceção pontual do dia (04-05/09/2026) — obra, função e comissão, os três
+       juntos em `excecaoDia[iso]` — ver `obraDoFuncionarioEm`/`funcaoEfetivaNoDia`/
+       `comissaoNoDia` (02_core.js). Só um jeito de marcar "hoje ele foi
+       emprestado/fez outro serviço"; não é transferência (essa é permanente, ver
        "Transferir de obra" na lista de Funcionários). */
-    const excObra = obraDia[iso] || '';
+    const exc = excecaoDia[iso] || {};
+    const temExcecao = !!(exc.obraId || exc.funcao || exc.comissao);
+    const partesExc = [];
+    if(exc.obraId) partesExc.push('obra ' + obraNome(exc.obraId));
+    if(exc.funcao) partesExc.push('função ' + exc.funcao);
+    if(exc.comissao) partesExc.push('comissão ' + fmtMoney(exc.comissao));
     let titulo = STATUS_LABEL[st] || 'Sem lançamento';
     if(fer) titulo = `${fer.nome} (feriado)${st?' — '+titulo:''}`;
     if(bloqueado) titulo = motivoBloqueio(f, iso);
     cells += `<div class="day ${st} ${bloqueado?'fora':''} ${porConfirmar?'aconfirmar':''} ${fer&&!st?'feriado':''}" onclick="cycleDia('${iso}')"
-        title="${titulo}${porConfirmar?' — presumido, ainda não confirmado':''}${excObra?' — hoje na obra '+esc(obraNome(excObra)):''}">
+        title="${titulo}${porConfirmar?' — presumido, ainda não confirmado':''}${partesExc.length?' — hoje: '+esc(partesExc.join(', ')):''}">
       <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
       <div class="st">${bloqueado?'<span style="color:#9aa0ab;">—</span>':(STATUS_SIGLA[st]||'')}</div>
-      ${bloqueado?'':`<span class="qbtn ${excObra?'on':''}" onclick="event.stopPropagation(); abrirObraDoDiaModal('${iso}')"
-        title="${excObra?'Hoje na obra '+esc(obraNome(excObra))+' — clique para mudar':'Obra é a de sempre — clique para marcar outra só hoje'}">🏗️</span>`}</div>`;
+      ${bloqueado?'':`<span class="qbtn ${temExcecao?'on':''}" onclick="event.stopPropagation(); abrirExcecaoDiaModal('${iso}')"
+        title="${partesExc.length?'Hoje: '+esc(partesExc.join(', '))+' — clique para mudar':'Obra/função/comissão de sempre — clique para marcar algo diferente só hoje'}">🏗️</span>`}</div>`;
   }
 
   const fal = getFaltasMes(pmFuncId, `${pmAno}-${String(pmMes).padStart(2,'0')}`);
@@ -2659,55 +2708,75 @@ function cycleDia(iso){
   saveDB(); renderPontoMensal();
 }
 
-/* --------- OBRA SÓ NESTE DIA (04/09/2026) ---------
+/* --------- OBRA, FUNÇÃO E COMISSÃO SÓ NESTE DIA (04-05/09/2026) ---------
    Pedido do Maycon: às vezes empresta um homem-hora para outra obra só por um
-   dia (ex.: terça no Rogério, quarta no Gustavo, quinta de volta no Neymar) —
-   isso NÃO é uma transferência (não fica, volta sozinho no dia seguinte), então
-   não faz sentido mexer em `obraHistorico`/`obraPadrao` (isso é para
-   deslocamento DEFINITIVO — botão "Transferir de obra", em Funcionários).
-   A exceção mora dentro do próprio registro de ponto do mês
-   (`reg.obraDia[iso]`), e `obraDoFuncionarioEm()` (02_core.js) já sabe olhar
-   ela primeiro antes de cair na obra definitiva. */
-function abrirObraDoDiaModal(iso){
+   dia (ex.: terça no Rogério, quarta no Gustavo, quinta de volta no Neymar), ou
+   ele faz um serviço diferente do cargo dele naquele dia (ex.: um servente que
+   trabalhou de eletricista) e ganha uma comissão por isso. As três coisas NÃO
+   são transferência (não ficam, voltam sozinhas no dia seguinte), então não
+   mexem em `obraHistorico`/`obraPadrao`/`f.funcao` (isso é definitivo — botão
+   "Transferir de obra", em Funcionários). Moram juntas, um objeto só, dentro do
+   próprio registro de ponto do mês (`reg.excecaoDia[iso] = {obraId, funcao,
+   comissao}`) — é o "alinhar" que o Maycon pediu: um lugar só para marcar as
+   três coisas de uma vez. `obraDoFuncionarioEm()`/`funcaoEfetivaNoDia()`/
+   `comissaoNoDia()` (02_core.js) leem daqui antes de cair no valor definitivo.
+   A função do dia alimenta a Medição HH (categoria de preço correta naquele
+   dia); a comissão alimenta o Fechamento (soma ao líquido a pagar) — nunca a
+   Medição, que não cobra a comissão da Bandeira. */
+function abrirExcecaoDiaModal(iso){
   const f = func(pmFuncId);
   if(!f) return;
   if(antesDaAdmissao(f, iso)){ avisaAdmissao(f, iso); return; }
   const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`] || {};
-  const excecaoAtual = (reg.obraDia||{})[iso] || '';
+  const exc = (reg.excecaoDia||{})[iso] || {};
   const definitiva = obraHistoricaEm(f, iso);
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
-    <h2>Obra do dia — ${fmtDate(iso)}</h2>
+    <h2>Obra, função e comissão do dia — ${fmtDate(iso)}</h2>
     <p class="help">
-      Obra definitiva de <b>${esc(f.nome)}</b>: <b>${esc(obraNome(definitiva))}</b>.
-      Escolha outra só se ele foi deslocado PARA ESTE DIA — a obra definitiva dele não muda.
+      De sempre: obra <b>${esc(obraNome(definitiva))}</b>, função <b>${esc(f.funcao||'—')}</b>.
+      Preencha só o que for diferente NESTE DIA — não muda o cadastro dele.
     </p>
     <div class="field"><label>Obra neste dia</label>
-      <select id="od_obra">
+      <select id="ed_obra">
         <option value="">— obra definitiva (${esc(obraNome(definitiva))}) —</option>
-        ${DB.obras.filter(o=>o.id!==definitiva).map(o=>`<option value="${o.id}" ${excecaoAtual===o.id?'selected':''}>${esc(o.nome)}</option>`).join('')}
+        ${DB.obras.filter(o=>o.id!==definitiva).map(o=>`<option value="${o.id}" ${exc.obraId===o.id?'selected':''}>${esc(o.nome)}</option>`).join('')}
       </select>
+    </div>
+    <div class="grid grid-2">
+      <div class="field"><label>Função neste dia (categoria de cobrança na Medição HH)</label>
+        <select id="ed_funcao">
+          <option value="">— função de sempre —</option>
+          ${Object.keys(CATEGORIA_HH_LABEL).map(k=>`<option value="${k}" ${exc.funcao===k?'selected':''}>${CATEGORIA_HH_LABEL[k]}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Comissão do dia (R$)</label>
+        <input type="number" step="0.01" id="ed_comissao" value="${exc.comissao||''}" placeholder="0,00"></div>
     </div>
     <div class="modal-actions">
       <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-      <button type="button" class="btn btn-primary" onclick="salvarObraDoDia('${iso}')">Salvar</button>
+      <button type="button" class="btn btn-primary" onclick="salvarExcecaoDia('${iso}')">Salvar</button>
     </div>
   `);
 }
 
-function salvarObraDoDia(iso){
+function salvarExcecaoDia(iso){
   const f = func(pmFuncId);
   if(!f) return;
   const key = `${f.id}_${iso.slice(0,7)}`;
   const reg = DB.pontoMensal[key] = DB.pontoMensal[key] || {dias:{}, ts:{}, auto:{}};
-  reg.obraDia = reg.obraDia || {};
-  const obraEscolhida = val('od_obra');
-  if(obraEscolhida) reg.obraDia[iso] = obraEscolhida;
-  else delete reg.obraDia[iso];
+  reg.excecaoDia = reg.excecaoDia || {};
+  const obraEscolhida = val('ed_obra');
+  const funcaoEscolhida = val('ed_funcao').trim();
+  const comissaoEscolhida = numVal('ed_comissao');
+  if(obraEscolhida || funcaoEscolhida || comissaoEscolhida){
+    reg.excecaoDia[iso] = {obraId: obraEscolhida, funcao: funcaoEscolhida, comissao: comissaoEscolhida};
+  } else {
+    delete reg.excecaoDia[iso];
+  }
   saveDB(); closeModal(); renderPontoMensal();
-  toast(obraEscolhida
-    ? `Dia ${fmtDate(iso)} marcado na obra ${obraNome(obraEscolhida)}.`
-    : `Exceção removida — volta a valer a obra definitiva neste dia.`);
+  toast((obraEscolhida||funcaoEscolhida||comissaoEscolhida)
+    ? `Dia ${fmtDate(iso)} atualizado.`
+    : `Exceção removida — volta a valer tudo de sempre neste dia.`);
 }
 
 function preencherMesUtil(){
@@ -3716,6 +3785,8 @@ function renderCalendarDiarista(){
       <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
       <div class="st">${bloqueado?'<span style="color:#9aa0ab;">—</span>':(PD_SIGLA[st]||'')}</div>
       ${bloqueado?'':`<span class="qbtn ${e&&e.quentinha?'on':''}" onclick="event.stopPropagation(); toggleQuentinha('${iso}')" title="Marcar quentinha">🍱</span>`}
+      ${bloqueado?'':`<span class="qbtn2 ${e&&(e.funcao||e.comissao)?'on':''}" onclick="event.stopPropagation(); abrirFuncaoComissaoDiaristaModal('${iso}')"
+        title="${e&&(e.funcao||e.comissao)?'Hoje: '+esc([e.funcao?'função '+e.funcao:'', e.comissao?'comissão '+fmtMoney(e.comissao):''].filter(Boolean).join(', ')):'Marcar função diferente e/ou comissão do dia'}">💰</span>`}
     </div>`;
   }
 
@@ -3785,10 +3856,61 @@ function toggleQuentinha(iso){
   saveDB(); renderPontoDiarista();
 }
 
+/* --------- FUNÇÃO E COMISSÃO DO DIA, DIARISTA (05/09/2026) ---------
+   Mesma ideia da exceção de obra do dia dos fichados (`abrirExcecaoDiaModal`,
+   04_obras_ponto.js), mas o dia do diarista já É o próprio registro — os
+   campos entram direto nele, sem precisar de um objeto de exceção separado. */
+function abrirFuncaoComissaoDiaristaModal(iso){
+  const f = func(pdFuncId);
+  if(!f) return;
+  if(antesDaAdmissao(f, iso)){ avisaAdmissao(f, iso); return; }
+  const e = pdEntry(pdFuncId, iso) || {};
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Função e comissão do dia — ${fmtDate(iso)}</h2>
+    <p class="help">De sempre: função <b>${esc(f.funcao||'—')}</b>. Preencha só o que for
+      diferente NESTE DIA — não muda o cadastro dele.</p>
+    <div class="grid grid-2">
+      <div class="field"><label>Função neste dia (categoria de cobrança na Medição HH)</label>
+        <select id="fc_funcao">
+          <option value="">— função de sempre —</option>
+          ${Object.keys(CATEGORIA_HH_LABEL).map(k=>`<option value="${k}" ${e.funcao===k?'selected':''}>${CATEGORIA_HH_LABEL[k]}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Comissão do dia (R$)</label>
+        <input type="number" step="0.01" id="fc_comissao" value="${e.comissao||''}" placeholder="0,00"></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="salvarFuncaoComissaoDiarista('${iso}')">Salvar</button>
+    </div>
+  `);
+}
+
+function salvarFuncaoComissaoDiarista(iso){
+  const f = func(pdFuncId);
+  if(!f) return;
+  const funcaoEscolhida = val('fc_funcao').trim();
+  const comissaoEscolhida = numVal('fc_comissao');
+  let e = pdEntry(pdFuncId, iso);
+  if(!e){
+    if(!funcaoEscolhida && !comissaoEscolhida){ closeModal(); return; }
+    e = {id:uid(), funcionarioId:pdFuncId, obraId:f.obraPadrao||'', data:iso, status:'', quentinha:false};
+    DB.pontoDiarista.push(e);
+  }
+  e.funcao = funcaoEscolhida;
+  e.comissao = comissaoEscolhida;
+  /* limpa o registro se não sobrou nada nele (mesma disciplina de toggleQuentinha) */
+  if(!e.status && !e.quentinha && !e.funcao && !e.comissao){
+    DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
+  }
+  saveDB(); closeModal(); renderPontoDiarista();
+  toast((funcaoEscolhida||comissaoEscolhida) ? `Dia ${fmtDate(iso)} atualizado.` : 'Exceção removida.');
+}
+
 /* ---- cálculo de um diarista dentro de um período ---- */
 function calcDiarista(f, periodo){
   const vd = f.valorDiaria||0;
-  let diasTrabalhados=0, faltas=0, quentinhas=0;
+  let diasTrabalhados=0, faltas=0, quentinhas=0, totalComissao=0;
   const detalhe = [];
   let iso = periodo.inicio;
   while(iso <= periodo.fim){
@@ -3799,6 +3921,7 @@ function calcDiarista(f, periodo){
       if(e.quentinha) quentinhas++;
       if(e.status) detalhe.push({data:iso, status:e.status, quentinha:!!e.quentinha});
     }
+    totalComissao += comissaoNoDia(f, iso);   // função/comissão do dia, ver 02_core.js
     iso = addDays(iso, 1);
   }
   const bruto = diasTrabalhados*vd;
@@ -3812,7 +3935,8 @@ function calcDiarista(f, periodo){
   return {
     f, periodo, vd,
     faltas, quentinhas, detalhe, bruto,
-    vales, totalVales, liquido: bruto - totalVales,
+    vales, totalVales, totalComissao,
+    liquido: bruto - totalVales + totalComissao,
     totalDias: diasTrabalhados
   };
 }
@@ -3849,7 +3973,38 @@ function calcsDoFechamento(sexta, obraFiltro){
     if(obraFiltro) lista = lista.filter(f=>f.obraPadrao===obraFiltro);
     lista.forEach(f=>{
       const x = calcDiarista(f, periodo);
-      if(x.totalDias>0 || x.totalVales>0 || x.faltas>0) out.push(x);
+      if(x.totalDias>0 || x.totalVales>0 || x.faltas>0 || x.totalComissao>0) out.push(x);
+    });
+  });
+  out.push(...linhasComissaoFichados(sexta, obraFiltro));
+  return out;
+}
+
+/* Pedido do Maycon (05/09/2026): um FICHADO (ex.: Jonathan, cadastro SERVENTE)
+   pode ganhar comissão por ter feito outro serviço num dia específico (ver
+   `comissaoNoDia`, 02_core.js), e ele quer pagar isso JUNTO com os diaristas,
+   na folha da sexta — sem duplicar cadastro nem abrir uma tela nova. Usa
+   SEMPRE a janela SEMANAL (7 dias terminando na sexta), nunca a quinzenal,
+   mesmo numa sexta de quinzena — é "o que ele ganhou essa semana", independente
+   de quando o salário/adiantamento dele (que é mensal, outra tela) é pago.
+   A linha sintética tem a MESMA FORMA das linhas de diarista (`apenasComissao:
+   true` para o resto do código saber que não tem diária/vale de verdade) —
+   assim o agrupamento por obra, o render e `togglePago` funcionam sem
+   precisar de nenhum caso especial. */
+function linhasComissaoFichados(sexta, obraFiltro){
+  const periodo = periodoDaSexta(sexta, 'semanal');
+  let fichados = ativosNoPeriodo(periodo.inicio, periodo.fim).filter(f=>f.tipo==='fichado');
+  if(obraFiltro) fichados = fichados.filter(f=>f.obraPadrao===obraFiltro);
+  const out = [];
+  fichados.forEach(f=>{
+    let totalComissao = 0;
+    let iso = periodo.inicio;
+    while(iso <= periodo.fim){ totalComissao += comissaoNoDia(f, iso); iso = addDays(iso, 1); }
+    if(totalComissao <= 0) return;
+    out.push({
+      f, periodo, vd:0, faltas:0, quentinhas:0, detalhe:[], bruto:0,
+      vales:[], totalVales:0, totalComissao,
+      liquido: totalComissao, totalDias:0, apenasComissao:true
     });
   });
   return out;
@@ -3903,7 +4058,12 @@ function togglePago(funcId, sexta, per, valor){
       empresaId: ct.empresaId, contaId,
       categoriaId: DB.config.fechamentoCategoriaPadrao || '',
       obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
-      descricao: `Diária(s) — ${f.nome} — sexta ${fmtDate(sexta)}`,
+      /* linha "só comissão" (fichado pago junto com os diaristas, ver
+         `linhasComissaoFichados` acima) usa `per==='comissao'` como sentinela
+         — nem periodicidade semanal nem quinzenal de verdade */
+      descricao: per === 'comissao'
+        ? `Comissão — ${f.nome} — sexta ${fmtDate(sexta)}`
+        : `Diária(s) — ${f.nome} — sexta ${fmtDate(sexta)}`,
       valor: liquido, vencimento: sexta, obs: ''
     };
     lanc.baixas.push({id: uid(), data: sexta, valor: liquido, contaId});
@@ -4005,12 +4165,14 @@ function renderFechamento(){
     (porObra[k] = porObra[k] || []).push(x);
   });
 
-  const totalBruto = calcs.reduce((s,x)=>s+x.bruto,0);
-  const totalVales = calcs.reduce((s,x)=>s+x.totalVales,0);
-  const totalLiq   = calcs.reduce((s,x)=>s+x.liquido,0);
-  const totalQuent = calcs.reduce((s,x)=>s+x.quentinhas,0);
+  const totalBruto    = calcs.reduce((s,x)=>s+x.bruto,0);
+  const totalVales    = calcs.reduce((s,x)=>s+x.totalVales,0);
+  const totalComissao = calcs.reduce((s,x)=>s+x.totalComissao,0);
+  const totalLiq      = calcs.reduce((s,x)=>s+x.liquido,0);
+  const totalQuent    = calcs.reduce((s,x)=>s+x.quentinhas,0);
 
-  const pagos    = calcs.filter(x=>pagamentoDe(x.f.id, fcSexta, x.f.periodicidade));
+  const perDe = x => x.apenasComissao ? 'comissao' : x.f.periodicidade;
+  const pagos    = calcs.filter(x=>pagamentoDe(x.f.id, fcSexta, perDe(x)));
   const pagoVlr  = pagos.reduce((s,x)=>s+x.liquido,0);
   const faltaVlr = totalLiq - pagoVlr;
   const tudoPago = calcs.length > 0 && pagos.length === calcs.length;
@@ -4045,10 +4207,10 @@ function renderFechamento(){
       </p>
 
       <div class="grid grid-4" style="margin-top:6px;">
-        <div class="kpi"><div class="v">${calcs.length}</div><div class="l">Diaristas no fechamento</div></div>
+        <div class="kpi"><div class="v">${calcs.length}</div><div class="l">Diaristas/fichados no fechamento</div></div>
         <div class="kpi"><div class="v">${fmtMoney(totalBruto)}</div><div class="l">Total em diárias</div></div>
         <div class="kpi"><div class="v" style="color:var(--vermelho);">${fmtMoney(totalVales)}</div><div class="l">Vales a descontar</div></div>
-        <div class="kpi"><div class="v">${fmtMoney(totalLiq)}</div><div class="l">Líquido a pagar${totalQuent?` · ${totalQuent} quentinhas`:''}</div></div>
+        <div class="kpi"><div class="v">${fmtMoney(totalLiq)}</div><div class="l">Líquido a pagar${totalQuent?` · ${totalQuent} quentinhas`:''}${totalComissao?` · +${fmtMoney(totalComissao)} de comissão`:''}</div></div>
       </div>
 
       ${calcs.length ? `
@@ -4097,20 +4259,23 @@ function renderFechamento(){
             <thead><tr>
               <th>Funcionário</th><th>Vínculo</th><th class="num">Diárias</th>
               <th class="num">Faltas</th><th class="num">Valor diária</th><th class="num">Bruto</th>
-              <th class="num">Vales</th><th class="num">Líquido</th><th style="width:60px;">Pago</th><th></th>
+              <th class="num">Vales</th><th class="num">Comissão</th><th class="num">Líquido</th><th style="width:60px;">Pago</th><th></th>
             </tr></thead>
             <tbody>
               ${grupo.map(x=>{
-                const per = x.f.periodicidade;
+                const per = perDe(x);
                 const pg = pagamentoDe(x.f.id, fcSexta, per);
                 return `<tr${pg?' style="background:#f4faf6;"':''}>
                 <td><b>${esc(x.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(x.f.funcao||'')} · ${SERVICO_LABEL[x.f.tipoServico]||''}</span></td>
-                <td><span class="badge ${per==='quinzenal'?'badge-purple':'badge-gray'}">${PERIODICIDADE_LABEL[per]}</span></td>
-                <td class="num">${x.totalDias}</td>
+                <td>${x.apenasComissao
+                    ? '<span class="badge badge-blue">Fichado (comissão)</span>'
+                    : `<span class="badge ${per==='quinzenal'?'badge-purple':'badge-gray'}">${PERIODICIDADE_LABEL[per]}</span>`}</td>
+                <td class="num">${x.totalDias||''}</td>
                 <td class="num">${x.faltas||''}</td>
-                <td class="num">${fmtMoney(x.vd)}</td>
-                <td class="num">${fmtMoney(x.bruto)}</td>
+                <td class="num">${x.apenasComissao?'':fmtMoney(x.vd)}</td>
+                <td class="num">${x.apenasComissao?'':fmtMoney(x.bruto)}</td>
                 <td class="num" style="color:var(--vermelho);">${x.totalVales?'- '+fmtMoney(x.totalVales):''}</td>
+                <td class="num" style="color:var(--verde);">${x.totalComissao?'+ '+fmtMoney(x.totalComissao):''}</td>
                 <td class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(x.liquido)}</td>
                 <td class="num">
                   <input type="checkbox" ${pg?'checked':''} style="width:17px;height:17px;cursor:pointer;"
@@ -4124,7 +4289,7 @@ function renderFechamento(){
                 </td>
               </tr>`;}).join('')}
             </tbody>
-            <tfoot><tr><th colspan="7" style="text-align:right;">Subtotal da obra</th><th class="num">${fmtMoney(sub)}</th><th></th><th></th></tr></tfoot>
+            <tfoot><tr><th colspan="8" style="text-align:right;">Subtotal da obra</th><th class="num">${fmtMoney(sub)}</th><th></th><th></th></tr></tfoot>
           </table>
         </div>`;
       }).join('') : `<div class="empty">Nenhum lançamento de ponto para diaristas nesta sexta. Lance o ponto em "Ponto", na folha Diaristas.</div>`}
@@ -4343,7 +4508,7 @@ function renderAdiantamentos(){
             <option value="">Todos os funcionários</option>${funcOpts}
           </select>
         </div>
-        <button class="btn btn-primary" onclick="openAdiantamentoModal()">+ Lançar vale</button>
+        <button class="btn btn-primary" onclick="openAdiantamentoModal()">+ Lançar vale / desconto</button>
       </div>
       <div class="grid grid-2" style="margin-bottom:14px;">
         <p class="help" style="margin:0;padding:10px 12px;background:#fbf1dc;border-radius:8px;color:#8a5a00;">
@@ -4364,7 +4529,8 @@ function renderAdiantamentos(){
               const d = destinoVale(a);
               return `<tr>
                 <td>${fmtDate(a.data)}</td>
-                <td><b>${esc(funcNome(a.funcionarioId))}</b>${f?`<br><span class="badge ${f.tipo==='fichado'?'badge-blue':'badge-yellow'}">${f.tipo==='fichado'?'Fichado':'Diarista'}</span>`:''}</td>
+                <td><b>${esc(funcNome(a.funcionarioId))}</b>${f?`<br><span class="badge ${f.tipo==='fichado'?'badge-blue':'badge-yellow'}">${f.tipo==='fichado'?'Fichado':'Diarista'}</span>
+                  <span class="badge ${a.tipo==='desconto'?'badge-purple':'badge-gray'}">${a.tipo==='desconto'?'Desconto':'Vale'}</span>`:''}</td>
                 <td>${esc(a.descricao||'—')}</td>
                 <td style="font-size:11.5px;">${esc(d.texto)}</td>
                 <td class="num" style="font-weight:700;color:var(--vermelho);">${fmtMoney(a.valor)}</td>
@@ -4391,23 +4557,30 @@ function sextaDeFechamento(dataISO, periodicidade){
 
 function openAdiantamentoModal(id){
   const a = id ? DB.adiantamentos.find(x=>x.id===id)
-              : {id:uid(), data:todayISO(), valor:'', descricao:'', funcionarioId:'', parcelas:1, mesInicio:''};
+              : {id:uid(), data:todayISO(), valor:'', descricao:'', funcionarioId:'', parcelas:1, mesInicio:'', tipo:'vale'};
   const todos = ativos().sort(cmpFuncionarios);
   if(!todos.length){ alert('Cadastre um funcionário antes de lançar vales.'); return; }
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
-    <h2>${id?'Editar':'Novo'} vale / adiantamento</h2>
+    <h2>${id?'Editar':'Novo'} vale / desconto</h2>
+    <div class="field">
+      <label>O que é isto</label>
+      <select id="a_tipo" onchange="atualizaTipoVale()">
+        <option value="vale" ${a.tipo!=='desconto'?'selected':''}>Vale — dinheiro entregue a ele, para gastar</option>
+        <option value="desconto" ${a.tipo==='desconto'?'selected':''}>Desconto — algo que você já pagou por ele (ex.: quentinha, EPI)</option>
+      </select>
+    </div>
     <div class="grid grid-2">
       <div class="field"><label>Funcionário</label>
         <select id="a_func" onchange="atualizaDestinoVale()">
           ${todos.map(f=>`<option value="${f.id}" ${a.funcionarioId===f.id?'selected':''} data-tipo="${f.tipo}">${esc(f.nome)} — ${f.tipo==='fichado'?'Fichado':'Diarista '+PERIODICIDADE_LABEL[f.periodicidade]}</option>`).join('')}
         </select>
       </div>
-      <div class="field"><label>Data em que você adiantou</label><input type="date" id="a_data" value="${a.data}" onchange="atualizaDestinoVale()"></div>
+      <div class="field"><label>Data em que você adiantou/pagou</label><input type="date" id="a_data" value="${a.data}" onchange="atualizaDestinoVale()"></div>
     </div>
     <div class="grid grid-2">
       <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="a_valor" value="${a.valor}" oninput="atualizaDestinoVale()"></div>
-      <div class="field"><label>Para quê foi o dinheiro</label><input id="a_desc" value="${esc(a.descricao||'')}" placeholder="Ex: empréstimo, documento, gás"></div>
+      <div class="field"><label>Para quê foi</label><input id="a_desc" value="${esc(a.descricao||'')}" placeholder="Ex: empréstimo, quentinha, EPI"></div>
     </div>
     <div class="grid grid-2" id="wrap_parcelas" style="display:none;">
       <div class="field"><label>Parcelar em quantos meses</label>
@@ -4418,7 +4591,7 @@ function openAdiantamentoModal(id){
       </div>
     </div>
     <div id="a_destino" class="card" style="background:var(--azul-claro);border-color:#c9d6f7;padding:12px 14px;"></div>
-    <div class="grid grid-2" style="margin-top:12px;">
+    <div class="grid grid-2" style="margin-top:12px;" id="wrap_contaVale">
       <div class="field"><label>De qual conta saiu o dinheiro *</label>
         <select id="a_conta">
           <option value="">— escolha —</option>
@@ -4432,18 +4605,29 @@ function openAdiantamentoModal(id){
         </select>
       </div>
     </div>
-    <p class="help" style="margin-bottom:0;">
-      O dinheiro do vale <b>sai da conta agora</b>, no dia do adiantamento — por isso entra
-      sozinho no financeiro, já com baixa nesta data. O desconto do funcionário (na sexta ou
-      no vale de VT/VR) é <b>separado</b> e não duplica isto: os dois juntos fecham no total
-      certo, só a data em que o dinheiro saiu de fato é diferente da data do desconto.
-    </p>
+    <p class="help" style="margin-bottom:0;" id="a_ajudaLancamento"></p>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveAdiantamento('${a.id}')">Salvar vale</button>
+      <button class="btn btn-primary" onclick="saveAdiantamento('${a.id}')">Salvar</button>
     </div>
   `);
   atualizaDestinoVale();
+  atualizaTipoVale();
+}
+
+/* Achado pelo Maycon (05/09/2026): o VALE sai da conta de verdade agora (por isso
+   precisa de conta e cria lançamento com baixa); o DESCONTO NÃO — é dinheiro que
+   ele já gastou por fora (ex.: comprou uma quentinha), e o app só precisa saber
+   quanto abater no próximo pagamento. Criar lançamento também pro desconto
+   duplicaria o gasto (ele já lança a compra em si, separada, se quiser). */
+function atualizaTipoVale(){
+  const desconto = val('a_tipo') === 'desconto';
+  const wrap = document.getElementById('wrap_contaVale');
+  const ajuda = document.getElementById('a_ajudaLancamento');
+  if(wrap) wrap.style.display = desconto ? 'none' : '';
+  if(ajuda) ajuda.innerHTML = desconto
+    ? 'O <b>desconto não lança nada no financeiro agora</b> — é só o valor a abater no próximo pagamento dele. Se o gasto em si (a quentinha, o EPI) ainda não foi lançado, lance-o separado em <b>Lançamentos</b>.'
+    : 'O dinheiro do vale <b>sai da conta agora</b>, no dia do adiantamento — por isso entra sozinho no financeiro, já com baixa nesta data. O desconto do funcionário (na sexta ou no vale de VT/VR) é <b>separado</b> e não duplica isto: os dois juntos fecham no total certo, só a data em que o dinheiro saiu de fato é diferente da data do desconto.';
 }
 
 /* mostra, enquanto preenche, exatamente onde o desconto vai cair */
@@ -4500,7 +4684,7 @@ function sincronizaLancamentoAdiantamento(a){
   const campos = {
     tipo:'despesa', natureza:'operacao', empresaId: ct.empresaId, contaId: a.contaId,
     categoriaId: a.categoriaId || '', obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
-    descricao: `Vale/adiantamento — ${f.nome}${a.descricao?' — '+a.descricao:''}`,
+    descricao: `${a.tipo==='desconto'?'Desconto':'Vale/adiantamento'} — ${f.nome}${a.descricao?' — '+a.descricao:''}`,
     valor: a.valor, vencimento: a.data, obs: ''
   };
   if(existente){
@@ -4516,33 +4700,44 @@ function sincronizaLancamentoAdiantamento(a){
 
 function saveAdiantamento(id){
   const valor = numVal('a_valor');
-  if(valor<=0){ alert('Informe o valor do vale.'); return; }
+  if(valor<=0){ alert('Informe o valor.'); return; }
   const f = func(val('a_func'));
   if(!f){ alert('Escolha o funcionário.'); return; }
-  const contaId = val('a_conta');
-  if(!contaId){ alert('Escolha de qual conta saiu o dinheiro — é o que mantém o saldo do app batendo com o do banco.'); return; }
+  const ehDesconto = val('a_tipo') === 'desconto';
+  const contaId = ehDesconto ? '' : val('a_conta');
+  if(!ehDesconto && !contaId){ alert('Escolha de qual conta saiu o dinheiro — é o que mantém o saldo do app batendo com o do banco.'); return; }
   const fichado = f.tipo === 'fichado';
   const dataISO = val('a_data');
+  const existente = DB.adiantamentos.find(x=>x.id===id) || {};
   const data = {
     id, funcionarioId: f.id, data: dataISO, valor,
     descricao: val('a_desc').trim(),
+    tipo: ehDesconto ? 'desconto' : 'vale',
     modo: fichado ? 'fichado_vale' : 'diarista_semana',
     parcelas: fichado ? Math.max(1, parseInt(val('a_parcelas'))||1) : 1,
     mesInicio: fichado ? (val('a_mesInicio') || mesMais(dataISO.slice(0,7), 1)) : '',
-    contaId, categoriaId: val('a_categoria'),
-    lancamentoId: (DB.adiantamentos.find(x=>x.id===id)||{}).lancamentoId || ''
+    contaId, categoriaId: ehDesconto ? '' : val('a_categoria'),
+    lancamentoId: existente.lancamentoId || ''
   };
-  sincronizaLancamentoAdiantamento(data);
+  /* desconto NAO sai da conta agora (o Maycon já pagou por fora — ex.: uma
+     quentinha) — só o vale de verdade cria lançamento com baixa. Editar um
+     registro trocando de vale para desconto apaga o lançamento que ele tinha. */
+  if(ehDesconto){
+    if(data.lancamentoId) DB.lancamentos = DB.lancamentos.filter(l=>l.id!==data.lancamentoId);
+    data.lancamentoId = '';
+  } else {
+    sincronizaLancamentoAdiantamento(data);
+  }
   const idx = DB.adiantamentos.findIndex(x=>x.id===id);
   if(idx>=0) DB.adiantamentos[idx]=data; else DB.adiantamentos.push(data);
   saveDB(); closeModal(); renderAdiantamentos();
-  toast('Vale lançado — ' + destinoVale(data).texto);
+  toast((ehDesconto?'Desconto lançado':'Vale lançado') + ' — ' + destinoVale(data).texto);
 }
 function deleteAdiantamento(id){
   const a = DB.adiantamentos.find(x=>x.id===id);
   if(!a) return;
   const aviso = a.lancamentoId ? '\n\nO lançamento de saída criado no financeiro também será excluído.' : '';
-  if(!confirm('Excluir este vale?' + aviso)) return;
+  if(!confirm(`Excluir este ${a.tipo==='desconto'?'desconto':'vale'}?` + aviso)) return;
   if(a.lancamentoId) DB.lancamentos = DB.lancamentos.filter(l=>l.id!==a.lancamentoId);
   DB.adiantamentos = DB.adiantamentos.filter(x=>x.id!==id);
   saveDB(); renderAdiantamentos(); toast('Vale excluído.');
@@ -9231,15 +9426,24 @@ function blocoContaCorrente(){
    (02_core.js) em vez de inventar uma segunda lista — profissional agrupa
    armador+carpinteiro+pedreiro, exatamente como a medição da Bandeira já escreve
    "PROFISSIONAL (PEDREIRO, CARPINTEIRO, ARMADOR)" no quadro dela. */
-function categoriaHH(funcao){
-  const r = cargoRank(funcao);
+const CATEGORIA_HH_LABEL = {servente:'Servente', meioOficial:'Meio-oficial', profissional:'Profissional', eletricista:'Eletricista'};
+
+/* Aceita OU uma função de cargo de verdade (PEDR, CARP, ARMA, SERV...), OU já a
+   própria chave de categoria (quando vem de uma exceção do dia — ver
+   `abrirExcecaoDiaModal`/`abrirFuncaoComissaoDiaristaModal`, cujo campo
+   "Função neste dia" é uma LISTA DAS 4 CATEGORIAS, não texto livre: "Profissional"
+   não é o nome de nenhum cargo — é o nome do GRUPO armador+carpinteiro+pedreiro,
+   e pedir para digitar isso deixaria fácil escrever algo que não bate com
+   nenhum cargo conhecido e a exceção silenciosamente não valer nada). */
+function categoriaHH(funcaoOuCategoria){
+  if(Object.prototype.hasOwnProperty.call(CATEGORIA_HH_LABEL, funcaoOuCategoria)) return funcaoOuCategoria;
+  const r = cargoRank(funcaoOuCategoria);
   if(r===2 || r===3 || r===4) return 'profissional';
   if(r===5) return 'eletricista';
   if(r===6) return 'meioOficial';
   if(r===7) return 'servente';
   return null;   // encarregado / administrativo / desconhecido / sem cargo
 }
-const CATEGORIA_HH_LABEL = {servente:'Servente', meioOficial:'Meio-oficial', profissional:'Profissional', eletricista:'Eletricista'};
 
 /* Blocos de segunda a domingo cobrindo [ini, fim] inteiro — não só um mês, ao
    contrário de `semanasDoMes` (04c_folha_contabil.js), porque a medição pode
@@ -9286,7 +9490,15 @@ function diaContaNaMedicaoHH(f, iso, obraId){
 }
 
 /* O cálculo inteiro — usado tanto pela tela (rascunho, ao vivo) quanto por
-   `aprovarMedicaoHH` (o resultado vira o que fica congelado). */
+   `aprovarMedicaoHH` (o resultado vira o que fica congelado).
+
+   Categoria é DECIDIDA DIA A DIA (05/09/2026), não uma vez por funcionário: com
+   "função do dia" (`funcaoEfetivaNoDia`, 02_core.js), a mesma pessoa pode ter
+   dias de categorias diferentes dentro do mesmo período (ex.: 3 dias de
+   servente + 1 de eletricista). Por isso as linhas são chaveadas por
+   `funcionario.id + '|' + categoria`, e a mesma pessoa pode aparecer em mais
+   de uma linha da tabela. A comissão que ela ganhou por isso NÃO entra aqui —
+   é custo interno, não é cobrado da Bandeira (só a categoria/preço do dia). */
 function calcMedicaoHH(obraId, ini, fim){
   const blocos = blocosSemanaMedicao(ini, fim);
   const funcionarios = ativosNoPeriodo(ini, fim)
@@ -9295,36 +9507,43 @@ function calcMedicaoHH(obraId, ini, fim){
 
   const porCategoria = {servente:{dias:0,valor:0}, meioOficial:{dias:0,valor:0},
                          profissional:{dias:0,valor:0}, eletricista:{dias:0,valor:0}};
-  const linhasPorFunc = {};
+  const linhasPorChave = {};       // `${funcId}|${categoria}` -> linha
+  const semCategoriaPorFunc = {};  // funcId -> {funcionario, dias}
 
   blocos.forEach((dias, iBloco)=>{
     funcionarios.forEach(f=>{
-      let diasNoBloco = 0, abonadosNoBloco = 0;
+      const porCatNoBloco = {};    // categoria ('' = sem categoria) -> {dias, abonados}
       dias.forEach(iso=>{
         if(iso < ini || iso > fim) return;   // o bloco pode passar do intervalo pedido
         const st = diaContaNaMedicaoHH(f, iso, obraId);
         if(!st) return;
-        diasNoBloco++;
-        if(st === 'abonado') abonadosNoBloco++;
+        const cat = categoriaHH(funcaoEfetivaNoDia(f, iso)) || '';
+        if(!porCatNoBloco[cat]) porCatNoBloco[cat] = {dias:0, abonados:0};
+        porCatNoBloco[cat].dias++;
+        if(st === 'abonado') porCatNoBloco[cat].abonados++;
       });
-      if(diasNoBloco <= 0) return;
-      if(!linhasPorFunc[f.id]) linhasPorFunc[f.id] = {funcionario:f, porSemana:{}, total:0, abonados:0};
-      linhasPorFunc[f.id].porSemana[iBloco] = diasNoBloco;
-      linhasPorFunc[f.id].total += diasNoBloco;
-      linhasPorFunc[f.id].abonados += abonadosNoBloco;
+      Object.keys(porCatNoBloco).forEach(cat=>{
+        const {dias: diasCat, abonados} = porCatNoBloco[cat];
+        if(!cat){
+          if(!semCategoriaPorFunc[f.id]) semCategoriaPorFunc[f.id] = {funcionario:f, dias:0};
+          semCategoriaPorFunc[f.id].dias += diasCat;
+          return;
+        }
+        const chave = f.id + '|' + cat;
+        if(!linhasPorChave[chave]) linhasPorChave[chave] = {funcionario:f, categoria:cat, porSemana:{}, total:0, abonados:0};
+        linhasPorChave[chave].porSemana[iBloco] = diasCat;
+        linhasPorChave[chave].total += diasCat;
+        linhasPorChave[chave].abonados += abonados;
+      });
     });
   });
 
-  const semCategoria = [];
-  Object.values(linhasPorFunc).forEach(l=>{
-    const cat = categoriaHH(l.funcionario.funcao);
-    l.categoria = cat;
-    if(!cat){ semCategoria.push({funcionario:l.funcionario, dias:l.total}); return; }
-    const preco = Number(precos[cat]) || 0;
+  Object.values(linhasPorChave).forEach(l=>{
+    const preco = Number(precos[l.categoria]) || 0;
     l.precoUnit = preco;
     l.subtotal = Math.round(l.total * preco * 100) / 100;
-    porCategoria[cat].dias += l.total;
-    porCategoria[cat].valor += l.subtotal;
+    porCategoria[l.categoria].dias += l.total;
+    porCategoria[l.categoria].valor += l.subtotal;
   });
 
   const totalMedicao = Math.round(
@@ -9336,16 +9555,18 @@ function calcMedicaoHH(obraId, ini, fim){
      transporte... e abono médico"). Só uma sugestão: o campo continua editável,
      porque o Maycon pode saber de algum ajuste que o cálculo não capta. */
   let sugestaoDesconto = 0;
-  Object.values(linhasPorFunc).forEach(l=>{
+  Object.values(linhasPorChave).forEach(l=>{
     if(l.abonados > 0) sugestaoDesconto += l.abonados * (vtPorDia(l.funcionario) + vrPorDia(l.funcionario));
   });
   sugestaoDesconto = Math.round(sugestaoDesconto * 100) / 100;
 
   return {
     obraId, ini, fim, blocos,
-    linhas: Object.values(linhasPorFunc).filter(l=>l.categoria)
-      .sort((a,b)=>cmpFuncionarios(a.funcionario,b.funcionario)),
-    porCategoria, semCategoria, sugestaoDesconto,
+    linhas: Object.values(linhasPorChave)
+      .sort((a,b)=>cmpFuncionarios(a.funcionario,b.funcionario) || a.categoria.localeCompare(b.categoria)),
+    porCategoria,
+    semCategoria: Object.values(semCategoriaPorFunc),
+    sugestaoDesconto,
     totalMedicao
   };
 }
