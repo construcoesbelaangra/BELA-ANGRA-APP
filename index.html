@@ -704,7 +704,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 43';
+const VERSAO = '2026-09-10 · 44';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1388,7 +1388,15 @@ function presumidosDoMes(f, ym){
   return n;
 }
 
-/* total de dias a confirmar até hoje — é o que a faixa de aviso mostra */
+/* total de dias a confirmar até hoje — é o que a faixa de aviso mostra.
+   Precisa respeitar o VÍNCULO (admissão/demissão), senão uma marcação órfã de
+   alguém já demitido (ex.: um "preencher presença" em lote que alcançou dias
+   depois de uma demissão lançada só depois) fica contando pendência pra
+   sempre — ela nunca aparece em nenhuma tela pra confirmar (toda tela de
+   Ponto já exclui quem está fora do vínculo), então o aviso "mentia": achado
+   pelo Maycon em 10/09/2026, um diarista demitido em 05/09 tinha uma marcação
+   de 10/09 sobrando, e "1 dia a confirmar" nunca sumia nem aparecia em
+   lugar nenhum pra ele confirmar. */
 function totalPresumidosAteHoje(tipo){
   const hoje = todayISO();
   /* 'todos' é a folha mista da tela do dia; sem tipo nenhum vale o mesmo */
@@ -1404,7 +1412,7 @@ function totalPresumidosAteHoje(tipo){
       const f = func(fid);
       if(!f || f.tipo!=='fichado') return;
       Object.keys(reg.auto).forEach(iso=>{
-        if(reg.auto[iso] && reg.dias[iso] && iso <= hoje) conta(iso);
+        if(reg.auto[iso] && reg.dias[iso] && iso <= hoje && !foraDoVinculo(f, iso)) conta(iso);
       });
     });
   }
@@ -1413,6 +1421,7 @@ function totalPresumidosAteHoje(tipo){
       if(!e.auto || !e.status || e.data > hoje) return;
       const f = func(e.funcionarioId);
       if(!f || f.tipo!=='diarista') return;
+      if(foraDoVinculo(f, e.data)) return;
       conta(e.data);
     });
   }
