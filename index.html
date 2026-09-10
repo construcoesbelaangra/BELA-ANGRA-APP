@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 60';
+const VERSAO = '2026-09-10 · 61';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -5948,6 +5948,7 @@ function printResumoVales(){
 let holFuncId = null;
 let holMes = null;
 let holAba = 'funcionario';
+let holObraFiltro = '';
 
 /* rubricas lançadas a partir do holerite da contabilidade */
 const RUBRICAS_VENC = [
@@ -6079,11 +6080,17 @@ function renderHolerite(){
   initValesMes();
   if(!holMes) holMes = valesMes;
   const c = document.getElementById('content');
-  const fichados = ativosNoMes(holMes).filter(f=>f.tipo==='fichado');
+  const fichados = filtraObra(ativosNoMes(holMes).filter(f=>f.tipo==='fichado'), holObraFiltro);
   if((!holFuncId || !fichados.some(f=>f.id===holFuncId)) && fichados.length) holFuncId = fichados[0].id;
 
-  if(!holFuncId){
-    c.innerHTML = `<div class="card"><div class="empty">Cadastre um funcionário do tipo "Fichado" primeiro.</div></div>`;
+  if(!fichados.length){
+    c.innerHTML = `<div class="card">
+      <div class="grid grid-2">
+        <div class="field"><label>Mês de referência</label><input type="month" value="${holMes}" onchange="holMes=this.value; renderHolerite();"></div>
+        <div class="field"><label>Obra</label><select onchange="holObraFiltro=this.value; renderHolerite();">${opcoesObra(holObraFiltro)}</select></div>
+      </div>
+      <div class="empty">${holObraFiltro ? 'Nenhum fichado ativo nesta obra em ' + monthLabel(holMes) + '.' : 'Cadastre um funcionário do tipo "Fichado" primeiro.'}</div>
+    </div>`;
     return;
   }
 
@@ -6092,10 +6099,12 @@ function renderHolerite(){
 
   c.innerHTML = `
     <div class="card">
-      <div class="grid grid-2">
+      <div class="grid grid-3">
         <div class="field"><label>Funcionário</label><select onchange="holFuncId=this.value; renderHolerite();">${funcOpts}</select></div>
         <div class="field"><label>Mês de referência</label><input type="month" value="${holMes}" onchange="holMes=this.value; renderHolerite();"></div>
+        <div class="field"><label>Obra</label><select onchange="holObraFiltro=this.value; holFuncId=null; renderHolerite();">${opcoesObra(holObraFiltro)}</select></div>
       </div>
+      <p class="help" style="margin-top:0;">O filtro de obra vale tanto para o funcionário escolhido acima quanto para os botões "de todos os fichados" — filtra pela obra atual do cadastro dele.</p>
       <div class="tabs">
         <button class="tab ${holAba==='funcionario'?'active':''}" onclick="holAba='funcionario'; renderHolerite();">Recibo do funcionário</button>
         <button class="tab ${holAba==='encargos'?'active':''}"    onclick="holAba='encargos'; renderHolerite();">Demonstrativo de encargos (cliente)</button>
@@ -6345,16 +6354,17 @@ function printHolerite(comVales){
     `Holerite - ${f.matricula||'s-matricula'} - ${f.nome}`);
 }
 function printTodosHolerites(comVales){
-  const fichados = ativosNoMes(holMes).filter(f=>f.tipo==='fichado');
+  const fichados = filtraObra(ativosNoMes(holMes).filter(f=>f.tipo==='fichado'), holObraFiltro);
   const comDados = fichados.filter(f=>{
     const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===holMes);
     return h && RUBRICAS_VENC.some(r=>Number(h.venc[r.k])>0);
   });
-  if(!comDados.length){ alert('Nenhum holerite preenchido neste mês.'); return; }
+  if(!comDados.length){ alert(holObraFiltro ? 'Nenhum holerite preenchido neste mês, nesta obra.' : 'Nenhum holerite preenchido neste mês.'); return; }
+  const nomeGrupo = holObraFiltro ? `Holerites ${obraNome(holObraFiltro)}` : 'Holerites Todos os Funcionarios';
   doPrint(comDados.map((f,i)=>{
     const h = getHolerite(f.id, holMes);
     return `<div class="doc doc-margem-zero ${i<comDados.length-1?'pagebreak':''}">${holeriteViaHTML(f,h,comVales)}${holeriteViaHTML(f,h,comVales)}</div>`;
-  }).join(''), `Holerites Todos os Funcionarios - ${monthLabel(holMes)}`);
+  }).join(''), `${nomeGrupo} - ${monthLabel(holMes)}`);
 }
 
 /* ---------- ABA 2: demonstrativo de encargos (para o cliente) ---------- */
