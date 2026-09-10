@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 51';
+const VERSAO = '2026-09-10 · 52';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2191,6 +2191,14 @@ function openFuncModal(id){
             <option value="quinzenal" ${f.periodicidade==='quinzenal'?'selected':''}>Quinzenal (uma sexta sim, outra não)</option>
           </select>
         </div>
+        <div class="field" id="wrap_periodicidadeComissao" style="${f.tipo==='fichado'?'':'display:none;'}">
+          <label>Periodicidade da comissão (se houver)</label>
+          <select id="f_periodicidadeComissao">
+            <option value="semanal"   ${f.periodicidadeComissao!=='quinzenal'?'selected':''}>Semanal (toda sexta-feira)</option>
+            <option value="quinzenal" ${f.periodicidadeComissao==='quinzenal'?'selected':''}>Quinzenal (só na sexta de quinzena)</option>
+          </select>
+          <p class="help" style="margin-top:2px;">Só importa se este fichado ganhar comissão por função do dia (🏗️ no Ponto). O salário/adiantamento continua mensal, outra tela.</p>
+        </div>
       </div>
       <div class="grid grid-3">
         <div class="field"><label>Status</label>
@@ -2371,6 +2379,7 @@ function toggleFuncTipo(){
   const diarista = tipo==='diarista';
   document.getElementById('wrap_diaria').style.display = diarista ? '' : 'none';
   document.getElementById('wrap_periodicidade').style.display = diarista ? '' : 'none';
+  document.getElementById('wrap_periodicidadeComissao').style.display = diarista ? 'none' : '';
   document.getElementById('wrap_folhaContabil').style.display = diarista ? '' : 'none';
   document.getElementById('wrap_salario').style.display = diarista ? 'none' : '';
   const reg = document.getElementById('f_regimePagamento');
@@ -2431,6 +2440,7 @@ function saveFunc(id){
     tipo: val('f_tipo'),
     tipoServico: val('f_tipoServico'),
     periodicidade: val('f_periodicidade') || 'semanal',
+    periodicidadeComissao: val('f_periodicidadeComissao') || 'semanal',
     regimePagamento: val('f_regimePagamento'),
     /* quem tem data de saída fica inativo por definição — é o que tira ele do ponto */
     status: dDem ? 'inativo' : val('f_status'),
@@ -4272,20 +4282,39 @@ function calcsDoFechamento(sexta, obraFiltro){
 /* Pedido do Maycon (05/09/2026): um FICHADO (ex.: Jonathan, cadastro SERVENTE)
    pode ganhar comissão por ter feito outro serviço num dia específico (ver
    `comissaoNoDia`, 02_core.js), e ele quer pagar isso JUNTO com os diaristas,
-   na folha da sexta — sem duplicar cadastro nem abrir uma tela nova. Usa
-   SEMPRE a janela SEMANAL (7 dias terminando na sexta), nunca a quinzenal,
-   mesmo numa sexta de quinzena — é "o que ele ganhou essa semana", independente
-   de quando o salário/adiantamento dele (que é mensal, outra tela) é pago.
+   na folha da sexta — sem duplicar cadastro nem abrir uma tela nova. Usa a
+   janela SEMANAL (7 dias terminando na sexta) por padrão — é "o que ele
+   ganhou essa semana", independente de quando o salário/adiantamento dele
+   (que é mensal, outra tela) é pago.
+
+   **Pode ser quinzenal por pessoa** (10/09/2026, pedido do Maycon sobre o
+   próprio Jonathan): `f.periodicidadeComissao` — campo PRÓPRIO, não reaproveita
+   `f.periodicidade` (esse é do diarista, e já é usado como sentinela em outro
+   lugar — ver "comissao" em `pagamentoDe`/`togglePago`). Sem esse campo, ou
+   com "semanal", o comportamento é o de sempre: fecha toda sexta. Com
+   "quinzenal", só fecha nas sextas em que `isSextaQuinzenal(sexta)` é
+   verdadeiro (mesma âncora quinzenal de sempre, `DB.config.quinzenalAncora`)
+   — e nessas sextas, soma os 14 dias, não 7. **Trocar de semanal pra
+   quinzenal não mexe em nada já pago**: cada sexta é uma marca de pago
+   independente (`pagamentoDe`), então o que já foi marcado antes continua
+   valendo do jeito que foi pago.
+
    A linha sintética tem a MESMA FORMA das linhas de diarista (`apenasComissao:
    true` para o resto do código saber que não tem diária/vale de verdade) —
    assim o agrupamento por obra, o render e `togglePago` funcionam sem
    precisar de nenhum caso especial. */
 function linhasComissaoFichados(sexta, obraFiltro){
-  const periodo = periodoDaSexta(sexta, 'semanal');
-  let fichados = ativosNoPeriodo(periodo.inicio, periodo.fim).filter(f=>f.tipo==='fichado');
+  const ehSextaQuinzenal = isSextaQuinzenal(sexta);
+  /* janela mais larga (quinzenal) só pra achar quem estava no vínculo em
+     algum ponto do período — cada pessoa depois usa o período exato dela */
+  const periodoAmplo = periodoDaSexta(sexta, 'quinzenal');
+  let fichados = ativosNoPeriodo(periodoAmplo.inicio, periodoAmplo.fim).filter(f=>f.tipo==='fichado');
   if(obraFiltro) fichados = fichados.filter(f=>f.obraPadrao===obraFiltro);
   const out = [];
   fichados.forEach(f=>{
+    const per = f.periodicidadeComissao === 'quinzenal' ? 'quinzenal' : 'semanal';
+    if(per === 'quinzenal' && !ehSextaQuinzenal) return;   // so fecha nas sextas de quinzena
+    const periodo = periodoDaSexta(sexta, per);
     let totalComissao = 0;
     let iso = periodo.inicio;
     while(iso <= periodo.fim){ totalComissao += comissaoNoDia(f, iso); iso = addDays(iso, 1); }
