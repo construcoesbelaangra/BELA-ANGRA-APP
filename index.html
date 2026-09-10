@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 62';
+const VERSAO = '2026-09-10 · 63';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6076,11 +6076,20 @@ function sugestoesHolerite(f, mes){
   };
 }
 
+/* Quem entra na tela de Holerite (10/09/2026): todo FICHADO, mais o diarista marcado
+   "Incluir na folha de ponto mensal da contabilidade" (`apareceNaFolhaContabil`) — é o
+   caso do João Martins e do Jeferson Martins Caetano: pagos como diarista por acordo com
+   eles, mas a CONTABILIDADE trata os dois como fichado de verdade e manda holerite real
+   todo mês (mesmo raciocínio já usado na Folha de Ponto para a Contabilidade,
+   `04c_folha_contabil.js` — ver "Cadastro duplicado" no `CLAUDE.md`). Sem isso, a tela
+   nunca deixava lançar o holerite real que a contabilidade manda desses dois. */
+function elegivelHolerite(f){ return f.tipo==='fichado' || f.apareceNaFolhaContabil; }
+
 function renderHolerite(){
   initValesMes();
   if(!holMes) holMes = valesMes;
   const c = document.getElementById('content');
-  const fichados = filtraObra(ativosNoMes(holMes).filter(f=>f.tipo==='fichado'), holObraFiltro);
+  const fichados = filtraObra(ativosNoMes(holMes).filter(elegivelHolerite), holObraFiltro);
   if((!holFuncId || !fichados.some(f=>f.id===holFuncId)) && fichados.length) holFuncId = fichados[0].id;
 
   if(!fichados.length){
@@ -6354,7 +6363,7 @@ function printHolerite(comVales){
     `Holerite - ${f.matricula||'s-matricula'} - ${f.nome}`);
 }
 function printTodosHolerites(comVales){
-  const fichados = filtraObra(ativosNoMes(holMes).filter(f=>f.tipo==='fichado'), holObraFiltro);
+  const fichados = filtraObra(ativosNoMes(holMes).filter(elegivelHolerite), holObraFiltro);
   const comDados = fichados.filter(f=>{
     const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===holMes);
     return h && RUBRICAS_VENC.some(r=>Number(h.venc[r.k])>0);
