@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 45';
+const VERSAO = '2026-09-10 · 46';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2362,7 +2362,6 @@ function printFicha(id){
     ${docHead('Ficha de Admissão de Funcionários', '', `Emitida em<br><b>${fmtDate(todayISO())}</b>`)}
 
     <div class="fbox">
-      <div class="fbt">Vínculo e alocação</div>
       <div class="frow">
         ${fc('Empresa', DB.empresa.razaoSocial, 'w4')}
         ${fc('Data de admissão', f.admissao?fmtDate(f.admissao):'')}
@@ -10900,9 +10899,20 @@ window.addEventListener('resize', function(){
           });
         });
 
-        /* procura versão nova ao voltar para o app (não só ao abrir do zero) */
+        /* procura versão nova ao voltar para o app (não só ao abrir do zero).
+           Confere de novo o `reg.waiting` depois do update() — reforço sem
+           custo nenhum para o caso do `updatefound`/`installed` desta aba não
+           ter pego a instalação a tempo (app ficou em segundo plano, ou uma
+           versão já tinha ficado esperando de uma checagem anterior sem
+           mostrar a barra). Relatado pelo Maycon em 10/09/2026: o app às
+           vezes atualizava sozinho (o conteúdo mudava), mas a barra azul não
+           aparecia mais, e só recarregando manualmente (F5) via para a
+           versão nova. */
         document.addEventListener('visibilitychange', function(){
-          if(document.visibilityState === 'visible') reg.update().catch(function(){});
+          if(document.visibilityState !== 'visible') return;
+          reg.update().then(function(){
+            if(reg.waiting && navigator.serviceWorker.controller) mostrarBarraAtualizar(reg.waiting);
+          }).catch(function(){});
         });
       }).catch(function(e){
         console.warn('service worker não registrou:', e);
