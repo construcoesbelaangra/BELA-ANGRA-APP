@@ -704,7 +704,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 41';
+const VERSAO = '2026-09-10 · 42';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2350,14 +2350,6 @@ function printFicha(id){
         <div class="fcell w2"><span class="fl">Pagamento</span><span class="fv">
           ${cb(f.regimePagamento==='hora','hora')}${cb(f.regimePagamento==='dia','dia')}${cb(f.regimePagamento==='mes','mês')}
         </span></div>
-        <div class="fcell w2"><span class="fl">Vínculo</span><span class="fv">
-          ${cb(f.tipo==='fichado','Fichado')}${cb(f.tipo==='diarista','Diarista')}
-        </span></div>
-      </div>
-      <div class="frow">
-        <div class="fcell"><span class="fl">Tipo de serviço na obra</span><span class="fv">
-          ${cb(f.tipoServico==='homem_hora','Homem-Hora')}${cb(f.tipoServico==='empreitada','Empreitada')}
-        </span></div>
       </div>
     </div>
 
@@ -2428,7 +2420,7 @@ function printFicha(id){
 
     ${docFoot()}
   </div>`;
-  doPrint(html, `Ficha de Admissao - ${f.nome}`);
+  doPrint(html);
 }
 /* =========================================================
    PERÍODOS DE PAGAMENTO — sempre terminam numa sexta-feira
