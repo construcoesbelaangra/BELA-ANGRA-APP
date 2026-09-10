@@ -613,15 +613,21 @@ tr:hover td{background:#fafbfd;}
 .hol .hfun{display:flex;border-bottom:1.4px solid #000;padding:2px 5px;font-size:9px;background:#f4f5f8;}
 .hol .hfun .l{flex:1;line-height:1.45;}
 .hol .hfun .r{text-align:right;line-height:1.45;}
-/* Sem linhas de grade (10/09/2026, pedido do Maycon — achava as linhas internas
-   "cinzas" e distraindo): só a régua embaixo do cabeçalho da tabela continua, pra
-   separar título de conteúdo; nada de borda entre colunas nem entre linhas. */
+/* As linhas cinzas que incomodavam (10/09/2026) NÃO eram a grade preta das colunas —
+   eram o `border-bottom:#eceef2` do `td` genérico do app inteiro (linha 395, usado nas
+   telas normais), que sempre vazou pra dentro desta tabela por baixo da grade preta.
+   Tirar a grade preta (1ª tentativa) só deixou essa linha cinza sozinha, uma por linha —
+   pior, não melhor (o Maycon reportou "ficou sem as linhas das colunas"). Corrigido de
+   vez: mantém a grade preta entre colunas (como o holerite real da contabilidade tem) e
+   anula só o `border-bottom` cinza herdado, célula por célula — sem linha nenhuma
+   separando uma linha de dado da outra, só as colunas divididas. */
 .holtab{width:100%;border-collapse:collapse;font-size:9.5px;}
-.holtab th{border-bottom:1px solid #000;padding:2px 5px;font-weight:700;font-size:9px;background:#fff;text-align:center;}
+.holtab th{border-bottom:1px solid #000;border-right:1px solid #000;padding:2px 5px;font-weight:700;font-size:9px;background:#fff;text-align:center;}
 .holtab th.hl{text-align:left;}
-.holtab td{padding:1.5px 5px;}
+.holtab td{border-bottom:none;border-right:1px solid #000;padding:1.5px 5px;}
 .holtab td.n{text-align:right;}
 .holtab td.c{text-align:center;}
+.holtab td:last-child, .holtab th:last-child{border-right:none;}
 .holtot{display:flex;border-top:1px solid #000;font-size:9.5px;}
 .holtot .sp{flex:1;border-right:1px solid #000;}
 .holtot .cV{width:120px;text-align:right;padding:2px 5px;border-right:1px solid #000;font-weight:700;}
@@ -711,7 +717,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 57';
+const VERSAO = '2026-09-10 · 58';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
