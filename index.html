@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 47';
+const VERSAO = '2026-09-10 · 48';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -986,6 +986,14 @@ function migrate(db){
   (db.funcionarios||[]).forEach(f=>{
     if(!f.obraHistorico){
       f.obraHistorico = f.obraPadrao ? [{obraId: f.obraPadrao, inicio: f.admissao || '0001-01-01'}] : [];
+    }
+  });
+  /* Mesma lógica, para o cargo (10/09/2026, botão "Promover") — sem isso, uma
+     promoção lançada hoje faria a Medição HH recalcular os dias de ANTES dela
+     como se a pessoa já tivesse o cargo novo desde sempre. */
+  (db.funcionarios||[]).forEach(f=>{
+    if(!f.funcaoHistorico){
+      f.funcaoHistorico = f.funcao ? [{funcao: f.funcao, inicio: f.admissao || '0001-01-01'}] : [];
     }
   });
   return db;
@@ -1321,22 +1329,36 @@ function obraDoFuncionarioEm(f, iso){
   return (exc && exc.obraId) || obraHistoricaEm(f, iso);
 }
 
+/* Cargo DEFINITIVO de um funcionário NUM DIA específico — não confundir com
+   `f.funcao`, que é só o cargo atual (sem olhar o histórico). Mesmo
+   raciocínio de `obraHistoricaEm`: uma promoção (10/09/2026, botão
+   "Promover" em Funcionários) não pode fazer a Medição HH cobrar os dias de
+   ANTES da promoção já pela categoria nova. `f.funcaoHistorico` é preenchido
+   por `confirmarPromocao` (`03_func.js`); quem nunca foi promovido tem uma
+   única entrada de backfill (`migrate()`). Vale para fichado e diarista —
+   os dois têm cargo (diferente de obra, que só fichado tem histórico). */
+function funcaoHistoricaEm(f, iso){
+  const hist = (f.funcaoHistorico||[]).filter(h=>h.inicio<=iso);
+  if(hist.length) return hist[hist.length-1].funcao;
+  return f.funcao || '';
+}
+
 /* Função EFETIVA de um funcionário num dia específico — pedido do Maycon
    (05/09/2026): às vezes um homem-hora faz um serviço diferente do cargo dele
    naquele dia (ex.: servente que trabalhou de eletricista), e isso precisa
    valer para cobrar a categoria certa da Bandeira na Medição HH. Vale para os
    DOIS vínculos: fichado (via `reg.excecaoDia[iso].funcao`, mesmo lugar da
    obra do dia) e diarista (o próprio registro do dia em `DB.pontoDiarista` já
-   pode carregar uma `funcao`). Sem exceção, cai na função do cadastro
-   (`f.funcao`) — a mesma coisa de sempre. */
+   pode carregar uma `funcao`). Sem exceção, cai no cargo DEFINITIVO daquele
+   dia (`funcaoHistoricaEm`) — respeita uma promoção, não só o cargo atual. */
 function funcaoEfetivaNoDia(f, iso){
   if(f.tipo === 'fichado'){
     const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
     const exc = reg && reg.excecaoDia ? reg.excecaoDia[iso] : null;
-    return (exc && exc.funcao) || f.funcao;
+    return (exc && exc.funcao) || funcaoHistoricaEm(f, iso);
   }
   const r = DB.pontoDiarista.find(p=>p.funcionarioId===f.id && p.data===iso);
-  return (r && r.funcao) || f.funcao;
+  return (r && r.funcao) || funcaoHistoricaEm(f, iso);
 }
 
 /* Comissão paga NAQUELE DIA especificamente — dinheiro extra por ter feito o
@@ -1901,6 +1923,7 @@ function renderFuncionarios(){
                   <button class="btn btn-secondary btn-sm" onclick="openFuncModal('${f.id}')">Editar</button>
                   <button class="btn btn-secondary btn-sm" onclick="printFicha('${f.id}')">Ficha PDF</button>
                   <button class="btn btn-secondary btn-sm" onclick="transferirObraFunc('${f.id}')">Transferir de obra</button>
+                  <button class="btn btn-secondary btn-sm" onclick="promoverFunc('${f.id}')">Promover</button>
                   ${f.demissao
                     ? `<button class="btn btn-secondary btn-sm" onclick="readmitirFunc('${f.id}')">Readmitir</button>`
                     : `<button class="btn btn-secondary btn-sm" onclick="demitirFunc('${f.id}')">Demitir</button>`}
@@ -2032,6 +2055,60 @@ function confirmarTransferenciaObra(id){
   f.obraPadrao = novaObra;
   saveDB(); closeModal(); renderFuncionarios();
   toast(`${f.nome} transferido para ${obraNome(novaObra)} a partir de ${fmtDate(data)}.`);
+}
+
+/* --------- PROMOÇÃO DE CARGO (10/09/2026) ---------
+   Pedido do Maycon: um servente pode virar meio oficial, depois profissional,
+   e assim por diante. Mesmo raciocínio da transferência de obra, acima — sem
+   histórico, a Medição HH cobraria os dias de ANTES da promoção já pela
+   categoria nova. Grava a mudança com data em `f.funcaoHistorico` (ver
+   `funcaoHistoricaEm`/`funcaoEfetivaNoDia`, 02_core.js) e também atualiza
+   `f.funcao`, para as outras telas continuarem mostrando o cargo de hoje sem
+   precisar mudar nada nelas. Vale para fichado e diarista — os dois têm
+   cargo (diferente da obra, que só o fichado tem histórico). */
+function promoverFunc(id){
+  const f = func(id);
+  if(!f) return;
+  const cargosOpts = DB.cargos.filter(c=>c.nome!==f.funcao)
+    .sort((a,b)=>cargoRank(a.nome)-cargoRank(b.nome))
+    .map(c=>`<option value="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Promover — ${esc(f.nome)}</h2>
+    <p class="help">Cargo atual: <b>${esc(f.funcao||'—')}</b></p>
+    <div class="grid grid-2">
+      <div class="field"><label>Novo cargo</label>
+        <select id="pr_funcao"><option value="">— escolha —</option>${cargosOpts}</select>
+        ${!DB.cargos.length ? '<p class="help">Nenhum cargo cadastrado ainda — cadastre em Configurações → Cargos / Funções.</p>' : ''}
+      </div>
+      <div class="field"><label>A partir de qual dia</label>
+        <input type="date" id="pr_data" value="${todayISO()}" ${f.admissao?`min="${f.admissao}"`:''}></div>
+    </div>
+    <p class="help">
+      Os dias já lançados ANTES desta data continuam contando pelo cargo antigo na Medição
+      Homem-Hora; a partir desta data, contam pelo cargo novo. Se este funcionário for
+      Empreitada, a data só muda o cargo do cadastro (não tem efeito de cobrança).
+    </p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="confirmarPromocao('${id}')">Promover</button>
+    </div>
+  `);
+}
+function confirmarPromocao(id){
+  const f = func(id);
+  if(!f) return;
+  const novoCargo = val('pr_funcao');
+  const data = val('pr_data');
+  if(!novoCargo){ alert('Escolha o novo cargo.'); return; }
+  if(!data){ alert('Informe a data da promoção.'); return; }
+  if(f.admissao && data < f.admissao){ alert('A promoção não pode ser antes da admissão.'); return; }
+  f.funcaoHistorico = f.funcaoHistorico || [];
+  f.funcaoHistorico.push({funcao: novoCargo, inicio: data});
+  f.funcaoHistorico.sort((a,b)=>a.inicio.localeCompare(b.inicio));
+  f.funcao = novoCargo;
+  saveDB(); closeModal(); renderFuncionarios();
+  toast(`${f.nome} promovido para ${novoCargo} a partir de ${fmtDate(data)}.`);
 }
 
 let modalDependentes = [];
