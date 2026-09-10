@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 48';
+const VERSAO = '2026-09-10 · 49';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -994,6 +994,13 @@ function migrate(db){
   (db.funcionarios||[]).forEach(f=>{
     if(!f.funcaoHistorico){
       f.funcaoHistorico = f.funcao ? [{funcao: f.funcao, inicio: f.admissao || '0001-01-01'}] : [];
+    }
+  });
+  /* Mesma lógica, para o salário (10/09/2026) — protege meses já fechados de
+     uma promoção lançada depois (ver `salarioHistoricoEm`, acima). */
+  (db.funcionarios||[]).forEach(f=>{
+    if(!f.salarioHistorico){
+      f.salarioHistorico = f.salario ? [{salario: Number(f.salario)||0, inicio: f.admissao || '0001-01-01'}] : [];
     }
   });
   return db;
@@ -1341,6 +1348,21 @@ function funcaoHistoricaEm(f, iso){
   const hist = (f.funcaoHistorico||[]).filter(h=>h.inicio<=iso);
   if(hist.length) return hist[hist.length-1].funcao;
   return f.funcao || '';
+}
+
+/* Salário DEFINITIVO de um fichado NUM DIA específico — mesmo raciocínio de
+   `funcaoHistoricaEm`, e pelo motivo mais sério de todos: sem isso, promover
+   alguém HOJE mudaria o adiantamento/saldo de meses JÁ FECHADOS e já pagos,
+   porque `calcFichado()` (05b_fichados.js) e o Holerite (06b_holerite.js)
+   liam `f.salario` direto — o valor ATUAL, sem olhar quando ele passou a
+   valer. Bug real, pego pelo Maycon em 10/09/2026 antes de eu publicar:
+   "em hipótese alguma pode mudar os valores que já foram pagos". `f.
+   salarioHistorico` é preenchido por `confirmarPromocao` (03_func.js); quem
+   nunca foi promovido tem uma única entrada de backfill (`migrate()`). */
+function salarioHistoricoEm(f, iso){
+  const hist = (f.salarioHistorico||[]).filter(h=>h.inicio<=iso);
+  if(hist.length) return hist[hist.length-1].salario;
+  return Number(f.salario)||0;
 }
 
 /* Função EFETIVA de um funcionário num dia específico — pedido do Maycon
@@ -2107,8 +2129,29 @@ function confirmarPromocao(id){
   f.funcaoHistorico.push({funcao: novoCargo, inicio: data});
   f.funcaoHistorico.sort((a,b)=>a.inicio.localeCompare(b.inicio));
   f.funcao = novoCargo;
+  /* Promoção é ação explícita do usuário — diferente do preenchimento automático
+     da ficha (aplicarSalarioPadraoCargo), que só entra em campo vazio, aqui o
+     salário do cargo novo SOBRESCREVE o antigo (é isso que "promover" quer dizer).
+     Só para fichado (diarista tem valor de diária próprio, não por cargo) e só
+     quando o cargo novo tem salário padrão cadastrado (senão mantém o que já tinha). */
+  let mudouSalario = false;
+  if(f.tipo === 'fichado'){
+    const cargo = DB.cargos.find(cg=>cg.nome === novoCargo);
+    if(cargo && cargo.salarioPadrao){
+      /* guarda o salário ANTIGO no histórico antes de trocar — sem isso, um
+         cadastro que nunca passou pela migração ficaria sem registro de
+         quanto ele ganhava antes desta data (ver salarioHistoricoEm, 02_core.js) */
+      f.salarioHistorico = f.salarioHistorico
+        || (f.salario ? [{salario: Number(f.salario)||0, inicio: f.admissao || '0001-01-01'}] : []);
+      f.salarioHistorico.push({salario: cargo.salarioPadrao, inicio: data});
+      f.salarioHistorico.sort((a,b)=>a.inicio.localeCompare(b.inicio));
+      f.salario = cargo.salarioPadrao;
+      mudouSalario = true;
+    }
+  }
   saveDB(); closeModal(); renderFuncionarios();
-  toast(`${f.nome} promovido para ${novoCargo} a partir de ${fmtDate(data)}.`);
+  toast(`${f.nome} promovido para ${novoCargo} a partir de ${fmtDate(data)}`
+    + (mudouSalario ? `, salário atualizado para ${fmtMoney(f.salario)}.` : '.'));
 }
 
 let modalDependentes = [];
@@ -5020,9 +5063,12 @@ function getFechFichado(funcId, mes){
 }
 
 function calcFichado(f, mes){
-  const salario = Number(f.salario)||0;
   const pctAdiant = Number(DB.config.adiantamentoPercent)||40;
   const dataAdiantamento = `${mes}-20`;
+  /* salário HISTÓRICO no dia 20 deste mês — nunca o atual do cadastro direto.
+     Uma promoção lançada depois não pode mudar o adiantamento/saldo de um
+     mês já fechado (ver `salarioHistoricoEm`, 02_core.js). */
+  const salario = salarioHistoricoEm(f, dataAdiantamento);
   const primeiroDia = primeiroDiaMes(mes), ultimoDia = ultimoDiaMes(mes);
   const nd = daysInMonth(...mes.split('-').map(Number));
 
@@ -5862,7 +5908,10 @@ function getHolerite(funcId, mes){
 /* sugestões automáticas a partir do que o sistema já sabe */
 function sugestoesHolerite(f, mes){
   const fal = getFaltasMes(f.id, mes);
-  const salario = f.salario||0;
+  /* salário HISTÓRICO no fim deste mês — nunca o atual do cadastro direto,
+     senão uma promoção lançada depois mudaria a sugestão de um mês já
+     fechado (ver `salarioHistoricoEm`, 02_core.js). */
+  const salario = salarioHistoricoEm(f, ultimoDiaMes(mes));
   const valorDia = salario/30;
   const descFaltas = Math.round(valorDia*fal.injustificada*100)/100;
   const baseInss = Math.max(0, salario - descFaltas);
@@ -6021,7 +6070,7 @@ function totaisHolerite(f, h){
   const n = v => Number(v)||0;
   const totalVenc = RUBRICAS_VENC.reduce((s,r)=>s+n(h.venc[r.k]),0);
   const totalDesc = RUBRICAS_DESC.reduce((s,r)=>s+n(h.desc[r.k]),0);
-  const salarioBase = f.salario||0;
+  const salarioBase = salarioHistoricoEm(f, ultimoDiaMes(h.mes));
   // salário-família, VT e VA não integram a base de INSS/FGTS
   const base = n(h.venc.saldoSalario)+n(h.venc.difSalario)
              - n(h.desc.faltasInjust)-n(h.desc.faltasMesAnt)-n(h.desc.rsrDomFer)-n(h.desc.rsrDomFerAnt);
@@ -6134,7 +6183,7 @@ function calcEncargos(f, mes){
   if(fichado){
     const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===mes);
     const t = h ? totaisHolerite(f,h) : null;
-    base = t && t.baseFgts ? t.baseFgts : (f.salario||0);
+    base = t && t.baseFgts ? t.baseFgts : salarioHistoricoEm(f, ultimoDiaMes(mes));
   } else {
     base = brutoDiaristaNoMes(f, mes);
   }
