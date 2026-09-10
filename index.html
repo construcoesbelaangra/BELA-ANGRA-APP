@@ -628,23 +628,30 @@ tr:hover td{background:#fafbfd;}
 .holtab td.n{text-align:right;}
 .holtab td.c{text-align:center;}
 .holtab td:last-child, .holtab th:last-child{border-right:none;}
-/* TOTAL/LÍQUIDO (10/09/2026) — eram DIVs em flex por fora da tabela, com largura fixa
-   em px tentando adivinhar onde as colunas VENCIMENTOS/DESCONTOS terminavam. A tabela usa
-   `table-layout:auto` (largura ajusta pelo conteúdo), então essas larguras quase nunca
-   batiam de verdade com as colunas de cima — o Maycon reportou o desalinhamento.
-   Corrigido: viraram linhas de `<tfoot>` DENTRO da mesma tabela (`colspan` juntando
-   Cod+HISTÓRICO+REF), então usam exatamente as mesmas colunas — alinhamento garantido,
-   não aproximado. */
+/* TOTAL / TOTAL LÍQUIDO / faixa de bases (10/09/2026, 2ª rodada) — viraram linhas de
+   `<tfoot>` DENTRO da mesma tabela (antes eram DIVs em flex por fora, com largura fixa em
+   px tentando adivinhar onde as colunas de cima terminavam — nunca batia de verdade
+   porque a tabela usa `table-layout:auto`). As colunas Cod+HISTÓRICO+REF (um bloco só,
+   `colspan=3`) / VENCIMENTOS / DESCONTOS continuam retas da tabela de cima até a última
+   linha (Base I.R.R.F.) — é a MESMA tabela, não uma aproximação de largura em px.
+   **TOTAL LÍQUIDO fica só na coluna de VENCIMENTOS** (pedido explícito do Maycon — a de
+   DESCONTOS fica em branco nessa linha, já que líquido não é desconto).
+   Na última linha, Salário Base/Base I.N.S.S./Base F.G.T.S. dividem o bloco largo da
+   esquerda (mesma largura de Cod+HISTÓRICO+REF, um `<div>` em flex DENTRO da célula —
+   nunca `display:flex` direto no `<td>`, que tira o elemento do fluxo da tabela e quebra
+   a grade); Vl. F.G.T.S. cai exatamente sob VENCIMENTOS e Base I.R.R.F. (com o % junto,
+   sem precisar de uma 6ª coluna) cai exatamente sob DESCONTOS. */
 .holtab tfoot td{padding:2px 5px;font-weight:700;border-right:1px solid #000;}
 .holtab tfoot td:last-child{border-right:none;}
 .holtab tr.holtot td{border-top:1px solid #000;}
-.holtab tr.holliq td{border-top:1px solid #000;border-bottom:1.4px solid #000;font-size:10px;font-weight:800;}
+.holtab tr.holliq td{border-top:1px solid #000;font-size:10px;font-weight:800;}
 .holtab tr.holliq td.lb{text-align:right;white-space:nowrap;}
-.holbase{display:flex;font-size:8.5px;border-bottom:1.4px solid #000;}
-.holbase div{flex:1;border-right:1px solid #000;padding:1px 5px;text-align:center;}
-.holbase div:last-child{border-right:none;}
-.holbase .bl{display:block;font-size:8px;color:#333;}
-.holbase .bv{display:block;font-weight:700;text-align:right;font-size:9.5px;}
+.holtab tr.holbase td{border-top:1px solid #000;border-bottom:1.4px solid #000;font-size:8.5px;font-weight:400;vertical-align:top;}
+.holtab tr.holbase td.c{text-align:center;}
+.holbase-esq{display:flex;justify-content:space-between;gap:2px;}
+.holbase-esq .hb{display:flex;flex-direction:column;align-items:center;flex:1;}
+.holtab tr.holbase .bl{display:block;font-size:8px;color:#333;}
+.holtab tr.holbase .bv{display:block;font-weight:700;font-size:9.5px;}
 .holdec{text-align:center;font-size:9px;padding:6px 0 2px;}
 .holsig{margin:14px auto 4px;border-top:1px solid #000;width:78%;font-size:9px;text-align:center;padding-top:3px;}
 
@@ -721,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 59';
+const VERSAO = '2026-09-10 · 60';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6314,17 +6321,18 @@ function holeriteViaHTML(f, h, comVales){
         <tr class="holtot"><td colspan="3"></td>
           <td class="n">${fmtNum(totalVenc)}</td><td class="n">${fmtNum(totalDesc)}</td></tr>
         <tr class="holliq"><td colspan="3" class="lb">TOTAL LÍQUIDO ==&gt;</td>
-          <td colspan="2" class="n vl">${fmtNum(liquido)}</td></tr>
+          <td class="n">${fmtNum(liquido)}</td><td></td></tr>
+        <tr class="holbase">
+          <td colspan="3"><div class="holbase-esq">
+            <span class="hb"><span class="bl">Salário Base</span><span class="bv">${fmtNum(t.salarioBase)}</span></span>
+            <span class="hb"><span class="bl">Base I.N.S.S.</span><span class="bv">${fmtNum(t.baseInss)}</span></span>
+            <span class="hb"><span class="bl">Base F.G.T.S.</span><span class="bv">${fmtNum(t.baseFgts)}</span></span>
+          </div></td>
+          <td class="c"><span class="bl">Vl. F.G.T.S.</span><span class="bv">${fmtNum(t.valorFgts)}</span></td>
+          <td class="c"><span class="bl">Base I.R.R.F. (${fmtOpt(h.aliqIrrf)||'00,00'}%)</span><span class="bv">${fmtOpt(h.baseIrrf)||'0,00'}</span></td>
+        </tr>
       </tfoot>
     </table>
-    <div class="holbase">
-      <div><span class="bl">Salário Base</span><span class="bv">${fmtNum(t.salarioBase)}</span></div>
-      <div><span class="bl">Base I.N.S.S.</span><span class="bv">${fmtNum(t.baseInss)}</span></div>
-      <div><span class="bl">Base F.G.T.S.</span><span class="bv">${fmtNum(t.baseFgts)}</span></div>
-      <div><span class="bl">Vl. F.G.T.S.</span><span class="bv">${fmtNum(t.valorFgts)}</span></div>
-      <div><span class="bl">Base I.R.R.F.</span><span class="bv">${fmtOpt(h.baseIrrf)||'0,00'}</span></div>
-      <div><span class="bl">%</span><span class="bv">${fmtOpt(h.aliqIrrf)||'00,00'}</span></div>
-    </div>
     <div class="holdec">DECLARO QUE RECEBI OS VENCIMENTOS ACIMA DESCRITOS</div>
     <div class="holsig">_______________________________ , ____/____/________</div>
   </div>`;
