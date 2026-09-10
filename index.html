@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 53';
+const VERSAO = '2026-09-10 · 54';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -849,6 +849,23 @@ function defaultDB(){
        `fonte/14_medicao_hh.js` e "SINCRONIA CLAUDE/PROXIMO - Financeiro e Medicoes.md". */
     medicoesHH: [],
 
+    /* Medição de Empreitada (10/09/2026): etapa 3 do financeiro, parte 2.
+       `contratosEmpreitada`: {id, obraId, etapas:[{id, nome, obs, previsto:{aco,forma,concreto}}]}
+       — o previsto sai do quantitativo de projeto, uma vez por obra.
+       `medicoesEmpreitada`: {id, contratoId, obraId, numero, data,
+       status:'rascunho'|'aprovada', itens:[{etapaId,aco,forma,concreto}],
+       extras:[{id,descricao,motivo,aco,forma,concreto,valor}], observacoes,
+       itensCongelados, extrasCongelados, totalCongelado, lancamentoId}.
+       Diferente da Medição HH (que gera sozinha a partir do ponto), aqui o
+       Maycon DIGITA o executado — não tem como o app adivinhar quanto de aço/
+       forma/concreto foi de fato feito na obra. Saldo = previsto − acumulado
+       das medições APROVADAS (pode sobrar, não é erro); extras ficam numa
+       lista separada e NUNCA consomem o saldo do previsto — ver
+       "SINCRONIA CLAUDE/PROXIMO - Financeiro e Medicoes.md", seção Empreitada,
+       e `fonte/15_medicao_empreitada.js`. */
+    contratosEmpreitada: [],
+    medicoesEmpreitada: [],
+
     /* ---------- FINANCEIRO ----------
        Tudo aqui nasce VAZIO pelo mesmo motivo de `empresa` e `obras`: o app é
        publicado num repositório PÚBLICO. O nome das empresas do grupo é o nome
@@ -918,6 +935,12 @@ function defaultDB(){
       // de qual empresa/categoria sai a receita quando uma Medição HH é aprovada
       medicaoHHEmpresaPadrao: '',
       medicaoHHCategoriaPadrao: '',
+      // preço por unidade da Medição de Empreitada (10/09/2026) — aço R$/kg,
+      // forma R$/m², concreto lançado R$/m³. Editável, muda de contrato para
+      // contrato; valores de partida são os praticados com a Bandeira em 2026.
+      precosEmpreitada: {aco:7.20, forma:140.00, concreto:80.00},
+      medicaoEmpreitadaEmpresaPadrao: '',
+      medicaoEmpreitadaCategoriaPadrao: '',
       // códigos das rubricas do holerite (conforme a contabilidade)
       codigos: {
         saldoSalario:'001', difSalario:'108', salarioFamilia:'230',
@@ -938,7 +961,12 @@ function migrate(db){
   db.config.encargosAtivos = Object.assign({}, base.config.encargosAtivos, db.config.encargosAtivos||{});
   db.config.codigos        = Object.assign({}, base.config.codigos, db.config.codigos||{});
   db.config.tabelaHH       = Object.assign({}, base.config.tabelaHH, db.config.tabelaHH||{});
+  db.config.precosEmpreitada = Object.assign({}, base.config.precosEmpreitada, db.config.precosEmpreitada||{});
   db.medicoesHH    = db.medicoesHH    || [];
+  db.contratosEmpreitada = db.contratosEmpreitada || [];
+  db.medicoesEmpreitada  = db.medicoesEmpreitada  || [];
+  (db.contratosEmpreitada).forEach(c=>{ c.etapas = c.etapas || []; });
+  (db.medicoesEmpreitada).forEach(m=>{ m.itens = m.itens || []; m.extras = m.extras || []; });
   db.adiantamentos = db.adiantamentos || [];
   db.pagamentos    = db.pagamentos    || [];   /* marca de pago no fechamento */
   db.diasUteisMes  = db.diasUteisMes  || {};
@@ -1602,6 +1630,7 @@ const PAGES = [
   {id:'lancamentos',  secao:'Financeiro', label:'A Pagar / A Receber',       icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
   {id:'fluxo',        secao:'Financeiro', label:'Fluxo de Caixa',            icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
   {id:'medicaoHH',    secao:'Financeiro', label:'Medição Homem-Hora',        icon:'regua',    sub:'Gera a medição a partir do ponto e vira conta a receber'},
+  {id:'medicaoEmpreitada', secao:'Financeiro', label:'Medição de Empreitada', icon:'empreitada', sub:'Previsto x realizado por etapa (aço/forma/concreto), saldo e extras'},
 
   {id:'sync',         secao:'Sistema',    label:'Sincronizar (Drive)',       icon:'nuvem',    sub:'Juntar os dados entre os computadores'},
   {id:'config',       secao:'Sistema',    label:'Configurações',             icon:'engrenagem',sub:'Empresa, encargos e parâmetros de cálculo'}
@@ -1629,6 +1658,7 @@ const ICONES = {
   lista:     '<path d="M9 7h11M9 12h11M9 17h11"/><path d="m4 6.6 1.1 1.1L7 5.8M4 11.6l1.1 1.1L7 10.8M4 16.6l1.1 1.1L7 15.8"/>',
   fluxo:     '<path d="M4 20h16"/><path d="M4.5 16.2 9 10.4l3.6 3 5.9-7.2"/><path d="M18.5 6.2h-3.4M18.5 6.2v3.4"/>',
   regua:     '<rect x="3" y="9" width="18" height="6" rx="1.2"/><path d="M7 9v3M11 9v3M15 9v3M19 9v2.5"/>',
+  empreitada:'<path d="M3 8h7v5H3zM11 8h10v5H11zM3 15h5v5H3zM9 15h8v5H9zM18 15h3v5h-3z"/>',
   seta:      '<path d="M9 5l7 7-7 7"/>'
 };
 function icone(nome){
@@ -1711,6 +1741,7 @@ function render(){
     adiantamentos: renderAdiantamentos, vales: renderVales, holerite: renderHolerite,
     estoque: renderEstoque, custos: renderCustos,
     caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, medicaoHH: renderMedicaoHH,
+    medicaoEmpreitada: renderMedicaoEmpreitada,
     sync: renderSync, config: renderConfig
   };
   document.getElementById('content').innerHTML = '';
@@ -7381,6 +7412,10 @@ const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','p
   /* Medição HH (04/09/2026) — mesmo motivo: sem entrar aqui, uma medição
      aprovada num PC (e o lançamento que ela criou) não aparece no outro. */
   'medicoesHH',
+  /* Medição de Empreitada (10/09/2026) — mesmo motivo: contrato/medição
+     cadastrados num PC precisam aparecer no outro, e o lançamento que uma
+     aprovação cria também. */
+  'contratosEmpreitada','medicoesEmpreitada',
   /* Cadastro de cargos/funções (10/09/2026) — mesmo motivo: cadastrado num PC,
      precisa aparecer no menu suspenso da ficha no outro também. */
   'cargos'];
@@ -10639,6 +10674,480 @@ function printMedicaoHH(id){
     ${docFoot()}
   </div>`;
   doPrint(html);
+}
+/* =========================================================
+   MEDIÇÃO DE EMPREITADA (10/09/2026) — etapa 3 do financeiro, parte 2
+
+   Escopo e decisões inteiras em
+   "SINCRONIA CLAUDE/PROXIMO - Financeiro e Medicoes.md", seção Empreitada, e
+   o dado-fonte do primeiro contrato real (Gustavo Adolpho - Ilha) em
+   "SINCRONIA CLAUDE/quantitativo-gustavo-adolpho-r02-previsto.json". Resumo
+   do que importa para quem mexer aqui:
+
+   - Diferente da Medição HH (que gera sozinha a partir do ponto), aqui o
+     Maycon DIGITA o executado — não tem como o app adivinhar quanto de aço/
+     forma/concreto foi feito de verdade na obra, só ele sabe olhando a obra.
+   - Contrato por obra: PREVISTO por ETAPA × SERVIÇO (aço kg, forma m²,
+     concreto m³), cadastrado uma vez a partir do quantitativo de projeto.
+   - Cada MEDIÇÃO lança o REALIZADO no período, por etapa, e acumula contra o
+     previsto. Saldo = previsto − acumulado (das medições APROVADAS). Pode
+     sobrar saldo — não executou tudo ainda — não é erro nenhum.
+   - EXTRAS ficam numa lista SEPARADA, com motivo obrigatório (revisão de
+     projeto / retrabalho / acréscimo do cliente), e NUNCA consomem o saldo
+     do previsto — somam por fora, é dinheiro que não estava no contrato.
+   - Preço por unidade em `DB.config.precosEmpreitada` (aço/forma/concreto),
+     editável em Configurações — igual a `tabelaHH`, muda de contrato para
+     contrato.
+   - Aprovar CONGELA os números (itens + extras) e cria um lançamento de
+     receita em aberto, com `obraId` e `tipoServico:'empreitada'` certos, para
+     o Resultado por obra/operação (Fluxo de Caixa) somarem sozinhos — mesma
+     disciplina de `aprovarMedicaoHH`. Reabrir desfaz tudo.
+   - A memória de cálculo por elemento (viga a viga, laje a laje) fica na
+     planilha do usuário — o app guarda só o número consolidado por etapa,
+     exatamente como o `PROXIMO` decidiu.
+   ========================================================= */
+
+const MOTIVO_EXTRA_LABEL = {
+  revisao_projeto: 'Revisão de projeto',
+  retrabalho: 'Retrabalho por erro de obra',
+  acrescimo: 'Acréscimo pedido pelo cliente'
+};
+
+function contratoEmpreitada(id){ return DB.contratosEmpreitada.find(c=>c.id===id); }
+function contratoDaObra(obraId){ return DB.contratosEmpreitada.find(c=>c.obraId===obraId); }
+function medicaoEmpreitada(id){ return DB.medicoesEmpreitada.find(m=>m.id===id); }
+
+/* Valor de uma quantidade {aco,forma,concreto} pelo preço unitário de
+   Configurações. Serve tanto para um item de etapa quanto para um extra sem
+   valor manual (ver `valorExtra`, abaixo). */
+function valorQtdEmpreitada(qtd){
+  const p = DB.config.precosEmpreitada || {};
+  return Math.round((
+    (Number(qtd.aco)||0)      * (Number(p.aco)||0) +
+    (Number(qtd.forma)||0)    * (Number(p.forma)||0) +
+    (Number(qtd.concreto)||0) * (Number(p.concreto)||0)
+  ) * 100) / 100;
+}
+
+/* Um extra pode ter um VALOR digitado direto (negociação fechada num número
+   redondo) ou ser calculado pelas mesmas quantidades/preço dos itens do
+   contrato — o que fizer sentido pro caso. `valor` em branco/null cai no
+   cálculo por quantidade. */
+function valorExtraEmpreitada(ex){
+  if(ex.valor !== null && ex.valor !== undefined && ex.valor !== '') return Number(ex.valor) || 0;
+  return valorQtdEmpreitada(ex);
+}
+
+function totalMedicaoEmpreitada(itens, extras){
+  const totalItens  = (itens||[]).reduce((s,it)=>s + valorQtdEmpreitada(it), 0);
+  const totalExtras = (extras||[]).reduce((s,ex)=>s + valorExtraEmpreitada(ex), 0);
+  return Math.round((totalItens + totalExtras) * 100) / 100;
+}
+
+/* Saldo por etapa: previsto do contrato − soma dos itens de toda medição já
+   APROVADA (rascunho não consome saldo de ninguém, nem o próprio, enquanto
+   não for aprovado). `ignorarMedicaoId` existe pra quando for reabrir/editar
+   uma medição já aprovada sem contar ela mesma duas vezes. */
+function saldoContratoEmpreitada(contratoId, ignorarMedicaoId){
+  const c = contratoEmpreitada(contratoId);
+  if(!c) return [];
+  const acumulado = {};   // etapaId -> {aco,forma,concreto}
+  DB.medicoesEmpreitada
+    .filter(m=>m.contratoId===contratoId && m.status==='aprovada' && m.id!==ignorarMedicaoId)
+    .forEach(m=>{
+      (m.itensCongelados || m.itens || []).forEach(it=>{
+        if(!acumulado[it.etapaId]) acumulado[it.etapaId] = {aco:0, forma:0, concreto:0};
+        acumulado[it.etapaId].aco      += Number(it.aco)||0;
+        acumulado[it.etapaId].forma    += Number(it.forma)||0;
+        acumulado[it.etapaId].concreto += Number(it.concreto)||0;
+      });
+    });
+  return c.etapas.map(e=>{
+    const acu = acumulado[e.id] || {aco:0, forma:0, concreto:0};
+    const prev = e.previsto || {aco:0, forma:0, concreto:0};
+    return {
+      etapa: e, acumulado: acu,
+      saldo: {
+        aco:      Math.round(((prev.aco||0)      - acu.aco)      * 100) / 100,
+        forma:    Math.round(((prev.forma||0)    - acu.forma)    * 100) / 100,
+        concreto: Math.round(((prev.concreto||0) - acu.concreto) * 100) / 100
+      }
+    };
+  });
+}
+
+/* ---------------- CONTRATO (previsto por etapa) ---------------- */
+
+function criarContratoObra(obraId){
+  if(!obraId || contratoDaObra(obraId)) return;
+  DB.contratosEmpreitada.push({id: uid(), obraId, etapas: []});
+  saveDB(); renderMedicaoEmpreitada();
+}
+
+function addEtapaContrato(contratoId){
+  const c = contratoEmpreitada(contratoId);
+  if(!c) return;
+  c.etapas.push({id: uid(), nome: '', obs: '', previsto: {aco:0, forma:0, concreto:0}});
+  saveDB(); renderMedicaoEmpreitada();
+}
+
+function removerEtapaContrato(contratoId, etapaId){
+  const c = contratoEmpreitada(contratoId);
+  if(!c) return;
+  if(!confirm('Remover esta etapa do contrato? Medições já aprovadas que a usaram continuam com o histórico congelado, mas ela some do previsto e do saldo.')) return;
+  c.etapas = c.etapas.filter(e=>e.id!==etapaId);
+  saveDB(); renderMedicaoEmpreitada();
+}
+
+function setEtapaContrato(contratoId, etapaId, campo, valor){
+  const c = contratoEmpreitada(contratoId);
+  const e = c && c.etapas.find(x=>x.id===etapaId);
+  if(!e) return;
+  if(campo==='nome' || campo==='obs') e[campo] = valor;
+  else e.previsto[campo] = Number(valor) || 0;
+  saveDB(); renderMedicaoEmpreitada();
+}
+
+/* ---------------- MEDIÇÃO (realizado no período) ---------------- */
+
+function novaMedicaoEmpreitadaRascunho(obraId){
+  const c = contratoDaObra(obraId);
+  if(!c){ toast('Cadastre o contrato desta obra antes (previsto por etapa).'); return; }
+  const numero = DB.medicoesEmpreitada.filter(m=>m.contratoId===c.id).length + 1;
+  const m = {
+    id: uid(), contratoId: c.id, obraId: c.obraId, numero, data: todayISO(),
+    status: 'rascunho', itens: [], extras: [], observacoes: '',
+    itensCongelados: null, extrasCongelados: null, totalCongelado: null, lancamentoId: ''
+  };
+  DB.medicoesEmpreitada.push(m);
+  saveDB(); renderMedicaoEmpreitada(m.id);
+}
+
+function setDataMedicaoEmpreitada(id, data){
+  const m = medicaoEmpreitada(id);
+  if(!m || m.status==='aprovada') return;
+  m.data = data;
+  saveDB(); renderMedicaoEmpreitada(id);
+}
+
+/* Devolve o item da etapa dentro da medição, criando em branco na hora se
+   ainda não existir — assim a grade sempre tem uma linha por etapa do
+   contrato, mesmo antes do primeiro clique nela. */
+function itemMedicaoEmpreitada(m, etapaId){
+  let it = m.itens.find(i=>i.etapaId===etapaId);
+  if(!it){ it = {etapaId, aco:0, forma:0, concreto:0}; m.itens.push(it); }
+  return it;
+}
+
+function setItemMedicaoEmpreitada(mId, etapaId, campo, valor){
+  const m = medicaoEmpreitada(mId);
+  if(!m || m.status==='aprovada') return;
+  const it = itemMedicaoEmpreitada(m, etapaId);
+  it[campo] = Number(valor) || 0;
+  saveDB(); renderMedicaoEmpreitada(mId);
+}
+
+function addExtraMedicaoEmpreitada(mId){
+  const m = medicaoEmpreitada(mId);
+  if(!m || m.status==='aprovada') return;
+  m.extras.push({id: uid(), descricao: '', motivo: 'revisao_projeto', aco:0, forma:0, concreto:0, valor: null});
+  saveDB(); renderMedicaoEmpreitada(mId);
+}
+
+function setExtraMedicaoEmpreitada(mId, extraId, campo, valor){
+  const m = medicaoEmpreitada(mId);
+  if(!m || m.status==='aprovada') return;
+  const ex = m.extras.find(x=>x.id===extraId);
+  if(!ex) return;
+  if(campo==='descricao' || campo==='motivo') ex[campo] = valor;
+  else if(campo==='valor') ex.valor = (valor==='' || valor===null) ? null : (Number(valor) || 0);
+  else ex[campo] = Number(valor) || 0;
+  saveDB(); renderMedicaoEmpreitada(mId);
+}
+
+function removerExtraMedicaoEmpreitada(mId, extraId){
+  const m = medicaoEmpreitada(mId);
+  if(!m || m.status==='aprovada') return;
+  m.extras = m.extras.filter(x=>x.id!==extraId);
+  saveDB(); renderMedicaoEmpreitada(mId);
+}
+
+function aprovarMedicaoEmpreitada(id){
+  const m = medicaoEmpreitada(id);
+  if(!m || m.status==='aprovada') return;
+  const total = totalMedicaoEmpreitada(m.itens, m.extras);
+  if(total <= 0){ toast('O total precisa ser maior que zero para aprovar.'); return; }
+  const empresaId = DB.config.medicaoEmpreitadaEmpresaPadrao;
+  if(!empresaId){ toast('Escolha antes a empresa da receita, logo acima da lista de medições.'); return; }
+  if(!confirm(`Aprovar esta medição?\n\nOs números ficam congelados (não mudam mais se o contrato for editado depois) e um lançamento de receita de ${fmtMoney(total)} é criado, em aberto, para você dar baixa quando receber.`)) return;
+
+  const lanc = {
+    id: uid(), baixas: [], origem: 'medicao', origemRef: `medicaoEmp_${m.id}`,
+    tipo: 'receita', natureza: 'operacao', empresaId,
+    categoriaId: DB.config.medicaoEmpreitadaCategoriaPadrao || '',
+    obraId: m.obraId, tipoServico: 'empreitada',
+    descricao: `Medição de Empreitada nº ${m.numero} — ${obraNome(m.obraId)} — ${fmtDate(m.data)}`,
+    valor: total, vencimento: m.data, obs: '',
+    socio: '', pagoNaContaDe: ''
+  };
+  DB.lancamentos.push(lanc);
+
+  m.itensCongelados = m.itens.map(it=>Object.assign({}, it));
+  m.extrasCongelados = m.extras.map(ex=>Object.assign({}, ex));
+  m.totalCongelado = total;
+  m.status = 'aprovada';
+  m.lancamentoId = lanc.id;
+  saveDB(); renderMedicaoEmpreitada(id);
+  toast('Medição aprovada — lançamento criado em "A Pagar / A Receber" (em aberto).');
+}
+
+function reabrirMedicaoEmpreitada(id){
+  const m = medicaoEmpreitada(id);
+  if(!m || m.status!=='aprovada') return;
+  if(!confirm('Reabrir esta medição? O lançamento de receita que ela criou vai ser apagado do financeiro.')) return;
+  DB.lancamentos = DB.lancamentos.filter(l=>l.id!==m.lancamentoId);
+  m.status = 'rascunho';
+  m.itensCongelados = null; m.extrasCongelados = null; m.totalCongelado = null;
+  m.lancamentoId = '';
+  saveDB(); renderMedicaoEmpreitada(id);
+  toast('Medição reaberta — ajuste os itens e aprove de novo quando estiver certa.');
+}
+
+function excluirMedicaoEmpreitada(id){
+  const m = medicaoEmpreitada(id);
+  if(!m) return;
+  if(m.status==='aprovada'){ toast('Reabra a medição antes de excluir — ela ainda tem um lançamento vinculado.'); return; }
+  if(!confirm('Excluir esta medição?')) return;
+  DB.medicoesEmpreitada = DB.medicoesEmpreitada.filter(x=>x.id!==id);
+  saveDB(); renderMedicaoEmpreitada();
+}
+
+/* ---------------- TELA ---------------- */
+
+let medEmpObraSel = '';
+
+function inputQtd(valor, onchange){
+  return `<input type="number" step="0.01" style="width:88px;text-align:right;" value="${valor||0}" onchange="${onchange}">`;
+}
+
+function renderMedicaoEmpreitada(abrirId){
+  const c = document.getElementById('content');
+  const contrato = medEmpObraSel ? contratoDaObra(medEmpObraSel) : null;
+  const lista = contrato
+    ? DB.medicoesEmpreitada.filter(m=>m.contratoId===contrato.id).sort((a,b)=>b.numero-a.numero)
+    : [];
+  const aberta = abrirId ? medicaoEmpreitada(abrirId) : null;
+
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Medição de Empreitada</h2>
+      <p class="help">
+        Contrato por etapa (previsto, a partir do quantitativo de projeto) e medição do
+        que foi realmente executado na obra, por período — você digita o executado, o app
+        não tem como saber sozinho. Saldo = previsto − acumulado das medições aprovadas.
+        Extras (fora do previsto) ficam numa lista separada e nunca consomem esse saldo.
+      </p>
+      <div class="field"><label>Obra</label>
+        <select onchange="medEmpObraSel=this.value; renderMedicaoEmpreitada();">${opcoesObra(medEmpObraSel)}</select>
+      </div>
+      ${!medEmpObraSel ? '<p class="help">Escolha uma obra para ver ou cadastrar o contrato dela.</p>' : ''}
+    </div>
+
+    ${medEmpObraSel ? (contrato ? cardContratoEmpreitada(contrato) : `
+    <div class="card">
+      <p class="help">Nenhum contrato de empreitada cadastrado para esta obra ainda.</p>
+      <button class="btn btn-primary" onclick="criarContratoObra('${medEmpObraSel}')">+ Cadastrar contrato desta obra</button>
+    </div>`) : ''}
+
+    ${contrato ? `
+    <div class="card">
+      <h2 style="margin-top:0;">Medições já feitas — ${esc(obraNome(medEmpObraSel))}</h2>
+      <div class="table-wrap">
+        ${lista.length ? `<table>
+          <thead><tr><th>Nº</th><th>Data</th><th>Status</th><th class="num">Total</th><th></th></tr></thead>
+          <tbody>${lista.map(m=>`<tr style="cursor:pointer;" onclick="renderMedicaoEmpreitada('${m.id}')">
+            <td>${m.numero}</td>
+            <td>${fmtDate(m.data)}</td>
+            <td><span class="badge ${m.status==='aprovada'?'badge-green':'badge-gray'}">${m.status==='aprovada'?'Aprovada':'Rascunho'}</span></td>
+            <td class="num">${m.status==='aprovada'?fmtMoney(m.totalCongelado):fmtMoney(totalMedicaoEmpreitada(m.itens,m.extras))}</td>
+            <td style="white-space:nowrap;" onclick="event.stopPropagation()">
+              ${m.status!=='aprovada'?`<button class="btn btn-danger btn-sm" onclick="excluirMedicaoEmpreitada('${m.id}')">Excluir</button>`:''}
+            </td>
+          </tr>`).join('')}</tbody></table>`
+        : '<div class="empty">Nenhuma medição ainda.</div>'}
+      </div>
+      <button class="btn btn-primary" style="margin-top:10px;" onclick="novaMedicaoEmpreitadaRascunho('${medEmpObraSel}')">+ Nova medição</button>
+
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12.5px;margin-top:14px;">
+        <span>Empresa da receita quando aprovar:
+          <select style="margin-left:4px;" onchange="DB.config.medicaoEmpreitadaEmpresaPadrao=this.value; saveDB(); renderMedicaoEmpreitada('${abrirId||''}');">
+            <option value="">— escolha —</option>
+            ${DB.empresas.map(e=>`<option value="${e.id}" ${DB.config.medicaoEmpreitadaEmpresaPadrao===e.id?'selected':''}>${esc(e.apelido||e.nome)}</option>`).join('')}
+          </select>
+        </span>
+        <span>Categoria:
+          <select style="margin-left:4px;" onchange="DB.config.medicaoEmpreitadaCategoriaPadrao=this.value; saveDB(); renderMedicaoEmpreitada('${abrirId||''}');">
+            <option value="">— sem categoria —</option>
+            ${categoriasDe('receita').map(ct=>`<option value="${ct.id}" ${DB.config.medicaoEmpreitadaCategoriaPadrao===ct.id?'selected':''}>${esc(ct.nome)}</option>`).join('')}
+          </select>
+        </span>
+      </div>
+      ${!DB.empresas.length ? `<p class="help" style="color:var(--vermelho);">
+        Nenhuma empresa cadastrada ainda — <a href="#" onclick="goTo('caixa'); return false;">cadastre em Caixa e Contas</a>
+        antes de aprovar uma medição.</p>` : ''}
+    </div>` : ''}
+
+    ${aberta ? detalheMedicaoEmpreitada(aberta) : ''}
+  `;
+}
+
+function cardContratoEmpreitada(c){
+  return `
+    <div class="card">
+      <h2 style="margin-top:0;">Contrato — previsto por etapa</h2>
+      <p class="help">Preço por unidade (aço R$/kg, forma R$/m², concreto lançado R$/m³) fica em
+        <a href="#" onclick="goTo('config'); return false;">Configurações</a>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Etapa</th><th class="num">Aço (kg)</th><th class="num">Forma (m²)</th>
+            <th class="num">Concreto (m³)</th><th>Observação</th><th></th></tr></thead>
+          <tbody>${c.etapas.map(e=>`<tr>
+            <td><input type="text" style="width:180px;" value="${esc(e.nome)}" placeholder="Nome da etapa"
+                  onchange="setEtapaContrato('${c.id}','${e.id}','nome',this.value)"></td>
+            <td class="num">${inputQtd(e.previsto.aco, `setEtapaContrato('${c.id}','${e.id}','aco',this.value)`)}</td>
+            <td class="num">${inputQtd(e.previsto.forma, `setEtapaContrato('${c.id}','${e.id}','forma',this.value)`)}</td>
+            <td class="num">${inputQtd(e.previsto.concreto, `setEtapaContrato('${c.id}','${e.id}','concreto',this.value)`)}</td>
+            <td><input type="text" style="width:220px;" value="${esc(e.obs||'')}" placeholder="opcional"
+                  onchange="setEtapaContrato('${c.id}','${e.id}','obs',this.value)"></td>
+            <td><button class="btn btn-danger btn-sm" onclick="removerEtapaContrato('${c.id}','${e.id}')">Remover</button></td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      ${!c.etapas.length ? '<div class="empty">Nenhuma etapa cadastrada ainda.</div>' : ''}
+      <button class="btn btn-secondary" style="margin-top:10px;" onclick="addEtapaContrato('${c.id}')">+ Etapa</button>
+    </div>`;
+}
+
+function detalheMedicaoEmpreitada(m){
+  const c = contratoEmpreitada(m.contratoId);
+  const itens = m.status==='aprovada' ? m.itensCongelados : m.itens;
+  const extras = m.status==='aprovada' ? m.extrasCongelados : m.extras;
+  const total = m.status==='aprovada' ? m.totalCongelado : totalMedicaoEmpreitada(itens, extras);
+  const saldos = saldoContratoEmpreitada(m.contratoId, m.id);   // saldo ANTES desta medição (exclui ela mesma)
+
+  return `
+  <div class="card">
+    <h2 style="margin-top:0;">Medição nº ${m.numero}
+      <span class="badge ${m.status==='aprovada'?'badge-green':'badge-gray'}" style="margin-left:8px;">
+        ${m.status==='aprovada'?'Aprovada':'Rascunho'}
+      </span>
+    </h2>
+    <div class="field" style="max-width:200px;"><label>Data</label>
+      ${m.status==='aprovada' ? fmtDate(m.data)
+        : `<input type="date" value="${m.data}" onchange="setDataMedicaoEmpreitada('${m.id}', this.value)">`}
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Etapa</th>
+          <th class="num">Aço realizado (kg)</th><th class="num">Forma realizada (m²)</th><th class="num">Concreto realizado (m³)</th>
+          <th class="num">Saldo antes (aço/forma/concreto)</th><th class="num">Valor</th></tr></thead>
+        <tbody>${c.etapas.map(e=>{
+          const it = itens.find(i=>i.etapaId===e.id) || {aco:0, forma:0, concreto:0};
+          const s = saldos.find(x=>x.etapa.id===e.id);
+          return `<tr>
+            <td>${esc(e.nome)}</td>
+            <td class="num">${m.status==='aprovada' ? fmtNum(it.aco,2) : inputQtd(it.aco, `setItemMedicaoEmpreitada('${m.id}','${e.id}','aco',this.value)`)}</td>
+            <td class="num">${m.status==='aprovada' ? fmtNum(it.forma,2) : inputQtd(it.forma, `setItemMedicaoEmpreitada('${m.id}','${e.id}','forma',this.value)`)}</td>
+            <td class="num">${m.status==='aprovada' ? fmtNum(it.concreto,2) : inputQtd(it.concreto, `setItemMedicaoEmpreitada('${m.id}','${e.id}','concreto',this.value)`)}</td>
+            <td class="num" style="font-size:11px;color:#9aa0ab;">${s?`${fmtNum(s.saldo.aco,0)} / ${fmtNum(s.saldo.forma,1)} / ${fmtNum(s.saldo.concreto,2)}`:'—'}</td>
+            <td class="num">${fmtMoney(valorQtdEmpreitada(it))}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    ${!c.etapas.length ? '<p class="help">Este contrato ainda não tem etapa cadastrada.</p>' : ''}
+
+    <h3 style="margin-bottom:4px;">Extras (fora do previsto)</h3>
+    <p class="help" style="margin-top:0;">Nunca consomem o saldo acima — some por fora, com motivo.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Descrição</th><th>Motivo</th>
+          <th class="num">Aço (kg)</th><th class="num">Forma (m²)</th><th class="num">Concreto (m³)</th>
+          <th class="num">Valor (opcional, sobrepõe o cálculo)</th><th></th></tr></thead>
+        <tbody>${extras.map(ex=>`<tr>
+          <td>${m.status==='aprovada' ? esc(ex.descricao)
+              : `<input type="text" style="width:180px;" value="${esc(ex.descricao)}" placeholder="o que é"
+                   onchange="setExtraMedicaoEmpreitada('${m.id}','${ex.id}','descricao',this.value)">`}</td>
+          <td>${m.status==='aprovada' ? MOTIVO_EXTRA_LABEL[ex.motivo]
+              : `<select onchange="setExtraMedicaoEmpreitada('${m.id}','${ex.id}','motivo',this.value)">
+                   ${Object.keys(MOTIVO_EXTRA_LABEL).map(k=>`<option value="${k}" ${ex.motivo===k?'selected':''}>${MOTIVO_EXTRA_LABEL[k]}</option>`).join('')}
+                 </select>`}</td>
+          <td class="num">${m.status==='aprovada' ? fmtNum(ex.aco,2) : inputQtd(ex.aco, `setExtraMedicaoEmpreitada('${m.id}','${ex.id}','aco',this.value)`)}</td>
+          <td class="num">${m.status==='aprovada' ? fmtNum(ex.forma,2) : inputQtd(ex.forma, `setExtraMedicaoEmpreitada('${m.id}','${ex.id}','forma',this.value)`)}</td>
+          <td class="num">${m.status==='aprovada' ? fmtNum(ex.concreto,2) : inputQtd(ex.concreto, `setExtraMedicaoEmpreitada('${m.id}','${ex.id}','concreto',this.value)`)}</td>
+          <td class="num">${m.status==='aprovada' ? (ex.valor!=null?fmtMoney(ex.valor):'—')
+              : `<input type="number" step="0.01" style="width:100px;text-align:right;" value="${ex.valor!=null?ex.valor:''}" placeholder="calcula"
+                   onchange="setExtraMedicaoEmpreitada('${m.id}','${ex.id}','valor',this.value)">`}</td>
+          <td>${m.status!=='aprovada' ? `<button class="btn btn-danger btn-sm" onclick="removerExtraMedicaoEmpreitada('${m.id}','${ex.id}')">Remover</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    ${!extras.length ? '<div class="empty">Nenhum extra nesta medição.</div>' : ''}
+    ${m.status!=='aprovada' ? `<button class="btn btn-secondary" style="margin-top:8px;" onclick="addExtraMedicaoEmpreitada('${m.id}')">+ Extra</button>` : ''}
+
+    <div style="text-align:right;margin-top:14px;font-size:15px;">
+      <b>TOTAL DA MEDIÇÃO: <span style="color:var(--azul-esc);">${fmtMoney(total)}</span></b>
+    </div>
+
+    <div class="modal-actions" style="justify-content:flex-start;margin-top:14px;">
+      <button class="btn btn-secondary" onclick="printMedicaoEmpreitada('${m.id}')">PDF</button>
+      ${m.status==='aprovada'
+        ? `<button class="btn btn-secondary" onclick="reabrirMedicaoEmpreitada('${m.id}')">Reabrir</button>`
+        : `<button class="btn btn-primary" onclick="aprovarMedicaoEmpreitada('${m.id}')">Aprovar (cria a receita)</button>`}
+    </div>
+  </div>`;
+}
+
+/* ---------------- PDF ----------------
+   Mesmo padrão dos outros documentos (docHead/docFoot/doPrint, ver
+   02_core.js). Uma tabela por etapa (previsto/realizado/valor) e uma para
+   extras, quando existir algum. */
+function printMedicaoEmpreitada(id){
+  const m = medicaoEmpreitada(id);
+  if(!m) return;
+  const c = contratoEmpreitada(m.contratoId);
+  const itens = m.status==='aprovada' ? m.itensCongelados : m.itens;
+  const extras = m.status==='aprovada' ? m.extrasCongelados : m.extras;
+  const total = m.status==='aprovada' ? m.totalCongelado : totalMedicaoEmpreitada(itens, extras);
+
+  const html = `<div class="doc">
+    ${docHead('Medição de Empreitada',
+      `${esc(obraNome(m.obraId))} — Medição nº ${m.numero}`,
+      `Emitida em<br><b>${fmtDate(todayISO())}</b>`)}
+
+    <div class="table-wrap"><table class="dtab">
+      <thead><tr><th>Etapa</th><th>Aço (kg)</th><th>Forma (m²)</th><th>Concreto (m³)</th><th>Valor</th></tr></thead>
+      <tbody>${c.etapas.map(e=>{
+        const it = itens.find(i=>i.etapaId===e.id) || {aco:0, forma:0, concreto:0};
+        return `<tr><td>${esc(e.nome)}</td><td>${fmtNum(it.aco,2)}</td><td>${fmtNum(it.forma,2)}</td>
+          <td>${fmtNum(it.concreto,2)}</td><td>${fmtMoney(valorQtdEmpreitada(it))}</td></tr>`;
+      }).join('')}</tbody>
+    </table></div>
+
+    ${extras.length ? `<div class="table-wrap" style="margin-top:10px;"><table class="dtab">
+      <thead><tr><th>Extra</th><th>Motivo</th><th>Aço (kg)</th><th>Forma (m²)</th><th>Concreto (m³)</th><th>Valor</th></tr></thead>
+      <tbody>${extras.map(ex=>`<tr><td>${esc(ex.descricao)}</td><td>${MOTIVO_EXTRA_LABEL[ex.motivo]||''}</td>
+        <td>${fmtNum(ex.aco,2)}</td><td>${fmtNum(ex.forma,2)}</td><td>${fmtNum(ex.concreto,2)}</td>
+        <td>${fmtMoney(valorExtraEmpreitada(ex))}</td></tr>`).join('')}</tbody>
+    </table></div>` : ''}
+
+    <div class="table-wrap" style="margin-top:10px;"><table class="dtab">
+      <tfoot><tr><th colspan="3">TOTAL DA MEDIÇÃO</th><th>${fmtMoney(total)}</th></tr></tfoot>
+    </table></div>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, nomeArquivoSeguro(`Medicao Empreitada ${m.numero} - ${obraNome(m.obraId)}`));
 }
 /* =========================================================
    AJUSTES DE TELA PEQUENA
