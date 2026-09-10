@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 55';
+const VERSAO = '2026-09-10 · 56';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6227,42 +6227,43 @@ function diasEfetivosMesHolerite(f, mes){
   return {dias: Math.max(0, base - naoEfetivados), base, naoEfetivados, fal};
 }
 
-function valesDoHoleriteHTML(f, mes){
-  if(!recebeAlgumVale(f)) return '';
-  const e = diasEfetivosMesHolerite(f, mes);
-  const vtDia = vtPorDia(f), vrDia = vrPorDia(f);
-  const vt = Math.round(vtDia*e.dias*100)/100;
-  const vr = Math.round(vrDia*e.dias*100)/100;
-  return `
-  <table class="holtab" style="margin-top:6px;">
-    <thead><tr><th colspan="2" class="hl">VALE-TRANSPORTE E VALE-ALIMENTAÇÃO — dias efetivamente trabalhados no mês</th>
-      <th style="width:120px;">Valor</th></tr></thead>
-    <tbody>
-      <tr><td colspan="2">Vale-transporte — ${e.dias} dia(s) × ${fmtMoney(vtDia)}</td><td class="n">${fmtNum(vt)}</td></tr>
-      <tr><td colspan="2">Vale-alimentação — ${e.dias} dia(s) × ${fmtMoney(vrDia)}</td><td class="n">${fmtNum(vr)}</td></tr>
-      ${e.naoEfetivados ? `<tr><td colspan="3" style="font-size:9px;color:#666;">
-        ${e.base} dia(s) no vínculo neste mês − ${resumoNaoEfetivados(e.fal)} = ${e.dias} dia(s) efetivos
-        (diferente do vale já pago adiantado, que descontou isso só no mês seguinte)</td></tr>` : ''}
-    </tbody>
-    <tfoot><tr><td colspan="2" style="text-align:right;">TOTAL VALES REFERENTES AO MÊS</td><td class="n">${fmtNum(vt+vr)}</td></tr></tfoot>
-  </table>`;
-}
-
 /* --- uma via do recibo de pagamento (espelha o modelo da contabilidade) ---
-   `comVales` (10/09/2026): pedido do Maycon para NÃO poluir o recibo normal — só quando
-   pedido explicitamente (botão "com vales") entra o bloco de vale-transporte/alimentação
-   calculado pelos dias efetivos, acima. */
+   `comVales` (10/09/2026, ajustado depois do Maycon ver a primeira versão): as linhas de
+   vale entram NA MESMA TABELA do histórico, junto com as outras rubricas — não num bloco
+   separado embaixo do recibo (era assim na primeira tentativa; ele pediu pra ficar
+   "dentro do holerite mesmo, igual antes"). Colunas iguais às demais linhas: HISTÓRICO
+   (Vale Transporte / Vale Alimentação) · REF. (dias efetivos) · VENCIMENTOS (valor).
+   Quando `comVales=true`, essas duas linhas SUBSTITUEM (não somam) a `venc.valeTransporte`/
+   `valeAlimentacao` que porventura já esteja gravada no holerite (essa é o valor do
+   ADIANTAMENTO — `calcVale`, 06a_vales.js — outra conta, ver `diasEfetivosMesHolerite`
+   acima) — senão a pessoa apareceria duas vezes na tabela, uma com cada valor. */
 function holeriteViaHTML(f, h, comVales){
-  const t = totaisHolerite(f, h);
   const linhas = [];
+  let totalVenc = 0, totalDesc = 0;
   RUBRICAS_VENC.forEach(r=>{
-    if(h.venc[r.k]==='' || Number(h.venc[r.k])===0) return;
+    if(comVales && (r.k==='valeTransporte' || r.k==='valeAlimentacao')) return;
+    const v = Number(h.venc[r.k])||0;
+    if(h.venc[r.k]==='' || v===0) return;
     linhas.push({cod:DB.config.codigos[r.cod], hist:r.label, ref:h.vencRef[r.k], v:h.venc[r.k], d:''});
+    totalVenc += v;
   });
+  if(comVales && recebeAlgumVale(f)){
+    const e = diasEfetivosMesHolerite(f, h.mes);
+    const vt = Math.round(vtPorDia(f)*e.dias*100)/100;
+    const vr = Math.round(vrPorDia(f)*e.dias*100)/100;
+    if(vt){ linhas.push({cod:DB.config.codigos.valeTransporte,  hist:'VALE TRANSPORTE',  ref:e.dias, v:vt, d:''}); totalVenc += vt; }
+    if(vr){ linhas.push({cod:DB.config.codigos.valeAlimentacao, hist:'VALE ALIMENTACAO', ref:e.dias, v:vr, d:''}); totalVenc += vr; }
+  }
   RUBRICAS_DESC.forEach(r=>{
-    if(h.desc[r.k]==='' || Number(h.desc[r.k])===0) return;
+    const v = Number(h.desc[r.k])||0;
+    if(h.desc[r.k]==='' || v===0) return;
     linhas.push({cod:DB.config.codigos[r.cod], hist:r.label, ref:h.descRef[r.k], v:'', d:h.desc[r.k]});
+    totalDesc += v;
   });
+  totalVenc = Math.round(totalVenc*100)/100;
+  totalDesc = Math.round(totalDesc*100)/100;
+  const liquido = Math.round((totalVenc-totalDesc)*100)/100;
+  const t = totaisHolerite(f, h);   // salarioBase/baseInss/baseFgts/valorFgts do rodapé — não muda com comVales
   const vazias = Math.max(0, 12 - linhas.length);
 
   return `
@@ -6301,13 +6302,13 @@ function holeriteViaHTML(f, h, comVales){
     </table>
     <div class="holtot">
       <div class="sp"></div>
-      <div class="cV">${fmtNum(t.totalVenc)}</div>
-      <div class="cD">${fmtNum(t.totalDesc)}</div>
+      <div class="cV">${fmtNum(totalVenc)}</div>
+      <div class="cD">${fmtNum(totalDesc)}</div>
     </div>
     <div class="holliq">
       <div class="sp"></div>
       <div class="lb">TOTAL LÍQUIDO ==&gt;</div>
-      <div class="vl">${fmtNum(t.liquido)}</div>
+      <div class="vl">${fmtNum(liquido)}</div>
     </div>
     <div class="holbase">
       <div><span class="bl">Salário Base</span><span class="bv">${fmtNum(t.salarioBase)}</span></div>
@@ -6317,7 +6318,6 @@ function holeriteViaHTML(f, h, comVales){
       <div><span class="bl">Base I.R.R.F.</span><span class="bv">${fmtOpt(h.baseIrrf)||'0,00'}</span></div>
       <div><span class="bl">%</span><span class="bv">${fmtOpt(h.aliqIrrf)||'00,00'}</span></div>
     </div>
-    ${comVales ? valesDoHoleriteHTML(f, h.mes) : ''}
     <div class="holdec">DECLARO QUE RECEBI OS VENCIMENTOS ACIMA DESCRITOS</div>
     <div class="holsig">_______________________________ , ____/____/________</div>
   </div>`;
