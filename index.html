@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 52';
+const VERSAO = '2026-09-10 · 53';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -9605,7 +9605,7 @@ function renderFluxo(){
   initFluxo();
   const c = document.getElementById('content');
   if(!financeiroPronto()){ c.innerHTML = avisoPrimeiroUso(); return; }
-  c.innerHTML = blocoProjecao() + blocoResultado() + blocoPorObra() + blocoPorOperacao() + blocoContaCorrente();
+  c.innerHTML = blocoProjecao() + blocoResultado() + blocoPorObra() + blocoPorOperacao() + blocoTotalPorOperacao() + blocoContaCorrente();
 }
 
 /* =========================================================
@@ -9950,6 +9950,116 @@ function blocoPorOperacao(){
       de obra ainda não é somado sozinho aqui — ver o aviso em <b>Resultado por obra</b>.
     </p>
   </div>`;
+}
+
+/* =========================================================
+   3c. RESULTADO TOTAL POR OPERAÇÃO, DESDE O INÍCIO (10/09/2026)
+
+   Pedido do Maycon: o bloco acima é só do mês escolhido. Ele quer o
+   resultado ACUMULADO — pelo menos da Empreitada, mas vale para as duas —
+   quanto já recebeu e já gastou no TEMPO TODO do serviço, sem filtro de mês,
+   mais um relatório completo pra conferir de onde vem cada centavo. Sempre
+   pelo CAIXA (só o que já foi baixado de verdade) — é "o que já recebi" e
+   "o que já gastei", não o que está previsto/em aberto (mesmo raciocínio já
+   documentado: "o saldo anda pela BAIXA, nunca pelo vencimento"). */
+function resultadoTotalPorOperacao(){
+  const chaves = [...Object.keys(SERVICO_LABEL), ''];
+  return chaves.map(k=>{
+    let rec = 0, des = 0;
+    DB.lancamentos.forEach(l=>{
+      if((l.tipoServico||'') !== k) return;
+      if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+      const v = (l.baixas||[]).reduce((s,b)=>s+(Number(b.valor)||0),0);
+      if(!v) return;
+      if(l.tipo === 'receita') rec += v; else des += v;
+    });
+    return {chave:k, nome: k ? SERVICO_LABEL[k] : 'Não classificado', rec, des, res: Math.round((rec-des)*100)/100};
+  }).filter(x=>x.rec || x.des);
+}
+
+function blocoTotalPorOperacao(){
+  const linhas = resultadoTotalPorOperacao();
+  return `
+  <div class="card">
+    <h2 style="margin-top:0;">Resultado total por operação (desde o início)</h2>
+    <p class="help" style="margin-top:0;">
+      Sem filtro de mês — soma TODOS os lançamentos já baixados desde o primeiro, por
+      operação. Sempre pelo caixa: é "o que já recebi" e "o que já gastei" de verdade, não o
+      que está previsto/em aberto.
+    </p>
+    <div class="table-wrap">
+      ${linhas.length ? `<table>
+        <thead><tr><th>Operação</th><th class="num">Recebido</th><th class="num">Gasto</th><th class="num">Resultado</th><th class="num">Margem</th><th></th></tr></thead>
+        <tbody>${linhas.map(x=>`<tr>
+          <td><b>${esc(x.nome)}</b></td>
+          <td class="num">${fmtMoney(x.rec)}</td>
+          <td class="num">${fmtMoney(x.des)}</td>
+          <td class="num" style="font-weight:700;color:${x.res<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(x.res)}</td>
+          <td class="num">${x.rec?fmtNum(x.res/x.rec*100,1)+'%':'—'}</td>
+          <td><button class="btn btn-secondary btn-sm" onclick="imprimirRelatorioOperacao('${x.chave}')">Relatório completo</button></td>
+        </tr>`).join('')}</tbody></table>`
+      : '<div class="empty">Nenhum lançamento com baixa classificado por operação ainda.</div>'}
+    </div>
+    <p class="help" style="margin-bottom:0;">
+      Mesmo aviso do bloco do mês: só entra o que foi lançado no financeiro — o custo de mão
+      de obra ainda não é somado sozinho aqui.
+    </p>
+  </div>`;
+}
+
+/* Relatório completo — itemiza CADA baixa que compõe o total acima, pra
+   conferir de onde vem cada centavo ("como foi contabilizado isso"). Uma
+   linha por baixa (não por lançamento): um lançamento pago em partes conta
+   uma vez por parcela, na data em que o dinheiro de fato entrou/saiu. */
+function imprimirRelatorioOperacao(chave){
+  const nome = chave ? SERVICO_LABEL[chave] : 'Não classificado';
+  const linhas = [];
+  DB.lancamentos.forEach(l=>{
+    if((l.tipoServico||'') !== chave) return;
+    if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+    (l.baixas||[]).forEach(b=>{
+      if(!Number(b.valor)) return;
+      linhas.push({
+        data: b.data, tipo: l.tipo, descricao: l.descricao||'',
+        obra: obraNome(l.obraId), categoria: categoriaNome(l.categoriaId),
+        conta: contaNome(b.contaId||l.contaId), valor: Number(b.valor)||0
+      });
+    });
+  });
+  linhas.sort((a,b)=> a.data.localeCompare(b.data));
+  const totalRec = Math.round(linhas.filter(x=>x.tipo==='receita').reduce((s,x)=>s+x.valor,0)*100)/100;
+  const totalDes = Math.round(linhas.filter(x=>x.tipo==='despesa').reduce((s,x)=>s+x.valor,0)*100)/100;
+  const resultado = Math.round((totalRec-totalDes)*100)/100;
+  const periodo = linhas.length ? `${fmtDate(linhas[0].data)} a ${fmtDate(linhas[linhas.length-1].data)}` : '—';
+
+  const html = `
+  <div class="doc">
+    ${docHead(`Relatório de Resultado — ${esc(nome)}`, '', `Emitida em<br><b>${fmtDate(todayISO())}</b>`)}
+    <p class="dnote" style="margin-top:0;">Período com lançamento: <b>${periodo}</b> · Pelo caixa — só o que já foi baixado (recebido/pago de verdade)</p>
+    <table class="dtab">
+      <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Obra</th><th>Categoria</th><th>Conta</th><th class="num">Valor</th></tr></thead>
+      <tbody>
+        ${linhas.length ? linhas.map(x=>`<tr>
+          <td>${fmtDate(x.data)}</td>
+          <td>${x.tipo==='receita'?'Receita':'Despesa'}</td>
+          <td>${esc(x.descricao)}</td>
+          <td>${esc(x.obra)}</td>
+          <td>${esc(x.categoria)}</td>
+          <td>${esc(x.conta)}</td>
+          <td class="num">${x.tipo==='despesa'?'-':''}${fmtMoney(x.valor)}</td>
+        </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;">Nenhum lançamento com baixa.</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr><td colspan="6" style="text-align:right;">Total recebido</td><td class="num">${fmtMoney(totalRec)}</td></tr>
+        <tr><td colspan="6" style="text-align:right;">Total gasto</td><td class="num">${fmtMoney(totalDes)}</td></tr>
+      </tfoot>
+    </table>
+    <div class="dtotais">
+      Resultado (${esc(nome)}): <b style="color:${resultado<0?'#c0392b':'#1f6b3e'};">${fmtMoney(resultado)}</b>
+    </div>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, `Resultado ${nomeArquivoSeguro(nome)} - ${todayISO()}`);
 }
 
 /* =========================================================
