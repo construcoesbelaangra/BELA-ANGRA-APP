@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 63';
+const VERSAO = '2026-09-10 · 64';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2278,6 +2278,14 @@ function openFuncModal(id){
           Use isto quando a contabilidade trata esta pessoa como fichada (mesmo pagando por diária/quinzena de
           verdade) — evita ter que duplicar o cadastro só para ela aparecer na folha de "Ponto → Fichados → Ver o mês".
         </p>
+        <label class="check"><input type="checkbox" id="f_holeriteDiarista" ${f.holeriteDiarista?'checked':''}>
+          Gerar recibo de pagamento no formato de holerite para esta pessoa</label>
+        <p class="help" style="margin-top:-6px;">
+          Documento honesto, sem fingir vínculo formal nenhum: mostra só dias trabalhados × valor da diária = total,
+          sem linha de INSS/FGTS/IRRF (esta pessoa não tem esses descontos de verdade). Serve para apresentar um
+          recibo com a mesma cara do holerite, quando precisar mostrar pagamento pra alguém de fora. Fica disponível
+          na tela Holerite.
+        </p>
       </div>
       <div class="grid grid-3">
         <div class="field"><label>Função / cargo</label>
@@ -2494,6 +2502,7 @@ function saveFunc(id){
     /* quem tem data de saída fica inativo por definição — é o que tira ele do ponto */
     status: dDem ? 'inativo' : val('f_status'),
     apareceNaFolhaContabil: checked('f_apareceNaFolhaContabil'),
+    holeriteDiarista: checked('f_holeriteDiarista'),
     obraPadrao: val('f_obraPadrao'),
     admissao: val('f_admissao'),
     demissao: val('f_demissao'),
@@ -6083,7 +6092,69 @@ function sugestoesHolerite(f, mes){
    todo mês (mesmo raciocínio já usado na Folha de Ponto para a Contabilidade,
    `04c_folha_contabil.js` — ver "Cadastro duplicado" no `CLAUDE.md`). Sem isso, a tela
    nunca deixava lançar o holerite real que a contabilidade manda desses dois. */
-function elegivelHolerite(f){ return f.tipo==='fichado' || f.apareceNaFolhaContabil; }
+function elegivelHolerite(f){ return f.tipo==='fichado' || f.apareceNaFolhaContabil || f.holeriteDiarista; }
+
+/* Recibo no formato de holerite para DIARISTA de verdade (10/09/2026), pedido do Maycon
+   pra ter algo com essa aparência pra mostrar pra fora (ex.: pra Bandeira). DIFERENTE do
+   caso do João/Jeferson (que têm holerite REAL da contabilidade, editado à mão igual
+   fichado): aqui não existe holerite de verdade nenhum — é só um recibo honesto, gerado
+   sozinho, sem fingir vínculo formal: dias trabalhados × valor da diária = total, SEM
+   linha de INSS/FGTS/IRRF (a pessoa não tem esse desconto de verdade, então não simula
+   um). Marcado por pessoa em `f.holeriteDiarista` (ficha, só aparece pra diarista) — o
+   Maycon decidiu não fabricar nada que sugira que a pessoa é CLT quando não é. */
+function calcReciboDiariaHolerite(f, mes){
+  const nd = daysInMonth(...mes.split('-').map(Number));
+  const periodo = {inicio:`${mes}-01`, fim:`${mes}-${String(nd).padStart(2,'0')}`};
+  const c = calcDiarista(f, periodo);
+  return {dias: c.totalDias, valorDiaria: c.vd, total: c.bruto};
+}
+
+function reciboDiariaHoleriteHTML(f, mes){
+  const r = calcReciboDiariaHolerite(f, mes);
+  return `
+  <div class="hol">
+    <div class="ht">RECIBO DE PAGAMENTO</div>
+    <div class="hemp">
+      <div class="l">
+        <b>${esc(DB.empresa.codigo)}-${esc(DB.empresa.razaoSocial)}</b><br>
+        ${esc(DB.empresa.endereco)}<br>
+        CNPJ : ${esc(DB.empresa.cnpj)}
+      </div>
+      <div class="r">&nbsp;<br>&nbsp;<br>Ref.: ${monthLabel(mes)}</div>
+    </div>
+    <div class="hfun">
+      <div class="l">
+        <b>${esc(f.matricula||'----')}-${esc((f.nome||'').toUpperCase())}</b><br>
+        FUNÇÃO : ${esc((f.funcao||'').toUpperCase())}
+      </div>
+      <div class="r">CPF: ${esc(f.cpf||'—')}</div>
+    </div>
+    <table class="holtab">
+      <thead><tr>
+        <th style="width:42px;">Cod</th><th class="hl">H I S T Ó R I C O</th>
+        <th style="width:80px;">REF.</th><th style="width:120px;">VENCIMENTOS</th><th style="width:120px;">DESCONTOS</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="c"></td><td>DIÁRIAS TRABALHADAS</td>
+          <td class="n">${r.dias}</td><td class="n">${fmtNum(r.total)}</td><td></td></tr>
+        ${Array.from({length:9}).map(()=>`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr class="holtot"><td colspan="3"></td><td class="n">${fmtNum(r.total)}</td><td class="n">0,00</td></tr>
+        <tr class="holliq"><td colspan="3"></td><td class="lb">TOTAL LÍQUIDO ==&gt;</td><td class="n">${fmtNum(r.total)}</td></tr>
+      </tfoot>
+    </table>
+    <p class="dnote" style="padding:4px 8px;">Diária de ${fmtMoney(r.valorDiaria)} × ${r.dias} dia(s) trabalhado(s) em ${monthLabel(mes)}. Pagamento por diária — sem desconto de INSS/FGTS/IRRF.</p>
+    <div class="holdec">DECLARO QUE RECEBI OS VENCIMENTOS ACIMA DESCRITOS</div>
+    <div class="holsig">_______________________________ , ____/____/________</div>
+  </div>`;
+}
+
+function printReciboDiariaHolerite(){
+  const f = func(holFuncId);
+  doPrint(`<div class="doc doc-margem-zero">${reciboDiariaHoleriteHTML(f,holMes)}${reciboDiariaHoleriteHTML(f,holMes)}</div>`,
+    `Recibo - ${f.nome}`);
+}
 
 function renderHolerite(){
   initValesMes();
@@ -6127,6 +6198,27 @@ function renderHolerite(){
 
 /* ---------- ABA 1: recibo do funcionário ---------- */
 function renderHoleriteFuncionario(f){
+  /* diarista marcado com `holeriteDiarista` (e que NÃO seja o caso do João/Jeferson,
+     `apareceNaFolhaContabil` — esse tem holerite REAL da contabilidade, editado igual
+     fichado) usa a tela simplificada, sem rubricas pra editar — ver
+     `reciboDiariaHoleriteHTML` acima. */
+  if(f.tipo==='diarista' && f.holeriteDiarista && !f.apareceNaFolhaContabil){
+    const r = calcReciboDiariaHolerite(f, holMes);
+    document.getElementById('holBody').innerHTML = `
+      <div class="card" style="background:var(--azul-claro);border-color:#c9d6f7;">
+        <h3 style="margin-bottom:8px;">${esc(f.nome)} — recibo no formato de holerite</h3>
+        <p class="help">Documento honesto, sem simular vínculo formal: mostra os dias trabalhados como diarista
+          em ${monthLabel(holMes)} × o valor da diária — sem linha de INSS/FGTS/IRRF, porque esta pessoa não tem
+          esse desconto de verdade.</p>
+        <div class="grid grid-3">
+          <div class="kpi" style="background:#fff;"><div class="v">${r.dias}</div><div class="l">Dias trabalhados no mês</div></div>
+          <div class="kpi" style="background:#fff;"><div class="v">${fmtMoney(r.valorDiaria)}</div><div class="l">Valor da diária</div></div>
+          <div class="kpi" style="background:#fff;"><div class="v">${fmtMoney(r.total)}</div><div class="l">Total (dias × diária)</div></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:10px;" onclick="printReciboDiariaHolerite()">Gerar recibo (PDF)</button>
+      </div>`;
+    return;
+  }
   const h = getHolerite(f.id, holMes);
   const sug = sugestoesHolerite(f, holMes);
   const fal = getFaltasMes(f.id, holMes);
