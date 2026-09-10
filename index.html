@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 54';
+const VERSAO = '2026-09-10 · 55';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -5950,6 +5950,36 @@ const RUBRICAS_DESC = [
 /* rubricas que NÃO integram a base de INSS/FGTS */
 const RUBRICAS_SEM_ENCARGO = ['salarioFamilia','valeTransporte','valeAlimentacao'];
 
+/* IRRF (10/09/2026) — pesquisado e conferido contra holerites reais de agosto/2026
+   (bateu exato em todos os casos testados, inclusive um com alíquota real de 15%):
+   esta contabilidade usa o DESCONTO SIMPLIFICADO (Base I.R.R.F. = Base I.N.S.S. menos
+   um valor fixo), não a dedução por dependente — mesmo para quem tem dependente
+   cadastrado. `aliquotaIrrf()` é só a faixa da tabela tradicional (o que o campo "%" do
+   holerite mostra) — não é o valor efetivamente retido: pela Lei 15.270/2025 (vigente
+   desde jan/2026), quem tem base tributável até R$5.000 fica ISENTO na prática (imposto
+   zerado por uma redução aplicada por cima da tabela tradicional), e é exatamente por
+   isso que nenhum holerite real desta empresa (todos abaixo desse teto) tem uma linha de
+   desconto de IRRF — só os campos de referência no rodapé. Não foi criada uma rubrica de
+   desconto de IRRF no schema por esse motivo: nunca teria valor para lançar, do jeito que
+   a folha desta empresa é hoje. Se algum salário passar de R$5.000, revisar.
+   ATENÇÃO: as faixas de 22,5%/27,5% (ninguém daqui chega perto) vieram de fontes on-line
+   que não bateram entre si — conferir com a contabilidade se algum dia importar. */
+const IRRF_DESCONTO_SIMPLIFICADO_2026 = 607.20;
+const TABELA_IRRF_2026 = [
+  {ate: 2428.80, aliquota: 0},
+  {ate: 2826.65, aliquota: 7.5},
+  {ate: 3751.05, aliquota: 15},
+  {ate: 4664.68, aliquota: 22.5},
+  {ate: Infinity, aliquota: 27.5}
+];
+function aliquotaIrrf(base){
+  const f = TABELA_IRRF_2026.find(x=>base<=x.ate) || TABELA_IRRF_2026[TABELA_IRRF_2026.length-1];
+  return f.aliquota;
+}
+function baseIrrfSugerida(baseInss){
+  return Math.max(0, Math.round((baseInss - IRRF_DESCONTO_SIMPLIFICADO_2026)*100)/100);
+}
+
 function holeriteVazio(f, mes){
   const vazio = arr => { const o = {}; arr.forEach(r=>o[r.k]=''); return o; };
   return {
@@ -5969,6 +5999,23 @@ function getHolerite(funcId, mes){
   return h;
 }
 
+/* Quantos dias entram no "SALDO DE SALARIO" deste mês — 30 (mês cheio) OU, para quem
+   foi ADMITIDO dentro do próprio mês, os dias CORRIDOS (não úteis — é salário, não
+   vale) da admissão até o fim do mês. Achado conferindo holerites reais de agosto/2026
+   (10/09/2026): a contabilidade sempre proporciona assim (ex.: admitido em 03/08, mês
+   com 31 dias → 31-3+1 = 29 dias, salário × 29/30) — o sistema sugeria sempre 30 dias
+   e o salário cheio, mesmo para quem entrou no meio do mês, o que também descasava a
+   Base I.N.S.S. sugerida do valor real (ela tem que partir do salário JÁ proporcional,
+   não do salário cheio). Não trata demissão dentro do mês aqui — isso sai por um
+   documento de rescisão à parte (ver `CLAUDE.md`, caso do Valter de Souza Pereira). */
+function diasSaldoSalarioNoMes(f, mes){
+  const ini = primeiroDiaMes(mes), fim = ultimoDiaMes(mes);
+  if(!f.admissao || f.admissao <= ini) return 30;
+  if(f.admissao > fim) return 0;
+  const nd = daysInMonth(...mes.split('-').map(Number));
+  return nd - Number(f.admissao.slice(8,10)) + 1;
+}
+
 /* sugestões automáticas a partir do que o sistema já sabe */
 function sugestoesHolerite(f, mes){
   const fal = getFaltasMes(f.id, mes);
@@ -5977,8 +6024,11 @@ function sugestoesHolerite(f, mes){
      fechado (ver `salarioHistoricoEm`, 02_core.js). */
   const salario = salarioHistoricoEm(f, ultimoDiaMes(mes));
   const valorDia = salario/30;
+  const diasSaldo = diasSaldoSalarioNoMes(f, mes);
+  const saldoSalario = Math.round(valorDia*diasSaldo*100)/100;
   const descFaltas = Math.round(valorDia*fal.injustificada*100)/100;
-  const baseInss = Math.max(0, salario - descFaltas);
+  const baseInss = Math.max(0, saldoSalario - descFaltas);
+  const baseIrrf = baseIrrfSugerida(baseInss);
 
   /* faltas do mês anterior — descontadas neste mês, como no vale */
   const mesAnt = mesAnteriorDe(mes);
@@ -5989,8 +6039,8 @@ function sugestoesHolerite(f, mes){
   const v = recebeAlgumVale(f) ? calcVale(f, mes) : null;
 
   return {
-    saldoSalario: Math.round(salario*100)/100,
-    saldoSalarioRef: 30,
+    saldoSalario,
+    saldoSalarioRef: diasSaldo,
     faltasInjust: descFaltas,
     faltasInjustRef: fal.injustificada,
     faltasMesAnt: descFaltasAnt,
@@ -5999,6 +6049,8 @@ function sugestoesHolerite(f, mes){
     inss: calcInss(baseInss),
     inssRef: aliquotaInss(baseInss),
     baseInss,
+    baseIrrf,
+    aliqIrrfRef: aliquotaIrrf(baseIrrf),
     valeTransporte: v ? v.totalVT : 0,
     valeAlimentacao: v ? v.totalVR : 0,
     valeDias: v ? v.dias : 0
@@ -6059,10 +6111,11 @@ function renderHoleriteFuncionario(f){
     <div class="card" style="background:var(--azul-claro);border-color:#c9d6f7;margin-bottom:16px;">
       <h3 style="margin-bottom:8px;">O que o sistema já calculou para ${esc(f.nome)} em ${monthLabel(holMes)}</h3>
       <div class="grid grid-4">
-        <div class="kpi" style="background:#fff;"><div class="v">${fmtMoney(sug.saldoSalario)}</div><div class="l">Salário cadastrado (30 dias)</div></div>
+        <div class="kpi" style="background:#fff;"><div class="v">${fmtMoney(sug.saldoSalario)}</div><div class="l">Salário ${sug.saldoSalarioRef<30?`proporcional (${sug.saldoSalarioRef} dias, admitido no mês)`:'cadastrado (30 dias)'}</div></div>
         <div class="kpi" style="background:#fff;"><div class="v">${fal.injustificada}</div><div class="l">Faltas injustificadas no ponto</div></div>
         <div class="kpi" style="background:#fff;"><div class="v">${fmtMoney(sug.faltasInjust)}</div><div class="l">Desconto de faltas calculado</div></div>
         <div class="kpi" style="background:#fff;"><div class="v">${fmtMoney(sug.inss)}</div><div class="l">INSS pela tabela 2026 (${fmtNum(sug.inssRef,1)}%)</div></div>
+        <div class="kpi" style="background:#fff;"><div class="v">${fmtMoney(sug.baseIrrf)}</div><div class="l">Base I.R.R.F. sugerida (Base INSS − ${fmtMoney(IRRF_DESCONTO_SIMPLIFICADO_2026)} de desconto simplificado)</div></div>
       </div>
       <button class="btn btn-primary btn-sm" style="margin-top:4px;" onclick="aplicarSugestoes()">Preencher automaticamente com estes valores</button>
       <p class="help">Depois é só corrigir o que vier diferente no holerite da contabilidade. <b>Campo deixado em branco não é impresso</b> no recibo.</p>
@@ -6093,10 +6146,19 @@ function renderHoleriteFuncionario(f){
     </div>
 
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
-      <button class="btn btn-primary"   onclick="printHolerite()">Gerar recibo de pagamento (PDF)</button>
-      <button class="btn btn-secondary" onclick="printTodosHolerites()">Gerar de todos os fichados (PDF)</button>
+      <button class="btn btn-primary"   onclick="printHolerite(false)">Gerar recibo de pagamento (PDF)</button>
+      <button class="btn btn-secondary" onclick="printHolerite(true)">Gerar recibo de pagamento com vales (PDF)</button>
+      <button class="btn btn-secondary" onclick="printTodosHolerites(false)">Gerar de todos os fichados (PDF)</button>
+      <button class="btn btn-secondary" onclick="printTodosHolerites(true)">Gerar de todos os fichados com vales (PDF)</button>
       <button class="btn btn-danger"    onclick="limparHolerite()">Limpar lançamentos deste mês</button>
     </div>
+    <p class="help">
+      A versão <b>"com vales"</b> acrescenta vale-transporte e vale-alimentação calculados pelos
+      <b>dias realmente trabalhados neste mês</b> (dias no vínculo menos falta/atestado/licença/folga
+      DESTE mês) — diferente da tela <b>Vales / Adiantamentos</b>, que paga adiantado e só desconta a
+      falta no mês seguinte (é assim porque o vale sai antes de a falta acontecer). No holerite, que é
+      referente ao mês fechado, o valor certo já é o líquido dos dias efetivamente trabalhados.
+    </p>
   `;
 }
 
@@ -6122,6 +6184,8 @@ function aplicarSugestoes(){
   if(s.faltasMesAnt){ h.desc.faltasMesAnt = s.faltasMesAnt; h.descRef.faltasMesAnt = s.faltasMesAntRef; }
   if(s.valeTransporte){  h.venc.valeTransporte  = s.valeTransporte;  h.vencRef.valeTransporte  = s.valeDias; }
   if(s.valeAlimentacao){ h.venc.valeAlimentacao = s.valeAlimentacao; h.vencRef.valeAlimentacao = s.valeDias; }
+  h.baseIrrf = s.baseIrrf;
+  h.aliqIrrf = s.aliqIrrfRef;
   saveDB(); renderHolerite(); toast('Valores preenchidos — confira com o holerite da contabilidade.');
 }
 function limparHolerite(){
@@ -6145,8 +6209,50 @@ function totaisHolerite(f, h){
           baseInss: Math.max(0,baseInss), baseFgts: Math.max(0,baseFgts), valorFgts};
 }
 
-/* --- uma via do recibo de pagamento (espelha o modelo da contabilidade) --- */
-function holeriteViaHTML(f, h){
+/* Dias EFETIVAMENTE trabalhados no mês — só para o recibo "com vales" do Holerite
+   (Maycon, 10/09/2026). Diferente de `calcVale` (06a_vales.js), que é o adiantamento —
+   paga pelos dias esperados do mês e só desconta a falta NO MÊS SEGUINTE, porque o vale
+   sai antes de a falta acontecer. Aqui é o valor de COMPETÊNCIA do próprio mês: quantos
+   dias ele TRABALHOU DE VERDADE dentro do mês, descontando a falta DESTE mesmo mês —
+   exemplo real que motivou isso: Bruno admitido 05/08, 19 dias úteis no vínculo, faltou
+   3 em agosto → o vale de agosto foi PAGO como 19 (adiantado, antes da falta acontecer)
+   e só descontou os 3 dias no vale de SETEMBRO; mas o holerite de AGOSTO em si tem que
+   mostrar o valor de 16 dias (19-3), porque é isso que ele teve direito de fato naquele
+   mês. Mesma regra já usada no desconto do vale (todo dia não efetivado conta: falta
+   injustificada, justificada, atestado, licença e folga — não só falta injustificada). */
+function diasEfetivosMesHolerite(f, mes){
+  const base = diasUteisDoFuncionarioNoMes(f, mes);
+  const fal = getFaltasMes(f.id, mes);
+  const naoEfetivados = fal.injustificada + fal.justificada + fal.atestado + fal.licenca + fal.folga;
+  return {dias: Math.max(0, base - naoEfetivados), base, naoEfetivados, fal};
+}
+
+function valesDoHoleriteHTML(f, mes){
+  if(!recebeAlgumVale(f)) return '';
+  const e = diasEfetivosMesHolerite(f, mes);
+  const vtDia = vtPorDia(f), vrDia = vrPorDia(f);
+  const vt = Math.round(vtDia*e.dias*100)/100;
+  const vr = Math.round(vrDia*e.dias*100)/100;
+  return `
+  <table class="holtab" style="margin-top:6px;">
+    <thead><tr><th colspan="2" class="hl">VALE-TRANSPORTE E VALE-ALIMENTAÇÃO — dias efetivamente trabalhados no mês</th>
+      <th style="width:120px;">Valor</th></tr></thead>
+    <tbody>
+      <tr><td colspan="2">Vale-transporte — ${e.dias} dia(s) × ${fmtMoney(vtDia)}</td><td class="n">${fmtNum(vt)}</td></tr>
+      <tr><td colspan="2">Vale-alimentação — ${e.dias} dia(s) × ${fmtMoney(vrDia)}</td><td class="n">${fmtNum(vr)}</td></tr>
+      ${e.naoEfetivados ? `<tr><td colspan="3" style="font-size:9px;color:#666;">
+        ${e.base} dia(s) no vínculo neste mês − ${resumoNaoEfetivados(e.fal)} = ${e.dias} dia(s) efetivos
+        (diferente do vale já pago adiantado, que descontou isso só no mês seguinte)</td></tr>` : ''}
+    </tbody>
+    <tfoot><tr><td colspan="2" style="text-align:right;">TOTAL VALES REFERENTES AO MÊS</td><td class="n">${fmtNum(vt+vr)}</td></tr></tfoot>
+  </table>`;
+}
+
+/* --- uma via do recibo de pagamento (espelha o modelo da contabilidade) ---
+   `comVales` (10/09/2026): pedido do Maycon para NÃO poluir o recibo normal — só quando
+   pedido explicitamente (botão "com vales") entra o bloco de vale-transporte/alimentação
+   calculado pelos dias efetivos, acima. */
+function holeriteViaHTML(f, h, comVales){
   const t = totaisHolerite(f, h);
   const linhas = [];
   RUBRICAS_VENC.forEach(r=>{
@@ -6211,17 +6317,18 @@ function holeriteViaHTML(f, h){
       <div><span class="bl">Base I.R.R.F.</span><span class="bv">${fmtOpt(h.baseIrrf)||'0,00'}</span></div>
       <div><span class="bl">%</span><span class="bv">${fmtOpt(h.aliqIrrf)||'00,00'}</span></div>
     </div>
+    ${comVales ? valesDoHoleriteHTML(f, h.mes) : ''}
     <div class="holdec">DECLARO QUE RECEBI OS VENCIMENTOS ACIMA DESCRITOS</div>
     <div class="holsig">_______________________________ , ____/____/________</div>
   </div>`;
 }
 
-function printHolerite(){
+function printHolerite(comVales){
   const f = func(holFuncId);
   const h = getHolerite(f.id, holMes);
-  doPrint(`<div class="doc">${holeriteViaHTML(f,h)}${holeriteViaHTML(f,h)}</div>`);
+  doPrint(`<div class="doc">${holeriteViaHTML(f,h,comVales)}${holeriteViaHTML(f,h,comVales)}</div>`);
 }
-function printTodosHolerites(){
+function printTodosHolerites(comVales){
   const fichados = ativosNoMes(holMes).filter(f=>f.tipo==='fichado');
   const comDados = fichados.filter(f=>{
     const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===holMes);
@@ -6230,7 +6337,7 @@ function printTodosHolerites(){
   if(!comDados.length){ alert('Nenhum holerite preenchido neste mês.'); return; }
   doPrint(comDados.map((f,i)=>{
     const h = getHolerite(f.id, holMes);
-    return `<div class="doc ${i<comDados.length-1?'pagebreak':''}">${holeriteViaHTML(f,h)}${holeriteViaHTML(f,h)}</div>`;
+    return `<div class="doc ${i<comDados.length-1?'pagebreak':''}">${holeriteViaHTML(f,h,comVales)}${holeriteViaHTML(f,h,comVales)}</div>`;
   }).join(''));
 }
 
