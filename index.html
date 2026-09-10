@@ -529,6 +529,12 @@ tr:hover td{background:#fafbfd;}
 }
 .doc{font-family:Arial, Helvetica, sans-serif;color:#111;font-size:11px;}
 .doc + .doc{margin-top:26px;}
+/* Zera a margem da PÁGINA (`@page`, via #printPageStyle em doPrint()) e devolve o mesmo
+   espaço aqui, como padding do próprio conteúdo — o Chrome/Edge só desenha o cabeçalho e
+   rodapé PRÓPRIOS DELE (data/hora, título da aba) quando a margem da página deixa espaço
+   pra isso; sem margem, ele desiste de desenhar. Pedido do Maycon em 10/09/2026, só na
+   ficha de admissão por enquanto (documento sempre curto, cabe numa página — ver doPrint). */
+.doc-margem-zero{padding:10mm;}
 
 /* cabeçalho institucional */
 .dhead{display:flex;align-items:center;gap:12px;border-bottom:2.5px solid #1c4fd8;padding-bottom:8px;margin-bottom:12px;}
@@ -704,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 44';
+const VERSAO = '2026-09-10 · 45';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1710,12 +1716,20 @@ function nomeArquivoSeguro(s){
    lado do recibo A5 (duas regras `@page` diferentes coexistindo não é bem
    suportado). Com um `<style>` só, sempre existe UMA regra `@page` de cada
    vez, e não teve esse problema. */
+/* Margem zero (10/09/2026): documento com a classe `doc-margem-zero` (por
+   enquanto só a ficha de admissão) imprime com `@page{margin:0}` — o
+   cabeçalho/rodapé que o PRÓPRIO NAVEGADOR desenha (data/hora, título da aba)
+   só aparece quando a margem da página deixa espaço para isso; sem margem,
+   ele some. O espaço visual não muda: o CSS devolve os mesmos 10mm como
+   padding do `.doc` (ver `.doc-margem-zero`, `01_head.html`). */
 function doPrint(html, nomeArquivo){
   document.getElementById('printArea').innerHTML = html;
   const estiloPagina = document.getElementById('printPageStyle');
   if(estiloPagina){
     estiloPagina.textContent = html.indexOf('doc-recibo') >= 0
-      ? '@page{size:A5 landscape;margin:8mm;}' : '';
+      ? '@page{size:A5 landscape;margin:8mm;}'
+      : html.indexOf('doc-margem-zero') >= 0
+        ? '@page{size:A4 portrait;margin:0;}' : '';
   }
   if(nomeArquivo){
     const tituloAntigo = document.title;
@@ -2344,7 +2358,7 @@ function printFicha(id){
     : (f.valorDiaria ? fmtMoney(f.valorDiaria) : '');
 
   const html = `
-  <div class="doc">
+  <div class="doc doc-margem-zero">
     ${docHead('Ficha de Admissão de Funcionários', '', `Emitida em<br><b>${fmtDate(todayISO())}</b>`)}
 
     <div class="fbox">
