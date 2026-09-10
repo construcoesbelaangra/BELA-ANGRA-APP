@@ -704,7 +704,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 42';
+const VERSAO = '2026-09-10 · 43';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -3091,7 +3091,17 @@ function equipeDoDia(){
      antes de dar para marcar a presença dos dias 10 a 14 que ele trabalhou. */
   const base = ativosNoPeriodo(pdiaData, pdiaData).filter(f=>
     (pdiaTipo === 'todos' || f.tipo === pdiaTipo));
-  return ordenarFuncionarios(filtraObra(base, pdiaObra));
+  /* Filtro de obra tem que respeitar o DIA sendo lançado, não a obra atual do
+     cadastro — senão um fichado transferido (`f.obraHistorico`) aparece na
+     obra nova mesmo em dias de ANTES da transferência (bug relatado pelo
+     Maycon em 10/09/2026: Diego Braz transferido do Neymar pro Gustavo a
+     partir de 10/09 aparecia no Gustavo já no dia 09/09). Diarista continua
+     filtrado por `f.obraPadrao` — ele já carrega o próprio `obraId` por dia
+     em `DB.pontoDiarista`, não usa `obraHistorico`. */
+  if(!pdiaObra) return ordenarFuncionarios(base);
+  const filtrada = base.filter(f=>
+    f.tipo==='fichado' ? obraDoFuncionarioEm(f, pdiaData)===pdiaObra : f.obraPadrao===pdiaObra);
+  return ordenarFuncionarios(filtrada);
 }
 
 /* ---------- faixa de aviso, mostrada nas duas folhas ---------- */
