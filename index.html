@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 50';
+const VERSAO = '2026-09-10 · 51';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -3040,6 +3040,7 @@ function salvarExcecaoDia(iso){
   const key = `${f.id}_${iso.slice(0,7)}`;
   const reg = DB.pontoMensal[key] = DB.pontoMensal[key] || {dias:{}, ts:{}, auto:{}};
   reg.excecaoDia = reg.excecaoDia || {};
+  reg.excecaoDiaTs = reg.excecaoDiaTs || {};
   const obraEscolhida = val('ed_obra');
   const funcaoEscolhida = val('ed_funcao').trim();
   const comissaoEscolhida = numVal('ed_comissao');
@@ -3048,6 +3049,9 @@ function salvarExcecaoDia(iso){
   } else {
     delete reg.excecaoDia[iso];
   }
+  /* carimbo por dia — sem isso a exceção nunca entrava na mesclagem entre PCs
+     (achado em 10/09/2026, ver mesclar() em 09_sync.js) */
+  reg.excecaoDiaTs[iso] = Date.now();
   saveDB(); closeModal(); renderPontoMensal();
   toast((obraEscolhida||funcaoEscolhida||comissaoEscolhida)
     ? `Dia ${fmtDate(iso)} atualizado.`
@@ -7042,22 +7046,9 @@ function renderConfig(){
         <button class="btn btn-secondary" onclick="exportBackup()">⬇ Exportar backup agora</button>
         <button class="btn btn-danger" onclick="wipeData()">Apagar todos os dados</button>
       </div>
-    </div>
-
-    <div class="card">
-      <h2>Backup automático (só neste computador)</h2>
-      <p class="help" style="margin-top:0;">
-        A cada poucos minutos, se algo mudou, o sistema guarda sozinho um ponto de restauração
-        aqui no navegador — mantém os últimos ${SNAPSHOT_MAX} (cerca de ${Math.round(SNAPSHOT_MAX*SNAPSHOT_INTERVALO_MS/3600000*10)/10}h).
-        <b>Fica só neste aparelho</b> — não viaja para o outro PC nem para o Drive, é uma rede
-        de segurança rápida para o caso de algo ser sobrescrito por engano (por exemplo, ao
-        carregar um arquivo de sincronização). Para levar dados a outro lugar, use o backup
-        manual acima ou a tela Sincronizar.
-      </p>
-      <div id="snapshotsLista"><p class="help">Carregando…</p></div>
+      <p class="help" style="margin-top:10px;">Os pontos de restauração automáticos ficam na tela <b>Sincronizar</b>.</p>
     </div>
   `;
-  renderSnapshotsLista();
 }
 
 function somaEncargosPercent(){
@@ -7541,6 +7532,21 @@ function mesclar(local, remoto){
           rl.dias[iso] = rr.dias[iso]; rl.ts[iso] = tr;
           /* o marcador "a confirmar" viaja junto com o status */
           if((rr.auto||{})[iso]) rl.auto[iso] = true; else delete rl.auto[iso];
+          res.atualizados++;
+        }
+      });
+      /* Exceção pontual do dia — obra/função/comissão (04-05/09/2026).
+         Achado em 10/09/2026: isso NUNCA tinha entrado na mesclagem — só
+         `dias`/`ts` eram considerados. Uma marcação feita e sincronizada
+         podia nunca chegar no outro PC, ou pior, sumir de vez se um pacote
+         mais novo (sem essa marcação) fosse aplicado por cima. Carimbo
+         próprio por dia (`excecaoDiaTs`), mesmo padrão de `ts`. */
+      rl.excecaoDia = rl.excecaoDia||{}; rl.excecaoDiaTs = rl.excecaoDiaTs||{};
+      Object.keys(rr.excecaoDia||{}).forEach(iso=>{
+        const tr = Number((rr.excecaoDiaTs||{})[iso])||0, tl = Number(rl.excecaoDiaTs[iso])||0;
+        if(tr > tl){
+          rl.excecaoDia[iso] = rr.excecaoDia[iso];
+          rl.excecaoDiaTs[iso] = tr;
           res.atualizados++;
         }
       });
@@ -8090,7 +8096,21 @@ function renderSync(){
       <p class="help">O backup é diferente da sincronização: ele serve para <b>restaurar</b> tudo se der algum problema —
       e restaurar <b>substitui</b> os dados, não junta. Guarde um backup por semana numa subpasta.</p>
     </div>
+
+    <div class="card">
+      <h2>Backup automático (só neste computador)</h2>
+      <p class="help" style="margin-top:0;">
+        A cada poucos minutos, se algo mudou, o sistema guarda sozinho um ponto de restauração
+        aqui no navegador, em segundo plano — mantém os últimos ${SNAPSHOT_MAX}
+        (cerca de ${Math.round(SNAPSHOT_MAX*SNAPSHOT_INTERVALO_MS/3600000*10)/10}h). <b>Fica só neste
+        aparelho</b> — não viaja para o outro PC nem para o Drive, é uma rede de segurança rápida
+        para o caso de algo ser sobrescrito por engano (por exemplo, ao carregar um arquivo de
+        sincronização). Para levar dados a outro lugar, use o backup manual acima.
+      </p>
+      <div id="snapshotsLista"><p class="help">Carregando…</p></div>
+    </div>
   `;
+  renderSnapshotsLista();
 }
 
 /* Registros que já existiam antes da sincronização ganham hora ZERO — nunca hora atual.
