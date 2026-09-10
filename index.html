@@ -710,7 +710,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 49';
+const VERSAO = '2026-09-10 · 50';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -7043,7 +7043,21 @@ function renderConfig(){
         <button class="btn btn-danger" onclick="wipeData()">Apagar todos os dados</button>
       </div>
     </div>
+
+    <div class="card">
+      <h2>Backup automático (só neste computador)</h2>
+      <p class="help" style="margin-top:0;">
+        A cada poucos minutos, se algo mudou, o sistema guarda sozinho um ponto de restauração
+        aqui no navegador — mantém os últimos ${SNAPSHOT_MAX} (cerca de ${Math.round(SNAPSHOT_MAX*SNAPSHOT_INTERVALO_MS/3600000*10)/10}h).
+        <b>Fica só neste aparelho</b> — não viaja para o outro PC nem para o Drive, é uma rede
+        de segurança rápida para o caso de algo ser sobrescrito por engano (por exemplo, ao
+        carregar um arquivo de sincronização). Para levar dados a outro lugar, use o backup
+        manual acima ou a tela Sincronizar.
+      </p>
+      <div id="snapshotsLista"><p class="help">Carregando…</p></div>
+    </div>
   `;
+  renderSnapshotsLista();
 }
 
 function somaEncargosPercent(){
@@ -7602,12 +7616,20 @@ function suportaArquivoDireto(){ return typeof window.showSaveFilePicker === 'fu
    (acontece em algumas configurações de arquivo local), o app só volta a pedir
    o arquivo no primeiro clique — nunca fica travado. */
 const IDB_NOME = 'belaAngraRH', IDB_STORE = 'handles';
+/* Snapshot automático (10/09/2026) — ver mais abaixo, "BACKUP AUTOMÁTICO
+   LOCAL". Mora no mesmo banco IndexedDB, só que numa gaveta (object store)
+   separada — por isso a versão do banco subiu de 1 para 2. */
+const IDB_STORE_SNAP = 'snapshots';
 
 function idbAbrir(){
   return new Promise((ok, falha)=>{
     try{
-      const req = indexedDB.open(IDB_NOME, 1);
-      req.onupgradeneeded = ()=> req.result.createObjectStore(IDB_STORE);
+      const req = indexedDB.open(IDB_NOME, 2);
+      req.onupgradeneeded = (ev)=>{
+        const db = req.result;
+        if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+        if(!db.objectStoreNames.contains(IDB_STORE_SNAP)) db.createObjectStore(IDB_STORE_SNAP, {keyPath:'quando'});
+      };
       req.onsuccess = ()=> ok(req.result);
       req.onerror   = ()=> falha(req.error);
     }catch(e){ falha(e); }
@@ -7637,6 +7659,127 @@ async function idbLerHandle(){
     db.close();
     return h;
   }catch(e){ return null; }
+}
+
+/* =========================================================
+   BACKUP AUTOMÁTICO LOCAL (10/09/2026)
+
+   Pedido do Maycon depois de um susto real: um pacote de sincronização
+   sobrescreveu o cadastro de 3 funcionários com uma versão antiga (a leitura
+   usada para montar o pacote era de ANTES de uma edição dele), apagando uma
+   transferência de obra sem aviso nenhum. Isso não tem a ver com o motor de
+   mesclagem em si (ele já favorece o carimbo mais novo, corretamente) — é o
+   risco de QUALQUER edição concorrente enquanto um pacote é gerado fora do
+   navegador. Não tem como o app evitar isso sozinho, mas dá pra amenizar:
+   guardar pontos de restauração automáticos, para voltar minutos atrás sem
+   depender de exportar backup manual.
+
+   Guardado no IndexedDB (não no localStorage, que é pequeno demais para
+   várias cópias do banco inteiro) — é só uma rede de segurança LOCAL deste
+   aparelho, não viaja na sincronização entre PCs (de propósito: cada
+   aparelho protege a si mesmo, sem competir com o motor de mesclagem real).
+   ========================================================= */
+const SNAPSHOT_INTERVALO_MS = 5 * 60 * 1000;   // a cada 5 minutos
+const SNAPSHOT_MAX = 24;                        // ~2h de historico, a cada 5 min
+let ultimoSnapshotTexto = null;
+
+async function salvarSnapshotAuto(){
+  try{
+    const texto = JSON.stringify(DB);
+    if(texto === ultimoSnapshotTexto) return;   // nada mudou desde o ultimo — nao duplica
+    const db = await idbAbrir();
+    await new Promise((ok, falha)=>{
+      const t = db.transaction(IDB_STORE_SNAP, 'readwrite');
+      t.objectStore(IDB_STORE_SNAP).put({quando: Date.now(), dados: texto});
+      t.oncomplete = ok; t.onerror = ()=> falha(t.error);
+    });
+    /* poda os mais antigos, mantendo só os SNAPSHOT_MAX mais recentes */
+    await new Promise((ok, falha)=>{
+      const t = db.transaction(IDB_STORE_SNAP, 'readwrite');
+      const store = t.objectStore(IDB_STORE_SNAP);
+      const chaves = [];
+      store.openCursor().onsuccess = (ev)=>{
+        const cursor = ev.target.result;
+        if(cursor){ chaves.push(cursor.key); cursor.continue(); }
+        else {
+          chaves.sort((a,b)=>b-a);
+          chaves.slice(SNAPSHOT_MAX).forEach(k=> store.delete(k));
+        }
+      };
+      t.oncomplete = ok; t.onerror = ()=> falha(t.error);
+    });
+    db.close();
+    ultimoSnapshotTexto = texto;
+  }catch(e){ /* sem IndexedDB (ex.: aba anonima) — silencioso, nao e a rede de seguranca principal */ }
+}
+function iniciarSnapshotAutomatico(){
+  salvarSnapshotAuto();   // um ponto já ao abrir o app
+  setInterval(salvarSnapshotAuto, SNAPSHOT_INTERVALO_MS);
+}
+async function listarSnapshots(){
+  try{
+    const db = await idbAbrir();
+    const lista = await new Promise((ok, falha)=>{
+      const t = db.transaction(IDB_STORE_SNAP, 'readonly');
+      const r = t.objectStore(IDB_STORE_SNAP).getAll();
+      r.onsuccess = ()=> ok(r.result || []);
+      r.onerror   = ()=> falha(r.error);
+    });
+    db.close();
+    return lista.sort((a,b)=>b.quando-a.quando);
+  }catch(e){ return []; }
+}
+async function restaurarSnapshot(quando){
+  const lista = await listarSnapshots();
+  const alvo = lista.find(s=>s.quando===quando);
+  if(!alvo){ alert('Não achei esse ponto de restauração.'); return; }
+  if(!confirm(`Restaurar o ponto de ${new Date(quando).toLocaleString('pt-BR')}?\n\nIsso SUBSTITUI os dados atuais deste computador pelos daquele momento — o que foi digitado depois se perde. Exporte um backup manual antes, se quiser guardar o estado atual.`)) return;
+  try{
+    DB = migrate(Object.assign(defaultDB(), JSON.parse(alvo.dados)));
+    saveDB();
+    toast('Dados restaurados para ' + new Date(quando).toLocaleString('pt-BR') + '.');
+    if(currentPage==='config') renderConfig(); else render();
+  }catch(e){ alert('Não consegui restaurar este ponto: ' + e.message); }
+}
+async function baixarSnapshot(quando){
+  const lista = await listarSnapshots();
+  const alvo = lista.find(s=>s.quando===quando);
+  if(!alvo) return;
+  const blob = new Blob([alvo.dados], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `bela-angra-snapshot-${new Date(quando).toISOString().slice(0,16).replace(':','-')}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+/* lista os pontos salvos na tela de Configurações — assíncrono (IndexedDB),
+   por isso preenche um <div> vazio depois que o resto da tela já renderizou */
+async function renderSnapshotsLista(){
+  const el = document.getElementById('snapshotsLista');
+  if(!el) return;
+  const lista = await listarSnapshots();
+  if(!document.getElementById('snapshotsLista')) return;   // usuário já trocou de tela
+  if(!lista.length){
+    el.innerHTML = '<p class="help">Nenhum ponto salvo ainda — o primeiro é gravado poucos segundos depois de abrir o app.</p>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Quando</th><th></th></tr></thead>
+        <tbody>
+          ${lista.map(s=>`
+            <tr>
+              <td>${new Date(s.quando).toLocaleString('pt-BR')}</td>
+              <td style="white-space:nowrap;">
+                <button class="btn btn-secondary btn-sm" onclick="baixarSnapshot(${s.quando})">Baixar</button>
+                <button class="btn btn-danger btn-sm" onclick="restaurarSnapshot(${s.quando})">Restaurar</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 /* tenta reconectar sozinho ao abrir o app (sem pedir nada ao usuário) */
@@ -8050,6 +8193,7 @@ document.addEventListener('DOMContentLoaded', function(){
   atualizarIndicadorSync();
   reconectarArquivoSync();
   setInterval(atualizarIndicadorSync, 60000);   // mantém o "há X min" atualizado
+  iniciarSnapshotAutomatico();
 });
 /* =========================================================
    FINANCEIRO — núcleo, cadastros e a tela de Caixa e Contas
