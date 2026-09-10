@@ -628,14 +628,18 @@ tr:hover td{background:#fafbfd;}
 .holtab td.n{text-align:right;}
 .holtab td.c{text-align:center;}
 .holtab td:last-child, .holtab th:last-child{border-right:none;}
-.holtot{display:flex;border-top:1px solid #000;font-size:9.5px;}
-.holtot .sp{flex:1;border-right:1px solid #000;}
-.holtot .cV{width:120px;text-align:right;padding:2px 5px;border-right:1px solid #000;font-weight:700;}
-.holtot .cD{width:120px;text-align:right;padding:2px 5px;font-weight:700;}
-.holliq{display:flex;border-top:1px solid #000;border-bottom:1.4px solid #000;font-size:10px;}
-.holliq .sp{flex:1;border-right:1px solid #000;}
-.holliq .lb{width:170px;white-space:nowrap;text-align:right;padding:2px 5px;font-weight:800;border-right:1px solid #000;}
-.holliq .vl{width:120px;text-align:right;padding:2px 5px;font-weight:800;}
+/* TOTAL/LÍQUIDO (10/09/2026) — eram DIVs em flex por fora da tabela, com largura fixa
+   em px tentando adivinhar onde as colunas VENCIMENTOS/DESCONTOS terminavam. A tabela usa
+   `table-layout:auto` (largura ajusta pelo conteúdo), então essas larguras quase nunca
+   batiam de verdade com as colunas de cima — o Maycon reportou o desalinhamento.
+   Corrigido: viraram linhas de `<tfoot>` DENTRO da mesma tabela (`colspan` juntando
+   Cod+HISTÓRICO+REF), então usam exatamente as mesmas colunas — alinhamento garantido,
+   não aproximado. */
+.holtab tfoot td{padding:2px 5px;font-weight:700;border-right:1px solid #000;}
+.holtab tfoot td:last-child{border-right:none;}
+.holtab tr.holtot td{border-top:1px solid #000;}
+.holtab tr.holliq td{border-top:1px solid #000;border-bottom:1.4px solid #000;font-size:10px;font-weight:800;}
+.holtab tr.holliq td.lb{text-align:right;white-space:nowrap;}
 .holbase{display:flex;font-size:8.5px;border-bottom:1.4px solid #000;}
 .holbase div{flex:1;border-right:1px solid #000;padding:1px 5px;text-align:center;}
 .holbase div:last-child{border-right:none;}
@@ -717,7 +721,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 58';
+const VERSAO = '2026-09-10 · 59';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6306,17 +6310,13 @@ function holeriteViaHTML(f, h, comVales){
         </tr>`).join('')}
         ${Array.from({length:vazias}).map(()=>`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>`).join('')}
       </tbody>
+      <tfoot>
+        <tr class="holtot"><td colspan="3"></td>
+          <td class="n">${fmtNum(totalVenc)}</td><td class="n">${fmtNum(totalDesc)}</td></tr>
+        <tr class="holliq"><td colspan="3" class="lb">TOTAL LÍQUIDO ==&gt;</td>
+          <td colspan="2" class="n vl">${fmtNum(liquido)}</td></tr>
+      </tfoot>
     </table>
-    <div class="holtot">
-      <div class="sp"></div>
-      <div class="cV">${fmtNum(totalVenc)}</div>
-      <div class="cD">${fmtNum(totalDesc)}</div>
-    </div>
-    <div class="holliq">
-      <div class="sp"></div>
-      <div class="lb">TOTAL LÍQUIDO ==&gt;</div>
-      <div class="vl">${fmtNum(liquido)}</div>
-    </div>
     <div class="holbase">
       <div><span class="bl">Salário Base</span><span class="bv">${fmtNum(t.salarioBase)}</span></div>
       <div><span class="bl">Base I.N.S.S.</span><span class="bv">${fmtNum(t.baseInss)}</span></div>
