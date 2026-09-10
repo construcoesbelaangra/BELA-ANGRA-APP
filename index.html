@@ -704,7 +704,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-05 · 40';
+const VERSAO = '2026-09-10 · 41';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -798,6 +798,15 @@ function defaultDB(){
     },
     funcionarios: [],
     obras: [],
+    /* {id, nome, salarioPadrao}. Cadastro em Configurações (10/09/2026) — vira
+       o menu suspenso de "Função / cargo" na ficha do funcionário, para não
+       correr o risco de digitar "Serveente" em vez de "Servente" (e o cargo
+       não bater com a ordenação padrão, `ORDEM_CARGOS`, acima). Nasce vazio
+       como todo cadastro do usuário; o botão "Sugerir cargos padrão" em
+       Configurações só acrescenta os NOMES genéricos (mesmo raciocínio de
+       `CATEGORIAS_SUGERIDAS`) — o salário de cada um é sempre digitado pelo
+       usuário, nunca um valor de partida no código (é dado da empresa). */
+    cargos: [],
     diasUteisMes: {},     // 'YYYY-MM' -> nº de dias trabalhados usado no vale daquele mês
     pontoMensal: {},      // `${funcId}_${YYYY-MM}` -> {dias:{'YYYY-MM-DD':status}, excecaoDia:{'YYYY-MM-DD':{obraId,funcao,comissao}}}
     pontoDiarista: [],    // {id, funcionarioId, obraId, data, status, quentinha, funcao, comissao}
@@ -935,6 +944,7 @@ function migrate(db){
   db.lancamentos   = db.lancamentos   || [];
   db.recorrentes   = db.recorrentes   || [];
   db.feriados      = db.feriados      || [];
+  db.cargos        = db.cargos        || [];
   (db.lancamentos).forEach(l=>{ l.baixas = l.baixas || []; });
   db._meta = Object.assign({tombstones:{}, mapaTs:{}, objetoTs:{}, ultimaSync:null, ultimaEdicao:null, arquivoNome:''}, db._meta||{});
   Object.keys(db.pontoMensal||{}).forEach(k=>{
@@ -1070,8 +1080,71 @@ function openModal(html, wide){
 }
 function closeModal(){ document.getElementById('modalRoot').innerHTML = ''; }
 function val(id){ const e=document.getElementById(id); return e ? e.value : ''; }
-function numVal(id){ const v = parseFloat(val(id)); return isNaN(v) ? 0 : v; }
+/* Campo com máscara de moeda guarda o valor de verdade em `dataset.valor`
+   (string decimal comum, "1908.5") — é ele que numVal() lê quando existe, por
+   isso todo lugar que já chama numVal() continua funcionando sem mudar nada,
+   mesmo depois do campo virar um input mascarado em vez de type="number". */
+function numVal(id){
+  const e = document.getElementById(id);
+  if(!e) return 0;
+  if(e.dataset && e.dataset.valor !== undefined){
+    const v = parseFloat(e.dataset.valor);
+    return isNaN(v) ? 0 : v;
+  }
+  const v = parseFloat(e.value);
+  return isNaN(v) ? 0 : v;
+}
 function checked(id){ const e=document.getElementById(id); return e ? e.checked : false; }
+
+/* =========================================================
+   MÁSCARAS DE DIGITAÇÃO (10/09/2026)
+   CPF, PIS, telefone/celular e valor em R$ — para não depender de digitar
+   pontuação certa nem separador de milhar/decimal certo.
+   ========================================================= */
+function formatarCPF(v){
+  const d = String(v||'').replace(/\D/g,'').slice(0,11);
+  if(d.length > 9) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+  if(d.length > 6) return d.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+  if(d.length > 3) return d.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+  return d;
+}
+function mascaraCPF(input){ input.value = formatarCPF(input.value); }
+
+/* PIS/PASEP: 3-5-2-1 dígitos */
+function formatarPIS(v){
+  const d = String(v||'').replace(/\D/g,'').slice(0,11);
+  if(d.length > 10) return d.replace(/(\d{3})(\d{5})(\d{2})(\d{1})/, '$1.$2.$3-$4');
+  if(d.length > 8) return d.replace(/(\d{3})(\d{5})(\d{1,2})/, '$1.$2.$3');
+  if(d.length > 3) return d.replace(/(\d{3})(\d{1,5})/, '$1.$2');
+  return d;
+}
+function mascaraPIS(input){ input.value = formatarPIS(input.value); }
+
+/* Telefone/celular: (DD) DDDD-DDDD (fixo, 10 dígitos) ou (DD) DDDDD-DDDD
+   (celular, 11) — o formato muda sozinho conforme a quantidade digitada. */
+function formatarTelefone(v){
+  const d = String(v||'').replace(/\D/g,'').slice(0,11);
+  if(d.length > 10) return d.replace(/(\d{2})(\d{5})(\d{1,4})/, '($1) $2-$3');
+  if(d.length > 6)  return d.replace(/(\d{2})(\d{4})(\d{1,4})/, '($1) $2-$3');
+  if(d.length > 2)  return d.replace(/(\d{2})(\d{1,4})/, '($1) $2');
+  if(d.length > 0)  return '(' + d;
+  return '';
+}
+function mascaraTelefone(input){ input.value = formatarTelefone(input.value); }
+
+/* Valor em R$, digitado "de trás para a frente" como numa maquininha: cada
+   dígito novo empurra os centavos, sempre no formato 1.234,56. O valor
+   numérico de verdade vai para `dataset.valor` (ver numVal(), acima). */
+function formatarMoeda(v){
+  const n = Number(v)||0;
+  return n ? n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) : '';
+}
+function mascaraMoeda(input){
+  const digitos = input.value.replace(/\D/g,'').replace(/^0+(?=\d)/,'');
+  const valor = parseInt(digitos||'0',10) / 100;
+  input.value = valor ? valor.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) : '';
+  input.dataset.valor = String(valor);
+}
 
 /* ---------------- CÁLCULO DE INSS (tabela progressiva 2026) ---------------- */
 function calcInss(base){
@@ -1602,8 +1675,9 @@ function docHead(titulo, subtitulo, direita){
   ${subtitulo ? `<div class="dsub">${subtitulo}</div>` : ''}`;
 }
 function docFoot(){
-  return `<div class="dfoot">Documento gerado pelo Sistema de RH${
-    DB.empresa.razaoSocial ? ' · ' + esc(DB.empresa.razaoSocial) : ''} · ${fmtDate(todayISO())}</div>`;
+  const nomeEmpresa = String(DB.empresa.razaoSocial||'').replace(/\s*-?\s*ltda\.?/gi, '').replace(/\s+/g, ' ').trim();
+  return `<div class="dfoot">Documento gerado pelo Sistema${
+    nomeEmpresa ? ' · ' + esc(nomeEmpresa) : ''} · ${fmtDate(todayISO())}</div>`;
 }
 /* Nome de arquivo seguro: tira caractere que barra (ou vira separador de
    pasta) em Windows/Mac/Linux — usado por `doPrint`, abaixo. */
@@ -2005,19 +2079,23 @@ function openFuncModal(id){
           verdade) — evita ter que duplicar o cadastro só para ela aparecer na folha de "Ponto → Fichados → Ver o mês".
         </p>
       </div>
-      <label class="check"><input type="checkbox" id="f_duplicataSoContabil" ${f.duplicataSoContabil?'checked':''}>
-        Cadastro duplicado, só para a folha da contabilidade — não contar em relatórios (medição etc.)</label>
-      <p class="help" style="margin-top:-6px;">
-        Rede de segurança para qualquer outra duplicata que aparecer no futuro — não é mais necessária para
-        quem usar a caixinha acima.
-      </p>
       <div class="grid grid-3">
-        <div class="field"><label>Função / cargo</label><input id="f_funcao" value="${esc(f.funcao||'')}" placeholder="Ex: ARMA, CARP, SERV, ENCA, PEDR"></div>
+        <div class="field"><label>Função / cargo</label>
+          <select id="f_funcao" onchange="aplicarSalarioPadraoCargo()">
+            <option value="">—</option>
+            ${DB.cargos.slice().sort((a,b)=>cargoRank(a.nome)-cargoRank(b.nome)).map(cg=>
+              `<option value="${esc(cg.nome)}" ${f.funcao===cg.nome?'selected':''}>${esc(cg.nome)}</option>`).join('')}
+            ${f.funcao && !DB.cargos.some(cg=>cg.nome===f.funcao) ? `<option value="${esc(f.funcao)}" selected>${esc(f.funcao)} (fora da lista)</option>` : ''}
+          </select>
+          ${!DB.cargos.length ? '<p class="help">Nenhum cargo cadastrado ainda — cadastre em Configurações → Cargos / Funções.</p>' : ''}
+        </div>
         <div class="field"><label>Matrícula (nº na contabilidade)</label><input id="f_matricula" value="${esc(f.matricula||'')}" placeholder="Ex: 0002"></div>
         <div class="field"><label>C.B.O.</label><input id="f_cbo" value="${esc(f.cbo||'')}" placeholder="Ex: 7170-20"></div>
       </div>
       <div class="grid grid-3">
-        <div class="field" id="wrap_salario"><label>Salário mensal (R$)</label><input type="number" step="0.01" id="f_salario" value="${f.salario||''}"></div>
+        <div class="field" id="wrap_salario"><label>Salário mensal (R$)</label>
+          <input inputmode="decimal" id="f_salario" value="${formatarMoeda(f.salario)}" data-valor="${Number(f.salario)||0}" oninput="mascaraMoeda(this)" placeholder="0,00">
+        </div>
         <div class="field"><label>Regime de pagamento (ficha)</label>
           <select id="f_regimePagamento">
             <option value="hora" ${f.regimePagamento==='hora'?'selected':''}>Hora</option>
@@ -2028,7 +2106,9 @@ function openFuncModal(id){
         <div></div>
       </div>
       <div class="grid grid-3" id="wrap_diaria" style="${f.tipo==='diarista'?'':'display:none;'}">
-        <div class="field"><label>Valor da diária (R$)</label><input type="number" step="0.01" id="f_valorDiaria" value="${f.valorDiaria||''}"></div>
+        <div class="field"><label>Valor da diária (R$)</label>
+          <input inputmode="decimal" id="f_valorDiaria" value="${formatarMoeda(f.valorDiaria)}" data-valor="${Number(f.valorDiaria)||0}" oninput="mascaraMoeda(this)" placeholder="0,00">
+        </div>
         <div class="field" style="grid-column:span 2;align-self:end;">
           <p class="help">A diária é sempre o mesmo valor — não se trabalha sábado nem feriado.</p>
         </div>
@@ -2037,7 +2117,7 @@ function openFuncModal(id){
       <h3>Dados pessoais</h3>
       <div class="grid grid-2">
         <div class="field"><label>Nome completo</label><input id="f_nome" value="${esc(f.nome||'')}" required></div>
-        <div class="field"><label>CPF</label><input id="f_cpf" value="${esc(f.cpf||'')}"></div>
+        <div class="field"><label>CPF</label><input id="f_cpf" inputmode="numeric" value="${formatarCPF(f.cpf)}" oninput="mascaraCPF(this)" placeholder="000.000.000-00"></div>
       </div>
       <div class="grid grid-3">
         <div class="field"><label>Data de nascimento</label><input type="date" id="f_nascimento" value="${f.nascimento||''}"></div>
@@ -2045,9 +2125,9 @@ function openFuncModal(id){
         <div class="field"><label>UF</label><input id="f_uf" value="${esc(f.uf||'')}" maxlength="2"></div>
       </div>
       <div class="grid grid-3">
-        <div class="field"><label>PIS</label><input id="f_pis" value="${esc(f.pis||'')}"></div>
-        <div class="field"><label>Telefone</label><input id="f_fone" value="${esc(f.fone||'')}"></div>
-        <div class="field"><label>Celular</label><input id="f_cel" value="${esc(f.cel||'')}"></div>
+        <div class="field"><label>PIS</label><input id="f_pis" inputmode="numeric" value="${formatarPIS(f.pis)}" oninput="mascaraPIS(this)" placeholder="000.00000.00-0"></div>
+        <div class="field"><label>Telefone</label><input id="f_fone" inputmode="numeric" value="${formatarTelefone(f.fone)}" oninput="mascaraTelefone(this)" placeholder="(00) 0000-0000"></div>
+        <div class="field"><label>Celular</label><input id="f_cel" inputmode="numeric" value="${formatarTelefone(f.cel)}" oninput="mascaraTelefone(this)" placeholder="(00) 00000-0000"></div>
       </div>
       <div class="grid grid-3">
         <div class="field"><label>Título de eleitor</label><input id="f_tituloEleitor" value="${esc(f.tituloEleitor||'')}"></div>
@@ -2088,12 +2168,16 @@ function openFuncModal(id){
           <p class="help">Marque "Não" para quem você leva de carro — a pessoa pode receber refeição mesmo assim.</p>
         </div>
         <div class="field"><label>Cidade / trecho 1 (onde ele mora)</label><input id="f_cidadeVT1" value="${esc(f.cidadeVT1||'')}" placeholder="Ex: Japuíba"></div>
-        <div class="field"><label>Valor da passagem 1 (R$)</label><input type="number" step="0.01" id="f_valorVT1" value="${f.valorVT1||''}" oninput="atualizaResumoVale()"></div>
+        <div class="field"><label>Valor da passagem 1 (R$)</label>
+          <input inputmode="decimal" id="f_valorVT1" value="${formatarMoeda(f.valorVT1)}" data-valor="${Number(f.valorVT1)||0}" oninput="mascaraMoeda(this); atualizaResumoVale();" placeholder="0,00">
+        </div>
       </div>
       <div class="grid grid-3">
         <div></div>
         <div class="field"><label>Cidade / trecho 2 (se pega 2ª condução)</label><input id="f_cidadeVT2" value="${esc(f.cidadeVT2||'')}" placeholder="Opcional"></div>
-        <div class="field"><label>Valor da passagem 2 (R$)</label><input type="number" step="0.01" id="f_valorVT2" value="${f.valorVT2||''}" oninput="atualizaResumoVale()"></div>
+        <div class="field"><label>Valor da passagem 2 (R$)</label>
+          <input inputmode="decimal" id="f_valorVT2" value="${formatarMoeda(f.valorVT2)}" data-valor="${Number(f.valorVT2)||0}" oninput="mascaraMoeda(this); atualizaResumoVale();" placeholder="0,00">
+        </div>
       </div>
 
       <h3>Vale-refeição / alimentação</h3>
@@ -2105,7 +2189,10 @@ function openFuncModal(id){
           </select>
         </div>
         <div class="field"><label>Valor por dia trabalhado (R$)</label>
-          <input type="number" step="0.01" id="f_valorVR" value="${f.valorVR===undefined||f.valorVR===''?(DB.config.valorVRPadrao||''):f.valorVR}" oninput="atualizaResumoVale()">
+          <input inputmode="decimal" id="f_valorVR"
+                 value="${formatarMoeda(f.valorVR===undefined||f.valorVR===''?DB.config.valorVRPadrao:f.valorVR)}"
+                 data-valor="${Number(f.valorVR===undefined||f.valorVR===''?DB.config.valorVRPadrao:f.valorVR)||0}"
+                 oninput="mascaraMoeda(this); atualizaResumoVale();" placeholder="0,00">
         </div>
         <div></div>
       </div>
@@ -2152,6 +2239,21 @@ function toggleFuncTipo(){
   atualizaResumoVale();
 }
 
+/* Salário padrão do cargo (10/09/2026) — só para fichado, que é quem recebe
+   salário mensal (o diarista tem valor de diária próprio, não por cargo). Só
+   preenche se o campo ainda estiver vazio: nunca sobrescreve um salário que
+   já foi digitado (edição de quem já tem valor diferente do padrão). */
+function aplicarSalarioPadraoCargo(){
+  if(val('f_tipo') !== 'fichado') return;
+  const cargo = DB.cargos.find(cg=>cg.nome === val('f_funcao'));
+  const campo = document.getElementById('f_salario');
+  if(!cargo || !cargo.salarioPadrao || !campo) return;
+  if(!numVal('f_salario')){
+    campo.value = formatarMoeda(cargo.salarioPadrao);
+    campo.dataset.valor = String(cargo.salarioPadrao);
+  }
+}
+
 /* prévia do vale enquanto preenche a ficha */
 function atualizaResumoVale(){
   const box = document.getElementById('valeResumo');
@@ -2189,7 +2291,6 @@ function saveFunc(id){
     regimePagamento: val('f_regimePagamento'),
     /* quem tem data de saída fica inativo por definição — é o que tira ele do ponto */
     status: dDem ? 'inativo' : val('f_status'),
-    duplicataSoContabil: checked('f_duplicataSoContabil'),
     apareceNaFolhaContabil: checked('f_apareceNaFolhaContabil'),
     obraPadrao: val('f_obraPadrao'),
     admissao: val('f_admissao'),
@@ -2254,13 +2355,9 @@ function printFicha(id){
         </span></div>
       </div>
       <div class="frow">
-        <div class="fcell w2"><span class="fl">Tipo de serviço na obra</span><span class="fv">
+        <div class="fcell"><span class="fl">Tipo de serviço na obra</span><span class="fv">
           ${cb(f.tipoServico==='homem_hora','Homem-Hora')}${cb(f.tipoServico==='empreitada','Empreitada')}
         </span></div>
-        <div class="fcell w2"><span class="fl">Periodicidade (diarista)</span><span class="fv">
-          ${f.tipo==='diarista' ? cb(f.periodicidade==='semanal','Semanal')+cb(f.periodicidade==='quinzenal','Quinzenal') : '—'}
-        </span></div>
-        ${fc('Obra', obraNome(f.obraPadrao), 'w2')}
       </div>
     </div>
 
@@ -2290,7 +2387,7 @@ function printFicha(id){
 
     <div class="fbox">
       <div class="fbt">Dados do funcionário</div>
-      <div class="frow">${fc('Funcionário(a)', f.nome, 'w4')}${fc('Matrícula', f.matricula||'')}${fc('C.B.O.', f.cbo||'')}</div>
+      <div class="frow">${fc('Funcionário(a)', f.nome, 'w4')}</div>
       <div class="frow">
         ${fc('Endereço', f.endereco||'', 'w4')}
         ${fc('Nº', f.numero||'')}
@@ -2329,13 +2426,9 @@ function printFicha(id){
       </div>`).join('')}
     </div>
 
-    <div class="assinatura">
-      <div>${esc(DB.empresa.razaoSocial)}</div>
-      <div>${esc(f.nome)}</div>
-    </div>
     ${docFoot()}
   </div>`;
-  doPrint(html);
+  doPrint(html, `Ficha de Admissao - ${f.nome}`);
 }
 /* =========================================================
    PERÍODOS DE PAGAMENTO — sempre terminam numa sexta-feira
@@ -6628,7 +6721,8 @@ function renderConfig(){
           Próximos fechamentos quinzenais: ${listaSextas(0,6).filter(isSextaQuinzenal).slice(0,3).map(fmtDate).join(' · ')}.</p>
         </div>
         <div class="field"><label>Vale-refeição padrão por dia trabalhado (R$)</label>
-          <input type="number" step="0.01" id="c_valorVR" value="${cfg.valorVRPadrao||0}">
+          <input inputmode="decimal" id="c_valorVR" value="${formatarMoeda(cfg.valorVRPadrao)}"
+                 data-valor="${cfg.valorVRPadrao||0}" oninput="mascaraMoeda(this)">
           <p class="help">Vale para quem não tiver um valor próprio na ficha. O vale-transporte é sempre individual,
           porque depende de onde o funcionário mora. Períodos de diarista: semanal = sábado a sexta (7 dias);
           quinzenal = 14 dias terminando na sexta.</p>
@@ -6745,6 +6839,39 @@ function renderConfig(){
           </tbody>
         </table>
       </div>` : `<p class="help">Nenhum feriado cadastrado ainda.</p>`}
+    </div>
+
+    <div class="card">
+      <h2>Cargos / Funções</h2>
+      <p class="help" style="margin-top:0;">
+        Cadastre aqui os cargos da obra. Na ficha do funcionário, "Função / cargo" vira um menu
+        suspenso com esta lista — sem risco de digitar errado (ex.: "Serveente" em vez de
+        "Servente") e o cargo deixar de bater com a ordenação padrão das listas. Cadastre também
+        o <b>salário padrão do fichado</b> por cargo — ao escolher o cargo num fichado novo, o
+        salário já vem preenchido sozinho, só editando se for diferente. Deixe em branco se não
+        houver um valor fixo para o cargo.
+      </p>
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="btn btn-secondary" onclick="sugerirCargosPadrao()">Sugerir os cargos padrão</button>
+        <button class="btn btn-primary" onclick="abrirNovoCargo()">+ Cargo</button>
+      </div>
+      ${DB.cargos.length ? `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Cargo</th><th class="num">Salário padrão (fichado)</th><th></th></tr></thead>
+          <tbody>
+            ${DB.cargos.slice().sort((a,b)=> cargoRank(a.nome)-cargoRank(b.nome) || a.nome.localeCompare(b.nome,'pt-BR')).map(cg=>`
+              <tr>
+                <td>${esc(cg.nome)}</td>
+                <td class="num">${cg.salarioPadrao ? fmtMoney(cg.salarioPadrao) : '—'}</td>
+                <td>
+                  <button class="btn btn-secondary btn-sm" onclick="abrirNovoCargo('${cg.id}')">Editar</button>
+                  <button class="btn btn-danger btn-sm" onclick="removerCargo('${cg.id}')">Remover</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="help">Nenhum cargo cadastrado ainda.</p>`}
     </div>
 
     <div class="card">
@@ -6896,6 +7023,72 @@ function wipeData(){
 }
 
 /* =========================================================
+   CARGOS / FUNÇÕES (10/09/2026)
+
+   Vira o menu suspenso de "Função / cargo" na ficha do funcionário
+   (03_func.js) — evita erro de digitação e cargo fora da ordenação padrão
+   (ORDEM_CARGOS/cargoRank, em 02_core.js). Cada cargo pode levar um salário
+   padrão para preencher sozinho o campo de salário de um fichado novo.
+
+   CARGOS_SUGERIDOS traz só os NOMES, iguais aos grupos de ORDEM_CARGOS — são
+   termos genéricos da construção civil, não identificam a empresa (mesmo
+   raciocínio de CATEGORIAS_SUGERIDAS/feriados nacionais). O salário nunca vem
+   sugerido: é dado real da empresa, só entra pela mão do usuário.
+   ========================================================= */
+const CARGOS_SUGERIDOS = ['Encarregado','Administrativo','Armador','Carpinteiro','Pedreiro','Eletricista','Meio Oficial','Servente'];
+
+function sugerirCargosPadrao(){
+  const existentes = DB.cargos.map(c=>normFuncao(c.nome));
+  const novos = CARGOS_SUGERIDOS.filter(nome=>existentes.indexOf(normFuncao(nome))<0);
+  if(!novos.length){ toast('Os cargos padrão já estão todos cadastrados.'); return; }
+  novos.forEach(nome=> DB.cargos.push({id:uid(), nome, salarioPadrao:0}));
+  saveDB(); renderConfig();
+  toast(`${novos.length} cargo(s) acrescentado(s). Edite cada um para definir o salário padrão do fichado.`);
+}
+function abrirNovoCargo(id){
+  const cg = id ? DB.cargos.find(x=>x.id===id) : null;
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${cg?'Editar':'Novo'} cargo / função</h2>
+    <div class="field"><label>Nome</label><input id="cg_nome" value="${esc(cg?cg.nome:'')}" placeholder="Ex: Servente"></div>
+    <div class="field"><label>Salário padrão do fichado (R$)</label>
+      <input inputmode="decimal" id="cg_salario" value="${formatarMoeda(cg?cg.salarioPadrao:0)}"
+             data-valor="${cg&&cg.salarioPadrao?cg.salarioPadrao:0}" oninput="mascaraMoeda(this)" placeholder="0,00">
+      <p class="help">Deixe em branco se este cargo não tiver um salário fixo.</p>
+    </div>
+    <button class="btn btn-primary" onclick="salvarCargo('${id||''}')">Salvar</button>
+  `);
+}
+function salvarCargo(id){
+  const nome = val('cg_nome').trim();
+  if(!nome){ alert('Informe o nome do cargo.'); return; }
+  if(DB.cargos.some(x=>x.id!==id && normFuncao(x.nome)===normFuncao(nome))){
+    alert('Já existe um cargo com este nome.'); return;
+  }
+  const salarioPadrao = numVal('cg_salario');
+  if(id){
+    const cg = DB.cargos.find(x=>x.id===id);
+    Object.assign(cg, {nome, salarioPadrao});
+  } else {
+    DB.cargos.push({id:uid(), nome, salarioPadrao});
+  }
+  saveDB(); closeModal(); renderConfig();
+  toast('Cargo salvo.');
+}
+function removerCargo(id){
+  const cg = DB.cargos.find(x=>x.id===id);
+  if(!cg) return;
+  const emUso = DB.funcionarios.some(f=>normFuncao(f.funcao)===normFuncao(cg.nome));
+  const aviso = emUso
+    ? ' Há funcionário(s) cadastrado(s) com este cargo — eles continuam com o cargo do jeito que está, só sai da lista de opções do formulário.'
+    : '';
+  if(!confirm(`Remover o cargo "${cg.nome}"?${aviso}`)) return;
+  DB.cargos = DB.cargos.filter(x=>x.id!==id);
+  saveDB(); renderConfig();
+  toast('Cargo removido.');
+}
+
+/* =========================================================
    FERIADOS
 
    Só os NACIONAIS são sugeridos pelo código: são fato público (não identificam
@@ -7003,7 +7196,10 @@ const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','p
   'feriados',
   /* Medição HH (04/09/2026) — mesmo motivo: sem entrar aqui, uma medição
      aprovada num PC (e o lançamento que ela criou) não aparece no outro. */
-  'medicoesHH'];
+  'medicoesHH',
+  /* Cadastro de cargos/funções (10/09/2026) — mesmo motivo: cadastrado num PC,
+     precisa aparecer no menu suspenso da ficha no outro também. */
+  'cargos'];
 /* mapas de dia: {chave: {dias:{iso:status}, ts:{iso:hora}}} */
 const SYNC_MAPAS_DIA = ['pontoMensal'];
 /* mapas simples: {chave: valor} com hora paralela em _meta */
