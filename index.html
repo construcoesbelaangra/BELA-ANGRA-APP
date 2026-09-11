@@ -656,8 +656,17 @@ tr:hover td{background:#fafbfd;}
 .holtab tr.holliq td.lb{text-align:right;white-space:nowrap;}
 .holtab tr.holbase td{border-top:1px solid #000;border-bottom:1.4px solid #000;font-size:8.5px;font-weight:400;vertical-align:top;}
 .holtab tr.holbase td.c{text-align:center;}
+/* Linha entre Salário Base/Base I.N.S.S./Base F.G.T.S. (11/09/2026): os 3 valores
+   dividem o mesmo <td colspan=3> (ver acima) num <div> em flex — sem nenhuma borda entre
+   eles, porque flex não herda a grade da tabela. O holerite real da contabilidade tem
+   linha vertical contínua separando os 3, igual às outras colunas — sem essa borda, o
+   Maycon reportou que "perdeu a linha entre colunas de Base I.N.S.S." (as duas bordas
+   que cercam ela, uma de cada lado). `border-right` no `.hb` (exceto o último) resolve —
+   como `.holbase-esq` tem `align-items` padrão (`stretch`), a borda estica pela altura
+   inteira da linha, igual uma borda de célula de verdade. */
 .holbase-esq{display:flex;justify-content:space-between;gap:2px;}
-.holbase-esq .hb{display:flex;flex-direction:column;align-items:center;flex:1;}
+.holbase-esq .hb{display:flex;flex-direction:column;align-items:center;flex:1;border-right:1px solid #000;}
+.holbase-esq .hb:last-child{border-right:none;}
 .holtab tr.holbase .bl{display:block;font-size:8px;color:#333;}
 .holtab tr.holbase .bv{display:block;font-weight:700;font-size:9.5px;}
 .holdec{text-align:center;font-size:9px;padding:6px 0 2px;}
@@ -736,7 +745,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 73';
+const VERSAO = '2026-09-11 · 74';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
