@@ -745,7 +745,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.2.4';
+const VERSAO = '1.2.5';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1368,6 +1368,16 @@ function opcoesObra(sel){
 }
 function filtraObra(lista, obraId){
   return obraId ? lista.filter(f=>f.obraPadrao===obraId) : lista;
+}
+
+/* Igual `filtraObra`, mas pela obra que valia NUM MÊS específico (respeitando
+   `obraHistorico`), não a obra atual do cadastro — usado em telas que mostram um
+   mês PASSADO (Holerite). Achado pelo Maycon com o Diego Braz (11/09/2026):
+   transferido do Neymar pro Gustavo em setembro, filtrar o Holerite de AGOSTO por
+   "Neymar" não achava ele — `filtraObra` comum olha só `f.obraPadrao` (hoje =
+   Gustavo), escondendo quem já foi embora da obra depois daquele mês. */
+function filtraObraNoMes(lista, obraId, mes){
+  return obraId ? lista.filter(f=>obraDoFuncionarioEm(f, ultimoDiaMes(mes))===obraId) : lista;
 }
 
 /* Obra DEFINITIVA de um FICHADO num dia específico — não confundir com
@@ -6287,7 +6297,7 @@ function renderHolerite(){
   initValesMes();
   if(!holMes) holMes = valesMes;
   const c = document.getElementById('content');
-  const fichados = filtraObra(ativosNoMes(holMes).filter(elegivelHolerite), holObraFiltro);
+  const fichados = filtraObraNoMes(ativosNoMes(holMes).filter(elegivelHolerite), holObraFiltro, holMes);
   if((!holFuncId || !fichados.some(f=>f.id===holFuncId)) && fichados.length) holFuncId = fichados[0].id;
 
   if(!fichados.length){
@@ -6598,7 +6608,7 @@ function printHolerite(comVales){
    sem rubricas em comum pra decidir isso depois. Diarista fictício sem nenhum dia
    trabalhado no mês não entra (não faz sentido um recibo de R$0,00 no lote). */
 function corposHoleriteEmLote(mes, obraFiltro, comVales){
-  const elegiveis = filtraObra(ativosNoMes(mes).filter(elegivelHolerite), obraFiltro);
+  const elegiveis = filtraObraNoMes(ativosNoMes(mes).filter(elegivelHolerite), obraFiltro, mes);
   return elegiveis.map(f=>{
     if(f.tipo==='diarista' && f.holeriteDiarista && !f.apareceNaFolhaContabil){
       const r = calcReciboDiariaHolerite(f, mes);
