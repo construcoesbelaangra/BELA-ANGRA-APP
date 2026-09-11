@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 69';
+const VERSAO = '2026-09-11 · 70';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1821,15 +1821,33 @@ function nomeArquivoSeguro(s){
    lado do recibo A5 (duas regras `@page` diferentes coexistindo não é bem
    suportado). Com um `<style>` só, sempre existe UMA regra `@page` de cada
    vez, e não teve esse problema.
-   **Bug real, achado pelo Maycon em 11/09/2026**: `size:A5 landscape` (nome +
+   **Bug real #1, achado pelo Maycon em 11/09/2026**: `size:A5 landscape` (nome +
    palavra-chave de orientação) saía "A4 deitado" no diálogo de impressão — e
-   no PDF salvo também — em vez de A5. O navegador reconhece a palavra
-   `landscape` e lembra ela entre impressões, mas nem toda versão do
-   Chrome/Edge reconhece "A5" como tamanho nomeado no diálogo; sem reconhecer,
-   ele volta pro tamanho anterior (A4) e só a orientação "gruda". **Corrigido**
-   usando as DIMENSÕES em mm direto (`210mm 148mm` = largura × altura de um A5
-   deitado) em vez do nome — isso não depende do navegador reconhecer "A5",
-   só medir milímetros, que é universal. */
+   no PDF salvo também — em vez de A5.
+
+   **Bug real #2, achado no mesmo dia, DEPOIS de trocar para `size:210mm
+   148mm` (dimensões, sem nome nenhum)**: o diálogo de impressão passou a
+   mostrar A5 certinho, mas o Maycon reportou que o ARQUIVO SALVO continuava
+   "girado". Investiguei abrindo o PDF que ele gerou de verdade (recibo do
+   Ananias) com `pypdf`: o `MediaBox` saiu **148mm × 210mm — A5 RETRATO,
+   trocado**, com `Rotate:0` — ou seja, o Chromium reconheceu o PAR de
+   números `210×148` como "isso é A5" (é o tamanho oficial ISO, só que
+   invertido) e **forçou o MediaBox de volta pro formato retrato oficial do
+   A5**, sem sinalizar rotação nenhuma — só que o CONTEÚDO já tinha sido
+   desenhado assumindo a folha deitada (210 de largura), e sobrou espremido/
+   girado dentro da folha em pé errada. É basicamente o mesmo bug #1, só que
+   "o motor bate na tabela de tamanhos conhecidos e força o valor oficial",
+   agora batendo pelas DIMENSÕES em vez de pelo NOME — é um bug do Chromium
+   documentado desde 2011 (Issue 79847), não fica restrito a nomes de papel.
+   **Corrigido de vez**: `211mm 149mm` — as MESMAS dimensões de um A5 deitado,
+   só que 1mm fora do valor oficial ISO de propósito, pra NUNCA bater
+   exatamente com nenhum tamanho da tabela do navegador (A4/A5/Letter/Legal
+   etc. têm valores oficiais fixos; 211×149 não é nenhum deles). A diferença
+   de 1mm é imperceptível no papel e na área útil do recibo — não precisou
+   mudar nenhum CSS de conteúdo. **Se algum dia voltar a "girar" de novo,
+   suspeitar primeiro de uma versão do navegador que também reconheça este
+   par específico — trocar por outro valor não-redondo (ex.: 213mm/151mm)
+   resolveria do mesmo jeito.** */
 /* Margem zero (10/09/2026): documento com a classe `doc-margem-zero` (por
    enquanto só a ficha de admissão) imprime com `@page{margin:0}` — o
    cabeçalho/rodapé que o PRÓPRIO NAVEGADOR desenha (data/hora, título da aba)
@@ -1841,15 +1859,31 @@ function doPrint(html, nomeArquivo){
   const estiloPagina = document.getElementById('printPageStyle');
   if(estiloPagina){
     estiloPagina.textContent = html.indexOf('doc-recibo') >= 0
-      ? '@page{size:210mm 148mm;margin:8mm;}'
+      ? '@page{size:211mm 149mm;margin:8mm;}'
       : html.indexOf('doc-margem-zero') >= 0
         ? '@page{size:A4 portrait;margin:0;}' : '';
   }
   if(nomeArquivo){
     const tituloAntigo = document.title;
     document.title = nomeArquivoSeguro(nomeArquivo);
+    let restaurado = false;
+    const restaurar = function(){
+      if(restaurado) return;
+      restaurado = true;
+      document.title = tituloAntigo;
+    };
+    /* 11/09/2026: trocado de um `setTimeout(800)` fixo para o evento
+       `afterprint` (com o timeout como rede de segurança, bem mais longo). O
+       Maycon relatou o Vale VT/VR sem sugestão de nome nenhuma — suspeita: no
+       app INSTALADO (PWA), `window.print()` pode não travar a execução do
+       jeito síncrono de uma aba comum, e 800ms era curto demais: o título
+       voltava ao normal ANTES do diálogo "Salvar como" ler o nome sugerido.
+       `afterprint` dispara só depois que o diálogo de impressão realmente
+       fecha, então o título fica trocado pelo tempo que for preciso, não um
+       número de ms chutado. */
+    window.addEventListener('afterprint', restaurar, {once:true});
     window.print();
-    setTimeout(()=>{ document.title = tituloAntigo; }, 800);
+    setTimeout(restaurar, 3000);
   } else {
     window.print();
   }
