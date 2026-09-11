@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 66';
+const VERSAO = '2026-09-11 · 67';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4493,7 +4493,7 @@ function mensagemPagamento(x){
   if(x.totalDias) l.push(`${x.totalDias} ${x.totalDias===1?'diária':'diárias'} = ${fmtMoney(x.bruto)}`);
   if(x.totalComissao) l.push(`comissão = +${fmtMoney(x.totalComissao)}`);
   if(x.totalVales) l.push(`vale = -${fmtMoney(x.totalVales)}`);
-  if(x.totalVtExtra) l.push(`vale-transporte extra = +${fmtMoney(x.totalVtExtra)}`);
+  if(x.totalVtExtra) l.push(`passagem = ${fmtMoney(x.totalVtExtra)}`);
   l.push(`total = ${fmtMoney(x.liquido)}`);
   return l.join('\n');
 }
