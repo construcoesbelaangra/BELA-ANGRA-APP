@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 70';
+const VERSAO = '2026-09-11 · 71';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -3263,7 +3263,7 @@ function printFolhaPontoMensal(){
   const fal = getFaltasMes(pmFuncId, ym);
   const html = `
   <div class="doc">
-    ${docHead('Folha de Ponto Mensal', `${esc(f.nome)} — ${esc(f.funcao||'')} — ${monthLabel(ym)}`, `Obra<br><b>${esc(obraNome(f.obraPadrao))}</b>`)}
+    ${docHead('Folha de Ponto Mensal', `${esc(f.nome)} — ${esc(funcaoHistoricaEm(f, ultimoDiaMes(ym)))} — ${monthLabel(ym)}`, `Obra<br><b>${esc(obraNome(f.obraPadrao))}</b>`)}
     <table class="dtab">
       <thead><tr><th style="width:8%">Dia</th><th style="width:10%">Sem.</th><th style="width:40%">Ocorrência</th><th>Assinatura do funcionário</th></tr></thead>
       <tbody>${linhas}</tbody>
@@ -3880,7 +3880,7 @@ function printFolhaContabilidade(){
       return `<tr>
         <td class="c">${i+1}</td>
         <td>${esc(f.nome)}</td>
-        <td>${esc((f.funcao||'').toUpperCase())}</td>
+        <td>${esc(funcaoHistoricaEm(f, ultimoDiaMes(ym)).toUpperCase())}</td>
         ${celulas}
         <td class="c"><b>${total}</b></td>
       </tr>`;
@@ -5986,7 +5986,7 @@ function reciboValeHTML(funcId){
 
   return `
   <div class="doc doc-recibo">
-    ${docHead('Recibo de Vale — Transporte e Alimentação', `${esc(f.nome)} — ${esc(f.funcao||'')}`,
+    ${docHead('Recibo de Vale — Transporte e Alimentação', `${esc(f.nome)} — ${esc(funcaoHistoricaEm(f, ultimoDiaMes(valesMes)))}`,
       `Referência<br><b>${monthLabel(valesMes)}</b>`)}
     <table class="dtab">
       <thead><tr><th>Descrição</th><th style="width:30%">Cálculo</th><th style="width:22%;text-align:right;">Valor (R$)</th></tr></thead>
@@ -6233,7 +6233,7 @@ function reciboDiariaHoleriteHTML(f, mes){
     <div class="hfun">
       <div class="l">
         <b>${esc(f.matricula||'----')}-${esc((f.nome||'').toUpperCase())}</b><br>
-        FUNÇÃO : ${esc((f.funcao||'').toUpperCase())}
+        FUNÇÃO : ${esc(funcaoHistoricaEm(f, ultimoDiaMes(mes)).toUpperCase())}
       </div>
       <div class="r">CPF: ${esc(f.cpf||'—')}</div>
     </div>
@@ -6516,7 +6516,7 @@ function holeriteViaHTML(f, h, comVales){
     <div class="hfun">
       <div class="l">
         <b>${esc(f.matricula||'----')}-${esc((f.nome||'').toUpperCase())}</b><br>
-        FUNÇÃO : ${esc((f.funcao||'').toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${f.admissao?fmtDate(f.admissao):'--/--/----'}
+        FUNÇÃO : ${esc(funcaoHistoricaEm(f, ultimoDiaMes(h.mes)).toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${f.admissao?fmtDate(f.admissao):'--/--/----'}
       </div>
       <div class="r">C.B.O.: ${esc(f.cbo||'—')}<br>CPF: ${esc(f.cpf||'—')}</div>
     </div>
@@ -6707,7 +6707,7 @@ function encargosViaHTML(f, mes){
     <div class="hfun">
       <div class="l">
         <b>${esc(f.matricula||'----')}-${esc((f.nome||'').toUpperCase())}</b><br>
-        FUNÇÃO : ${esc((f.funcao||'').toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${f.admissao?fmtDate(f.admissao):'--/--/----'}
+        FUNÇÃO : ${esc(funcaoHistoricaEm(f, ultimoDiaMes(mes)).toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${f.admissao?fmtDate(f.admissao):'--/--/----'}
       </div>
       <div class="r">OBRA: ${esc(obraNome(f.obraPadrao).toUpperCase())}<br>${esc((SERVICO_LABEL[f.tipoServico]||'').toUpperCase())}</div>
     </div>
