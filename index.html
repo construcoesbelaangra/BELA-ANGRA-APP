@@ -536,6 +536,14 @@ tr:hover td{background:#fafbfd;}
    de admissão e no Holerite (recibo de pagamento) — ver doPrint. */
 .doc-margem-zero{padding:10mm;}
 
+/* Holerite em UMA via, A5 (11/09/2026): mesma ideia do `doc-margem-zero` acima, mas na
+   página curta do recibo (`@page{size:211mm 149mm}`, ver doPrint) — devolve o mesmo
+   espaço do `margin:8mm` do `doc-recibo` normal como padding, porque aqui a margem da
+   página também precisa ir a zero (senão volta o cabeçalho do navegador, que o holerite
+   normal já evita com `doc-margem-zero`). Não reaproveita `.doc-recibo` porque aquele
+   mantém `margin:8mm` de propósito (é usado por documentos sem essa preocupação). */
+.doc-holerite-unica{padding:8mm;}
+
 /* cabeçalho institucional */
 .dhead{display:flex;align-items:center;gap:12px;border-bottom:2.5px solid #1c4fd8;padding-bottom:8px;margin-bottom:12px;}
 .dhead img{width:54px;height:54px;object-fit:contain;}
@@ -728,7 +736,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 71';
+const VERSAO = '2026-09-11 · 72';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1858,10 +1866,12 @@ function doPrint(html, nomeArquivo){
   document.getElementById('printArea').innerHTML = html;
   const estiloPagina = document.getElementById('printPageStyle');
   if(estiloPagina){
-    estiloPagina.textContent = html.indexOf('doc-recibo') >= 0
-      ? '@page{size:211mm 149mm;margin:8mm;}'
-      : html.indexOf('doc-margem-zero') >= 0
-        ? '@page{size:A4 portrait;margin:0;}' : '';
+    estiloPagina.textContent = html.indexOf('doc-holerite-unica') >= 0
+      ? '@page{size:211mm 149mm;margin:0;}'
+      : html.indexOf('doc-recibo') >= 0
+        ? '@page{size:211mm 149mm;margin:8mm;}'
+        : html.indexOf('doc-margem-zero') >= 0
+          ? '@page{size:A4 portrait;margin:0;}' : '';
   }
   if(nomeArquivo){
     const tituloAntigo = document.title;
@@ -6386,6 +6396,7 @@ function renderHoleriteFuncionario(f){
       <button class="btn btn-secondary" onclick="printHolerite(true)">Gerar recibo de pagamento com vales (PDF)</button>
       <button class="btn btn-secondary" onclick="printTodosHolerites(false)">Gerar de todos os fichados (PDF)</button>
       <button class="btn btn-secondary" onclick="printTodosHolerites(true)">Gerar de todos os fichados com vales (PDF)</button>
+      <button class="btn btn-secondary" onclick="printTodosHoleritesUnicaVia()">Gerar de todos os fichados — uma via, A5 (PDF)</button>
       <button class="btn btn-danger"    onclick="limparHolerite()">Limpar lançamentos deste mês</button>
     </div>
     <p class="help">
@@ -6574,6 +6585,30 @@ function printTodosHolerites(comVales){
     const h = getHolerite(f.id, holMes);
     return `<div class="doc doc-margem-zero ${i<comDados.length-1?'pagebreak':''}">${holeriteViaHTML(f,h,comVales)}${holeriteViaHTML(f,h,comVales)}</div>`;
   }).join(''), `${nomeGrupo} - ${monthLabel(holMes)}`);
+}
+
+/* Uma via só, em A5 — pedido do Maycon em 11/09/2026: o holerite normal sai em DUAS
+   vias (empresa + funcionário) numa folha A4, de propósito (é o padrão do documento da
+   contabilidade — ver `printHolerite`/`printTodosHolerites`, cada um chama
+   `holeriteViaHTML` duas vezes). Para quem só precisa arquivar uma via, sem gastar a
+   folha inteira em branco, esta opção imprime UMA via só, numa folha A5 — mesmo tamanho
+   físico do recibo curto (`doc-recibo`, ver "Recibos em A5 deitado" no CLAUDE.md), mas
+   com margem ZERADA (`doc-holerite-unica`, não `doc-recibo`) porque o holerite já usa
+   `doc-margem-zero` nas outras opções — sem isso o cabeçalho do NAVEGADOR (data/hora)
+   voltaria a aparecer, só nesta opção. Sempre COM vales (pedido explícito) — não tem
+   sentido oferecer "uma via, sem vales" separado, já existem os outros botões pra isso. */
+function printTodosHoleritesUnicaVia(){
+  const fichados = filtraObra(ativosNoMes(holMes).filter(elegivelHolerite), holObraFiltro);
+  const comDados = fichados.filter(f=>{
+    const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===holMes);
+    return h && RUBRICAS_VENC.some(r=>Number(h.venc[r.k])>0);
+  });
+  if(!comDados.length){ alert(holObraFiltro ? 'Nenhum holerite preenchido neste mês, nesta obra.' : 'Nenhum holerite preenchido neste mês.'); return; }
+  const nomeGrupo = holObraFiltro ? `Holerites ${obraNome(holObraFiltro)}` : 'Holerites Todos os Funcionarios';
+  doPrint(comDados.map((f,i)=>{
+    const h = getHolerite(f.id, holMes);
+    return `<div class="doc doc-holerite-unica ${i<comDados.length-1?'pagebreak':''}">${holeriteViaHTML(f,h,true)}</div>`;
+  }).join(''), `${nomeGrupo} - Uma Via - ${monthLabel(holMes)}`);
 }
 
 /* ---------- ABA 2: demonstrativo de encargos (para o cliente) ---------- */
