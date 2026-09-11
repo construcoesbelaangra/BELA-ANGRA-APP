@@ -745,7 +745,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 74';
+const VERSAO = '2026-09-11 · 75';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6567,7 +6567,10 @@ function holeriteViaHTML(f, h, comVales){
             <span class="hb"><span class="bl">Base F.G.T.S.</span><span class="bv">${fmtNum(t.baseFgts)}</span></span>
           </div></td>
           <td class="c"><span class="bl">Vl. F.G.T.S.</span><span class="bv">${fmtNum(t.valorFgts)}</span></td>
-          <td class="c"><span class="bl">Base I.R.R.F. (${fmtOpt(h.aliqIrrf)||'00,00'}%)</span><span class="bv">${fmtOpt(h.baseIrrf)||'0,00'}</span></td>
+          <td class="c"><div class="holbase-esq">
+            <span class="hb"><span class="bl">Base I.R.R.F.</span><span class="bv">${fmtOpt(h.baseIrrf)||'0,00'}</span></span>
+            <span class="hb"><span class="bl">%</span><span class="bv">${fmtOpt(h.aliqIrrf)||'00,00'}</span></span>
+          </div></td>
         </tr>
       </tfoot>
     </table>
