@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 65';
+const VERSAO = '2026-09-11 · 66';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4488,7 +4488,10 @@ function togglePago(funcId, sexta, per, valor){
    --------------------------------------------------------- */
 function mensagemPagamento(x){
   const l = [x.f.nome, ''];
-  l.push(`${x.totalDias} ${x.totalDias===1?'diária':'diárias'} = ${fmtMoney(x.bruto)}`);
+  /* apenasComissao (fichado só com comissão, ex.: Jonathan) não tem diária nenhuma —
+     "0 diárias = R$0,00" só confundia, sem explicar de onde vinha o valor. */
+  if(x.totalDias) l.push(`${x.totalDias} ${x.totalDias===1?'diária':'diárias'} = ${fmtMoney(x.bruto)}`);
+  if(x.totalComissao) l.push(`comissão = +${fmtMoney(x.totalComissao)}`);
   if(x.totalVales) l.push(`vale = -${fmtMoney(x.totalVales)}`);
   if(x.totalVtExtra) l.push(`vale-transporte extra = +${fmtMoney(x.totalVtExtra)}`);
   l.push(`total = ${fmtMoney(x.liquido)}`);
@@ -4702,16 +4705,31 @@ function renderFechamento(){
   `;
 }
 
-/* ---- Recibo individual do diarista ---- */
+/* ---- Recibo individual do diarista (ou comissão-só de fichado) ----
+   `x.apenasComissao` (11/09/2026, achado com o caso do Jonathan): a linha sintética de
+   comissão de um FICHADO (`linhasComissaoFichados`, 05_diarista.js) usa a MESMA forma de
+   `x` que um diarista de verdade (mesmo `calcDiarista`-shape), pra caber na mesma lista
+   de fechamento e no mesmo botão "Recibo" — mas até aqui o recibo sempre dizia
+   "Diarista" e sempre mostrava "Total de diárias (0 dias): R$ 0,00" pra quem só tinha
+   comissão (totalDias=0), sem nenhuma linha explicando de onde vinha o valor. Corrigido:
+   título e declaração mudam pra "Comissão" quando `apenasComissao`, a linha "Total de
+   diárias" só aparece quando há dias de verdade, e a comissão ganha sua PRÓPRIA linha
+   na tabela (valia pra diarista com comissão também — não só o caso do fichado). */
 function reciboDiaristaHTML(x){
   const f = x.f;
   const linhas = [];
   if(x.totalDias) linhas.push({d:'Diárias trabalhadas', ref:`${x.totalDias} × ${fmtMoney(x.vd)}`, v:x.bruto});
+  if(x.totalComissao) linhas.push({d:'Comissão do período', ref:'', v:x.totalComissao});
+
+  const titulo = x.apenasComissao ? 'Recibo de Pagamento — Comissão' : 'Recibo de Pagamento — Diarista';
+  const periodicidadeLabel = x.apenasComissao
+    ? PERIODICIDADE_LABEL[f.periodicidadeComissao || 'semanal']
+    : PERIODICIDADE_LABEL[f.periodicidade];
 
   return `
   <div class="doc doc-recibo">
-    ${docHead('Recibo de Pagamento — Diarista', `${esc(f.nome)} — ${esc(f.funcao||'')}`,
-      `Pagamento em<br><b>${fmtDate(x.periodo.fim)}</b><br>${PERIODICIDADE_LABEL[f.periodicidade]}`)}
+    ${docHead(titulo, `${esc(f.nome)} — ${esc(f.funcao||'')}`,
+      `Pagamento em<br><b>${fmtDate(x.periodo.fim)}</b><br>${periodicidadeLabel}`)}
 
     <table class="dtab">
       <tbody>
@@ -4727,13 +4745,13 @@ function reciboDiaristaHTML(x){
       <tbody>
         ${linhas.map(l=>`<tr><td>${l.d}</td><td>${l.ref}</td><td class="n">${fmtMoney(l.v)}</td></tr>`).join('')}
         ${x.faltas ? `<tr><td>Faltas no período</td><td class="c">${x.faltas} dia(s)</td><td class="n">—</td></tr>` : ''}
-        <tr><td colspan="2" style="text-align:right;font-weight:800;">Total de diárias (${x.totalDias} dia${x.totalDias===1?'':'s'})</td>
-            <td class="n" style="font-weight:800;">${fmtMoney(x.bruto)}</td></tr>
+        ${x.totalDias ? `<tr><td colspan="2" style="text-align:right;font-weight:800;">Total de diárias (${x.totalDias} dia${x.totalDias===1?'':'s'})</td>
+            <td class="n" style="font-weight:800;">${fmtMoney(x.bruto)}</td></tr>` : ''}
         ${x.vales.length ? `
           <tr class="grp"><td colspan="3">Vales / adiantamentos descontados</td></tr>
           ${x.vales.map(v=>`<tr><td>${esc(v.descricao||'Vale')}</td><td>${fmtDate(v.data)}</td><td class="n">- ${fmtMoney(v.valor)}</td></tr>`).join('')}
           <tr><td colspan="2" style="text-align:right;font-weight:800;">Total de vales</td><td class="n" style="font-weight:800;">- ${fmtMoney(x.totalVales)}</td></tr>
-        ` : `<tr><td colspan="2">Vales / adiantamentos no período</td><td class="n">—</td></tr>`}
+        ` : (x.apenasComissao ? '' : `<tr><td colspan="2">Vales / adiantamentos no período</td><td class="n">—</td></tr>`)}
         ${x.totalVtExtra ? `<tr><td colspan="2" style="text-align:right;font-weight:800;">Vale-transporte extra (dias de ônibus)</td>
             <td class="n" style="font-weight:800;">+ ${fmtMoney(x.totalVtExtra)}</td></tr>` : ''}
       </tbody>
@@ -4744,7 +4762,7 @@ function reciboDiaristaHTML(x){
 
     ${x.quentinhas ? `<p class="dnote">Quentinhas fornecidas no período: <b>${x.quentinhas}</b> (fornecidas pela empresa, sem desconto).</p>` : ''}
     <p class="dnote">Declaro que recebi de ${esc(DB.empresa.razaoSocial)} a importância de <b>${fmtMoney(x.liquido)}</b>,
-    referente às diárias do período de ${periodoLabel(x.periodo)}, dando plena quitação pelo período.</p>
+    referente ${x.apenasComissao ? 'à comissão' : 'às diárias'} do período de ${periodoLabel(x.periodo)}, dando plena quitação pelo período.</p>
 
     <div class="assinatura"><div>${esc(f.nome)}</div><div>Angra dos Reis, ____/____/________</div></div>
     ${docFoot()}
