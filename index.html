@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-10 · 64';
+const VERSAO = '2026-09-11 · 65';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4142,8 +4142,8 @@ function renderCalendarDiarista(){
       <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
       <div class="st">${bloqueado?'<span style="color:#9aa0ab;">—</span>':(PD_SIGLA[st]||'')}</div>
       ${bloqueado?'':`<span class="qbtn ${e&&e.quentinha?'on':''}" onclick="event.stopPropagation(); toggleQuentinha('${iso}')" title="Marcar quentinha">🍱</span>`}
-      ${bloqueado?'':`<span class="qbtn2 ${e&&(e.funcao||e.comissao)?'on':''}" onclick="event.stopPropagation(); abrirFuncaoComissaoDiaristaModal('${iso}')"
-        title="${e&&(e.funcao||e.comissao)?'Hoje: '+esc([e.funcao?'função '+e.funcao:'', e.comissao?'comissão '+fmtMoney(e.comissao):''].filter(Boolean).join(', ')):'Marcar função diferente e/ou comissão do dia'}">💰</span>`}
+      ${bloqueado?'':`<span class="qbtn2 ${e&&(e.funcao||e.comissao||e.vtExtra)?'on':''}" onclick="event.stopPropagation(); abrirFuncaoComissaoDiaristaModal('${iso}')"
+        title="${e&&(e.funcao||e.comissao||e.vtExtra)?'Hoje: '+esc([e.funcao?'função '+e.funcao:'', e.comissao?'comissão '+fmtMoney(e.comissao):'', e.vtExtra?'VT extra '+fmtMoney(e.vtExtra):''].filter(Boolean).join(', ')):'Marcar função diferente, comissão e/ou VT extra do dia'}">💰</span>`}
     </div>`;
   }
 
@@ -4213,10 +4213,16 @@ function toggleQuentinha(iso){
   saveDB(); renderPontoDiarista();
 }
 
-/* --------- FUNÇÃO E COMISSÃO DO DIA, DIARISTA (05/09/2026) ---------
+/* --------- FUNÇÃO, COMISSÃO E VT EXTRA DO DIA, DIARISTA (05 e 11/09/2026) ---------
    Mesma ideia da exceção de obra do dia dos fichados (`abrirExcecaoDiaModal`,
    04_obras_ponto.js), mas o dia do diarista já É o próprio registro — os
-   campos entram direto nele, sem precisar de um objeto de exceção separado. */
+   campos entram direto nele, sem precisar de um objeto de exceção separado.
+   VT extra (11/09/2026): pedido do Maycon — diarista que ele normalmente leva de
+   carro (não recebe VT, diferente do fichado — ver "Diarista não recebe VT/VR por
+   fora" no CLAUDE.md), mas nalgum dia precisou ir de ônibus por conta própria.
+   Campo SEPARADO da comissão de propósito (motivo diferente: reembolso de
+   passagem, não prêmio por trocar de função), mesmo caindo no mesmo modal — os
+   dois só têm em comum ser "exceção pontual daquele dia". */
 function abrirFuncaoComissaoDiaristaModal(iso){
   const f = func(pdFuncId);
   if(!f) return;
@@ -4224,10 +4230,10 @@ function abrirFuncaoComissaoDiaristaModal(iso){
   const e = pdEntry(pdFuncId, iso) || {};
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
-    <h2>Função e comissão do dia — ${fmtDate(iso)}</h2>
+    <h2>Exceções do dia — ${fmtDate(iso)}</h2>
     <p class="help">De sempre: função <b>${esc(f.funcao||'—')}</b>. Preencha só o que for
       diferente NESTE DIA — não muda o cadastro dele.</p>
-    <div class="grid grid-2">
+    <div class="grid grid-3">
       <div class="field"><label>Função neste dia (categoria de cobrança na Medição HH)</label>
         <select id="fc_funcao">
           <option value="">— função de sempre —</option>
@@ -4235,7 +4241,11 @@ function abrirFuncaoComissaoDiaristaModal(iso){
         </select></div>
       <div class="field"><label>Comissão do dia (R$)</label>
         <input type="number" step="0.01" id="fc_comissao" value="${e.comissao||''}" placeholder="0,00"></div>
+      <div class="field"><label>VT extra do dia (R$)</label>
+        <input type="number" step="0.01" id="fc_vtextra" value="${e.vtExtra||''}" placeholder="0,00"></div>
     </div>
+    <p class="help" style="margin-top:-6px;">VT extra é pra quem normalmente vai de carro mas precisou de ônibus
+      neste dia — soma direto no líquido do fechamento, separado da comissão.</p>
     <div class="modal-actions">
       <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
       <button type="button" class="btn btn-primary" onclick="salvarFuncaoComissaoDiarista('${iso}')">Salvar</button>
@@ -4248,16 +4258,18 @@ function salvarFuncaoComissaoDiarista(iso){
   if(!f) return;
   const funcaoEscolhida = val('fc_funcao').trim();
   const comissaoEscolhida = numVal('fc_comissao');
+  const vtExtraEscolhido = numVal('fc_vtextra');
   let e = pdEntry(pdFuncId, iso);
   if(!e){
-    if(!funcaoEscolhida && !comissaoEscolhida){ closeModal(); return; }
+    if(!funcaoEscolhida && !comissaoEscolhida && !vtExtraEscolhido){ closeModal(); return; }
     e = {id:uid(), funcionarioId:pdFuncId, obraId:f.obraPadrao||'', data:iso, status:'', quentinha:false};
     DB.pontoDiarista.push(e);
   }
   e.funcao = funcaoEscolhida;
   e.comissao = comissaoEscolhida;
+  e.vtExtra = vtExtraEscolhido;
   /* limpa o registro se não sobrou nada nele (mesma disciplina de toggleQuentinha) */
-  if(!e.status && !e.quentinha && !e.funcao && !e.comissao){
+  if(!e.status && !e.quentinha && !e.funcao && !e.comissao && !e.vtExtra){
     DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
   }
   saveDB(); closeModal(); renderPontoDiarista();
@@ -4267,7 +4279,7 @@ function salvarFuncaoComissaoDiarista(iso){
 /* ---- cálculo de um diarista dentro de um período ---- */
 function calcDiarista(f, periodo){
   const vd = f.valorDiaria||0;
-  let diasTrabalhados=0, faltas=0, quentinhas=0, totalComissao=0;
+  let diasTrabalhados=0, faltas=0, quentinhas=0, totalComissao=0, totalVtExtra=0;
   const detalhe = [];
   let iso = periodo.inicio;
   while(iso <= periodo.fim){
@@ -4277,6 +4289,12 @@ function calcDiarista(f, periodo){
       else if(e.status==='falta') faltas++;
       if(e.quentinha) quentinhas++;
       if(e.status) detalhe.push({data:iso, status:e.status, quentinha:!!e.quentinha});
+      /* VT extra do dia (11/09/2026): quem normalmente é levado de carro (sem VT),
+         mas nalgum dia precisou ir de ônibus — reembolso pontual daquele dia, ver
+         `abrirFuncaoComissaoDiaristaModal`. Separado de propósito da comissão (função
+         diferente no dia): são motivos diferentes, mesmo que os dois só somem no
+         líquido do fechamento. */
+      if(e.vtExtra) totalVtExtra += Number(e.vtExtra)||0;
     }
     totalComissao += comissaoNoDia(f, iso);   // função/comissão do dia, ver 02_core.js
     iso = addDays(iso, 1);
@@ -4292,8 +4310,8 @@ function calcDiarista(f, periodo){
   return {
     f, periodo, vd,
     faltas, quentinhas, detalhe, bruto,
-    vales, totalVales, totalComissao,
-    liquido: bruto - totalVales + totalComissao,
+    vales, totalVales, totalComissao, totalVtExtra,
+    liquido: bruto - totalVales + totalComissao + totalVtExtra,
     totalDias: diasTrabalhados
   };
 }
@@ -4330,7 +4348,7 @@ function calcsDoFechamento(sexta, obraFiltro){
     if(obraFiltro) lista = lista.filter(f=>f.obraPadrao===obraFiltro);
     lista.forEach(f=>{
       const x = calcDiarista(f, periodo);
-      if(x.totalDias>0 || x.totalVales>0 || x.faltas>0 || x.totalComissao>0) out.push(x);
+      if(x.totalDias>0 || x.totalVales>0 || x.faltas>0 || x.totalComissao>0 || x.totalVtExtra>0) out.push(x);
     });
   });
   out.push(...linhasComissaoFichados(sexta, obraFiltro));
@@ -4472,6 +4490,7 @@ function mensagemPagamento(x){
   const l = [x.f.nome, ''];
   l.push(`${x.totalDias} ${x.totalDias===1?'diária':'diárias'} = ${fmtMoney(x.bruto)}`);
   if(x.totalVales) l.push(`vale = -${fmtMoney(x.totalVales)}`);
+  if(x.totalVtExtra) l.push(`vale-transporte extra = +${fmtMoney(x.totalVtExtra)}`);
   l.push(`total = ${fmtMoney(x.liquido)}`);
   return l.join('\n');
 }
@@ -4544,6 +4563,7 @@ function renderFechamento(){
   const totalBruto    = calcs.reduce((s,x)=>s+x.bruto,0);
   const totalVales    = calcs.reduce((s,x)=>s+x.totalVales,0);
   const totalComissao = calcs.reduce((s,x)=>s+x.totalComissao,0);
+  const totalVtExtra  = calcs.reduce((s,x)=>s+(x.totalVtExtra||0),0);
   const totalLiq      = calcs.reduce((s,x)=>s+x.liquido,0);
   const totalQuent    = calcs.reduce((s,x)=>s+x.quentinhas,0);
 
@@ -4586,7 +4606,7 @@ function renderFechamento(){
         <div class="kpi"><div class="v">${calcs.length}</div><div class="l">Diaristas/fichados no fechamento</div></div>
         <div class="kpi"><div class="v">${fmtMoney(totalBruto)}</div><div class="l">Total em diárias</div></div>
         <div class="kpi"><div class="v" style="color:var(--vermelho);">${fmtMoney(totalVales)}</div><div class="l">Vales a descontar</div></div>
-        <div class="kpi"><div class="v">${fmtMoney(totalLiq)}</div><div class="l">Líquido a pagar${totalQuent?` · ${totalQuent} quentinhas`:''}${totalComissao?` · +${fmtMoney(totalComissao)} de comissão`:''}</div></div>
+        <div class="kpi"><div class="v">${fmtMoney(totalLiq)}</div><div class="l">Líquido a pagar${totalQuent?` · ${totalQuent} quentinhas`:''}${totalComissao?` · +${fmtMoney(totalComissao)} de comissão`:''}${totalVtExtra?` · +${fmtMoney(totalVtExtra)} de VT extra`:''}</div></div>
       </div>
 
       ${calcs.length ? `
@@ -4635,7 +4655,7 @@ function renderFechamento(){
             <thead><tr>
               <th>Funcionário</th><th>Vínculo</th><th class="num">Diárias</th>
               <th class="num">Faltas</th><th class="num">Valor diária</th><th class="num">Bruto</th>
-              <th class="num">Vales</th><th class="num">Comissão</th><th class="num">Líquido</th><th style="width:60px;">Pago</th><th></th>
+              <th class="num">Vales</th><th class="num">Comissão</th><th class="num">VT extra</th><th class="num">Líquido</th><th style="width:60px;">Pago</th><th></th>
             </tr></thead>
             <tbody>
               ${grupo.map(x=>{
@@ -4652,6 +4672,7 @@ function renderFechamento(){
                 <td class="num">${x.apenasComissao?'':fmtMoney(x.bruto)}</td>
                 <td class="num" style="color:var(--vermelho);">${x.totalVales?'- '+fmtMoney(x.totalVales):''}</td>
                 <td class="num" style="color:var(--verde);">${x.totalComissao?'+ '+fmtMoney(x.totalComissao):''}</td>
+                <td class="num" style="color:var(--verde);">${x.totalVtExtra?'+ '+fmtMoney(x.totalVtExtra):''}</td>
                 <td class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(x.liquido)}</td>
                 <td class="num">
                   <input type="checkbox" ${pg?'checked':''} style="width:17px;height:17px;cursor:pointer;"
@@ -4665,7 +4686,7 @@ function renderFechamento(){
                 </td>
               </tr>`;}).join('')}
             </tbody>
-            <tfoot><tr><th colspan="8" style="text-align:right;">Subtotal da obra</th><th class="num">${fmtMoney(sub)}</th><th></th><th></th></tr></tfoot>
+            <tfoot><tr><th colspan="9" style="text-align:right;">Subtotal da obra</th><th class="num">${fmtMoney(sub)}</th><th></th><th></th></tr></tfoot>
           </table>
         </div>`;
       }).join('') : `<div class="empty">Nenhum lançamento de ponto para diaristas nesta sexta. Lance o ponto em "Ponto", na folha Diaristas.</div>`}
@@ -4713,6 +4734,8 @@ function reciboDiaristaHTML(x){
           ${x.vales.map(v=>`<tr><td>${esc(v.descricao||'Vale')}</td><td>${fmtDate(v.data)}</td><td class="n">- ${fmtMoney(v.valor)}</td></tr>`).join('')}
           <tr><td colspan="2" style="text-align:right;font-weight:800;">Total de vales</td><td class="n" style="font-weight:800;">- ${fmtMoney(x.totalVales)}</td></tr>
         ` : `<tr><td colspan="2">Vales / adiantamentos no período</td><td class="n">—</td></tr>`}
+        ${x.totalVtExtra ? `<tr><td colspan="2" style="text-align:right;font-weight:800;">Vale-transporte extra (dias de ônibus)</td>
+            <td class="n" style="font-weight:800;">+ ${fmtMoney(x.totalVtExtra)}</td></tr>` : ''}
       </tbody>
       <tfoot>
         <tr><td colspan="2" style="text-align:right;">LÍQUIDO A RECEBER</td><td class="n">${fmtMoney(x.liquido)}</td></tr>
