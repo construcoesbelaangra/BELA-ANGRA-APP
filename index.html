@@ -745,7 +745,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 75';
+const VERSAO = '2026-09-11 · 76';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -3240,7 +3240,7 @@ function printAssiduidade(){
     .sort((a,b)=>a[0].localeCompare(b[0]));
   const html = `
   <div class="doc">
-    ${docHead('Relatório de Assiduidade', `${esc(f.nome)} — ${monthLabel(ym)}`, `Obra<br><b>${esc(obraNome(f.obraPadrao))}</b>`)}
+    ${docHead('Relatório de Assiduidade', `${esc(f.nome)} — ${monthLabel(ym)}`, `Obra<br><b>${esc(obraNome(obraDoFuncionarioEm(f, ultimoDiaMes(ym))))}</b>`)}
     <table class="dtab">
       <thead><tr><th>Indicador</th><th style="text-align:right;">Dias</th></tr></thead>
       <tbody>
@@ -3282,7 +3282,7 @@ function printFolhaPontoMensal(){
   const fal = getFaltasMes(pmFuncId, ym);
   const html = `
   <div class="doc">
-    ${docHead('Folha de Ponto Mensal', `${esc(f.nome)} — ${esc(funcaoHistoricaEm(f, ultimoDiaMes(ym)))} — ${monthLabel(ym)}`, `Obra<br><b>${esc(obraNome(f.obraPadrao))}</b>`)}
+    ${docHead('Folha de Ponto Mensal', `${esc(f.nome)} — ${esc(funcaoHistoricaEm(f, ultimoDiaMes(ym)))} — ${monthLabel(ym)}`, `Obra<br><b>${esc(obraNome(obraDoFuncionarioEm(f, ultimoDiaMes(ym))))}</b>`)}
     <table class="dtab">
       <thead><tr><th style="width:8%">Dia</th><th style="width:10%">Sem.</th><th style="width:40%">Ocorrência</th><th>Assinatura do funcionário</th></tr></thead>
       <tbody>${linhas}</tbody>
@@ -5628,8 +5628,8 @@ function printFolhaFichados(){
         <th style="text-align:right;">Líquido (contabilidade)</th>
         <th style="text-align:right;">Saldo (5º d.u.)</th></tr></thead>
       <tbody>${rows.map((r,i)=>`<tr>
-        <td class="c">${i+1}</td><td>${esc(r.f.nome)}</td><td>${esc(r.f.funcao||'—')}</td>
-        <td>${esc(obraNome(r.f.obraPadrao))}</td>
+        <td class="c">${i+1}</td><td>${esc(r.f.nome)}</td><td>${esc(funcaoHistoricaEm(r.f, ultimoDiaMes(mes))||'—')}</td>
+        <td>${esc(obraNome(obraDoFuncionarioEm(r.f, ultimoDiaMes(mes))))}</td>
         <td class="n">${fmtNum(r.salario)}</td>
         <td class="n">${r.temDireitoAdiantamento?fmtNum(r.adiantamento):'—'}</td>
         <td class="n">${r.liquido===null?'(pendente)':fmtNum(r.liquido)}</td>
@@ -6771,7 +6771,7 @@ function encargosViaHTML(f, mes){
         <b>${esc(f.matricula||'----')}-${esc((f.nome||'').toUpperCase())}</b><br>
         FUNÇÃO : ${esc(funcaoHistoricaEm(f, ultimoDiaMes(mes)).toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${f.admissao?fmtDate(f.admissao):'--/--/----'}
       </div>
-      <div class="r">OBRA: ${esc(obraNome(f.obraPadrao).toUpperCase())}<br>${esc((SERVICO_LABEL[f.tipoServico]||'').toUpperCase())}</div>
+      <div class="r">OBRA: ${esc(obraNome(obraDoFuncionarioEm(f, ultimoDiaMes(mes))).toUpperCase())}<br>${esc((SERVICO_LABEL[f.tipoServico]||'').toUpperCase())}</div>
     </div>
     <table class="holtab">
       <thead><tr>
