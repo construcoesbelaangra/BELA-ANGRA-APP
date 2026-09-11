@@ -736,7 +736,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 72';
+const VERSAO = '2026-09-11 · 73';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6573,18 +6573,38 @@ function printHolerite(comVales){
   doPrint(`<div class="doc doc-margem-zero">${holeriteViaHTML(f,h,comVales)}${holeriteViaHTML(f,h,comVales)}</div>`,
     `Holerite - ${f.matricula||'s-matricula'} - ${f.nome}`);
 }
+
+/* Quem entra nos botões "de todos" (11/09/2026): não é só quem tem holerite de verdade
+   preenchido — o diarista marcado com `holeriteDiarista` (recibo fictício, ver
+   `renderHoleriteFuncionario`) também é `elegivelHolerite`, mas nunca tem `DB.holerites`
+   (o cálculo dele é sempre ao vivo, via `calcReciboDiariaHolerite`) — ficava de fora dos
+   três botões em lote silenciosamente. Achado pelo Maycon testando o botão novo de uma
+   via A5: "aqueles que marquei a opção... não apareceu nesse botão". Corrigido pela raiz
+   aqui, um lugar só, valendo pros três (`printTodosHolerites` incluso, que tinha o mesmo
+   problema mesmo antes de hoje). Cada item já sai marcado com o HTML pronto — os dois
+   tipos têm função de render diferente (`holeriteViaHTML` × `reciboDiariaHoleriteHTML`),
+   sem rubricas em comum pra decidir isso depois. Diarista fictício sem nenhum dia
+   trabalhado no mês não entra (não faz sentido um recibo de R$0,00 no lote). */
+function corposHoleriteEmLote(mes, obraFiltro, comVales){
+  const elegiveis = filtraObra(ativosNoMes(mes).filter(elegivelHolerite), obraFiltro);
+  return elegiveis.map(f=>{
+    if(f.tipo==='diarista' && f.holeriteDiarista && !f.apareceNaFolhaContabil){
+      const r = calcReciboDiariaHolerite(f, mes);
+      return r.dias > 0 ? reciboDiariaHoleriteHTML(f, mes) : null;
+    }
+    const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===mes);
+    if(!h || !RUBRICAS_VENC.some(r=>Number(h.venc[r.k])>0)) return null;
+    return holeriteViaHTML(f, h, comVales);
+  }).filter(Boolean);
+}
+
 function printTodosHolerites(comVales){
-  const fichados = filtraObra(ativosNoMes(holMes).filter(elegivelHolerite), holObraFiltro);
-  const comDados = fichados.filter(f=>{
-    const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===holMes);
-    return h && RUBRICAS_VENC.some(r=>Number(h.venc[r.k])>0);
-  });
-  if(!comDados.length){ alert(holObraFiltro ? 'Nenhum holerite preenchido neste mês, nesta obra.' : 'Nenhum holerite preenchido neste mês.'); return; }
+  const corpos = corposHoleriteEmLote(holMes, holObraFiltro, comVales);
+  if(!corpos.length){ alert(holObraFiltro ? 'Nenhum holerite ou recibo preenchido neste mês, nesta obra.' : 'Nenhum holerite ou recibo preenchido neste mês.'); return; }
   const nomeGrupo = holObraFiltro ? `Holerites ${obraNome(holObraFiltro)}` : 'Holerites Todos os Funcionarios';
-  doPrint(comDados.map((f,i)=>{
-    const h = getHolerite(f.id, holMes);
-    return `<div class="doc doc-margem-zero ${i<comDados.length-1?'pagebreak':''}">${holeriteViaHTML(f,h,comVales)}${holeriteViaHTML(f,h,comVales)}</div>`;
-  }).join(''), `${nomeGrupo} - ${monthLabel(holMes)}`);
+  doPrint(corpos.map((corpo,i)=>
+    `<div class="doc doc-margem-zero ${i<corpos.length-1?'pagebreak':''}">${corpo}${corpo}</div>`
+  ).join(''), `${nomeGrupo} - ${monthLabel(holMes)}`);
 }
 
 /* Uma via só, em A5 — pedido do Maycon em 11/09/2026: o holerite normal sai em DUAS
@@ -6598,17 +6618,12 @@ function printTodosHolerites(comVales){
    voltaria a aparecer, só nesta opção. Sempre COM vales (pedido explícito) — não tem
    sentido oferecer "uma via, sem vales" separado, já existem os outros botões pra isso. */
 function printTodosHoleritesUnicaVia(){
-  const fichados = filtraObra(ativosNoMes(holMes).filter(elegivelHolerite), holObraFiltro);
-  const comDados = fichados.filter(f=>{
-    const h = DB.holerites.find(x=>x.funcionarioId===f.id && x.mes===holMes);
-    return h && RUBRICAS_VENC.some(r=>Number(h.venc[r.k])>0);
-  });
-  if(!comDados.length){ alert(holObraFiltro ? 'Nenhum holerite preenchido neste mês, nesta obra.' : 'Nenhum holerite preenchido neste mês.'); return; }
+  const corpos = corposHoleriteEmLote(holMes, holObraFiltro, true);
+  if(!corpos.length){ alert(holObraFiltro ? 'Nenhum holerite ou recibo preenchido neste mês, nesta obra.' : 'Nenhum holerite ou recibo preenchido neste mês.'); return; }
   const nomeGrupo = holObraFiltro ? `Holerites ${obraNome(holObraFiltro)}` : 'Holerites Todos os Funcionarios';
-  doPrint(comDados.map((f,i)=>{
-    const h = getHolerite(f.id, holMes);
-    return `<div class="doc doc-holerite-unica ${i<comDados.length-1?'pagebreak':''}">${holeriteViaHTML(f,h,true)}</div>`;
-  }).join(''), `${nomeGrupo} - Uma Via - ${monthLabel(holMes)}`);
+  doPrint(corpos.map((corpo,i)=>
+    `<div class="doc doc-holerite-unica ${i<corpos.length-1?'pagebreak':''}">${corpo}</div>`
+  ).join(''), `${nomeGrupo} - Uma Via - ${monthLabel(holMes)}`);
 }
 
 /* ---------- ABA 2: demonstrativo de encargos (para o cliente) ---------- */
