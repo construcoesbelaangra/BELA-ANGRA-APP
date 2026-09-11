@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 68';
+const VERSAO = '2026-09-11 · 69';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1820,7 +1820,16 @@ function nomeArquivoSeguro(s){
    chegou a ser tentada e o Chromium imprimia uma folha A4 EM BRANCO extra do
    lado do recibo A5 (duas regras `@page` diferentes coexistindo não é bem
    suportado). Com um `<style>` só, sempre existe UMA regra `@page` de cada
-   vez, e não teve esse problema. */
+   vez, e não teve esse problema.
+   **Bug real, achado pelo Maycon em 11/09/2026**: `size:A5 landscape` (nome +
+   palavra-chave de orientação) saía "A4 deitado" no diálogo de impressão — e
+   no PDF salvo também — em vez de A5. O navegador reconhece a palavra
+   `landscape` e lembra ela entre impressões, mas nem toda versão do
+   Chrome/Edge reconhece "A5" como tamanho nomeado no diálogo; sem reconhecer,
+   ele volta pro tamanho anterior (A4) e só a orientação "gruda". **Corrigido**
+   usando as DIMENSÕES em mm direto (`210mm 148mm` = largura × altura de um A5
+   deitado) em vez do nome — isso não depende do navegador reconhecer "A5",
+   só medir milímetros, que é universal. */
 /* Margem zero (10/09/2026): documento com a classe `doc-margem-zero` (por
    enquanto só a ficha de admissão) imprime com `@page{margin:0}` — o
    cabeçalho/rodapé que o PRÓPRIO NAVEGADOR desenha (data/hora, título da aba)
@@ -1832,7 +1841,7 @@ function doPrint(html, nomeArquivo){
   const estiloPagina = document.getElementById('printPageStyle');
   if(estiloPagina){
     estiloPagina.textContent = html.indexOf('doc-recibo') >= 0
-      ? '@page{size:A5 landscape;margin:8mm;}'
+      ? '@page{size:210mm 148mm;margin:8mm;}'
       : html.indexOf('doc-margem-zero') >= 0
         ? '@page{size:A4 portrait;margin:0;}' : '';
   }
