@@ -644,11 +644,11 @@ tr:hover td{background:#fafbfd;}
    linha (Base I.R.R.F.) — é a MESMA tabela, não uma aproximação de largura em px.
    **TOTAL LÍQUIDO fica só na coluna de VENCIMENTOS** (pedido explícito do Maycon — a de
    DESCONTOS fica em branco nessa linha, já que líquido não é desconto).
-   Na última linha, Salário Base/Base I.N.S.S./Base F.G.T.S. dividem o bloco largo da
-   esquerda (mesma largura de Cod+HISTÓRICO+REF, um `<div>` em flex DENTRO da célula —
-   nunca `display:flex` direto no `<td>`, que tira o elemento do fluxo da tabela e quebra
-   a grade); Vl. F.G.T.S. cai exatamente sob VENCIMENTOS e Base I.R.R.F. (com o % junto,
-   sem precisar de uma 6ª coluna) cai exatamente sob DESCONTOS. */
+   Na última linha (ver o bloco `tr.holbase` logo abaixo, com o histórico completo das 2
+   rodadas de ajuste): Salário Base/Base I.N.S.S./Base F.G.T.S./Vl. F.G.T.S. dividem o
+   bloco largo da esquerda (mesma largura de Cod+HISTÓRICO+REF); Base I.R.R.F. cai
+   exatamente sob VENCIMENTOS (mesma coluna de "TOTAL LÍQUIDO ==>") e % cai exatamente
+   sob DESCONTOS (mesma coluna do valor do líquido). */
 .holtab tfoot td{padding:2px 5px;font-weight:700;border-right:1px solid #000;}
 .holtab tfoot td:last-child{border-right:none;}
 .holtab tr.holtot td{border-top:1px solid #000;}
@@ -656,16 +656,26 @@ tr:hover td{background:#fafbfd;}
 .holtab tr.holliq td.lb{text-align:right;white-space:nowrap;}
 .holtab tr.holbase td{border-top:1px solid #000;border-bottom:1.4px solid #000;font-size:8.5px;font-weight:400;vertical-align:top;}
 .holtab tr.holbase td.c{text-align:center;}
-/* Linha entre Salário Base/Base I.N.S.S./Base F.G.T.S. (11/09/2026): os 3 valores
-   dividem o mesmo <td colspan=3> (ver acima) num <div> em flex — sem nenhuma borda entre
-   eles, porque flex não herda a grade da tabela. O holerite real da contabilidade tem
-   linha vertical contínua separando os 3, igual às outras colunas — sem essa borda, o
-   Maycon reportou que "perdeu a linha entre colunas de Base I.N.S.S." (as duas bordas
-   que cercam ela, uma de cada lado). `border-right` no `.hb` (exceto o último) resolve —
-   como `.holbase-esq` tem `align-items` padrão (`stretch`), a borda estica pela altura
-   inteira da linha, igual uma borda de célula de verdade. */
-.holbase-esq{display:flex;justify-content:space-between;gap:2px;}
-.holbase-esq .hb{display:flex;flex-direction:column;align-items:center;flex:1;border-right:1px solid #000;}
+/* Linha entre Salário Base/Base I.N.S.S./Base F.G.T.S./Vl. F.G.T.S. (11/09/2026, 2
+   rodadas): os 4 valores dividem o mesmo <td colspan=3> (ver acima). **1ª tentativa**
+   usava um <div> em `display:flex` com `border-right` em cada item — funcionou pra criar
+   a linha, mas o Maycon reportou um "espacinho" onde essa borda não tocava o
+   border-top/border-bottom da célula de fora: o `<td>` tem padding próprio
+   (`.holtab td{padding:1.5px 5px}`), e a borda do filho flex só cobre a altura de
+   DENTRO desse padding, nunca a célula inteira — deixando as duas linhas
+   (vertical do flex × horizontal da célula) sem se tocar.
+   **Corrigido usando uma TABELA ANINHADA de verdade** em vez de flex: uma tabela HTML
+   com `border-collapse` sempre garante bordas contínuas, sem esse tipo de folga (é
+   exatamente por isso que o resto do documento inteiro já é feito em `<table>`, nunca
+   flex, pra grade). `padding:0` só na célula de FORA que embrulha essa tabela
+   (`tr.holbase td:first-child`, a única com `colspan=3`) — o padding visual volta a
+   entrar em cada célula de DENTRO (`.holbase-esq .hb`), então a tabela aninhada ocupa
+   a célula de fora até a borda, e suas próprias divisórias tocam o topo e o fundo sem
+   sobra nenhuma. As outras 2 células da linha (Base I.R.R.F. sozinho, % sozinho — não
+   usam mais tabela aninhada nenhuma, cada uma é 1 valor só) mantêm o padding normal. */
+.holtab tr.holbase td:first-child{padding:0;}
+.holbase-esq{display:table;width:100%;height:100%;table-layout:fixed;}
+.holbase-esq .hb{display:table-cell;text-align:center;vertical-align:middle;padding:1.5px 5px;border-right:1px solid #000;}
 .holbase-esq .hb:last-child{border-right:none;}
 .holtab tr.holbase .bl{display:block;font-size:8px;color:#333;}
 .holtab tr.holbase .bv{display:block;font-weight:700;font-size:9.5px;}
@@ -745,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.2.5';
+const VERSAO = '1.2.6';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6575,12 +6585,10 @@ function holeriteViaHTML(f, h, comVales){
             <span class="hb"><span class="bl">Salário Base</span><span class="bv">${fmtNum(t.salarioBase)}</span></span>
             <span class="hb"><span class="bl">Base I.N.S.S.</span><span class="bv">${fmtNum(t.baseInss)}</span></span>
             <span class="hb"><span class="bl">Base F.G.T.S.</span><span class="bv">${fmtNum(t.baseFgts)}</span></span>
+            <span class="hb"><span class="bl">Vl. F.G.T.S.</span><span class="bv">${fmtNum(t.valorFgts)}</span></span>
           </div></td>
-          <td class="c"><span class="bl">Vl. F.G.T.S.</span><span class="bv">${fmtNum(t.valorFgts)}</span></td>
-          <td class="c"><div class="holbase-esq">
-            <span class="hb"><span class="bl">Base I.R.R.F.</span><span class="bv">${fmtOpt(h.baseIrrf)||'0,00'}</span></span>
-            <span class="hb"><span class="bl">%</span><span class="bv">${fmtOpt(h.aliqIrrf)||'00,00'}</span></span>
-          </div></td>
+          <td class="c"><span class="bl">Base I.R.R.F.</span><span class="bv">${fmtOpt(h.baseIrrf)||'0,00'}</span></td>
+          <td class="c"><span class="bl">%</span><span class="bv">${fmtOpt(h.aliqIrrf)||'00,00'}</span></td>
         </tr>
       </tfoot>
     </table>
