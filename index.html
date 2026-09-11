@@ -728,7 +728,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '2026-09-11 · 67';
+const VERSAO = '2026-09-11 · 68';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1565,6 +1565,18 @@ function vtPorDia(f){
 function vrPorDia(f){
   if(!recebeVR(f)) return 0;
   return f.valorVR===undefined || f.valorVR==='' ? (DB.config.valorVRPadrao||0) : Number(f.valorVR)||0;
+}
+
+/* Número pronto pra montar um link `wa.me` (11/09/2026, pedido do Maycon: clicar e já
+   abrir o WhatsApp com a mensagem pronta, usando o celular da ficha). Prioriza `cel`
+   sobre `fone` (fixo raramente tem WhatsApp) — tira tudo que não é dígito e, se sobrou
+   DDD+número (10 ou 11 dígitos, sem DDI), gruda o 55 na frente. Devolve '' quando não há
+   nenhum número cadastrado, pra quem chama decidir o que fazer (não força nada). */
+function numeroWhatsApp(f){
+  const bruto = (f.cel || f.fone || '').toString();
+  const digitos = bruto.replace(/\D/g, '');
+  if(!digitos) return '';
+  return (digitos.length === 10 || digitos.length === 11) ? '55' + digitos : digitos;
 }
 
 /* ---------- navegação entre meses ---------- */
@@ -4519,6 +4531,18 @@ function abrirMensagem(funcId, per){
   setTimeout(()=>{ const t = document.getElementById('msgPag'); if(t){ t.focus(); t.select(); } }, 60);
 }
 
+/* Direto pro WhatsApp com a mensagem pronta (11/09/2026, pedido do Maycon: um clique
+   só, sem passar pelo copiar-e-colar) — usa o celular da ficha (`numeroWhatsApp`,
+   02_core.js). Sem número cadastrado não tem como montar o link: cai no modal de
+   copiar de sempre, para ele não ficar sem jeito nenhum de mandar a mensagem. */
+function abrirWhatsAppPagamento(funcId, per){
+  const f = func(funcId);
+  const numero = numeroWhatsApp(f);
+  if(!numero){ toast('Sem celular cadastrado na ficha dele — copie a mensagem.'); abrirMensagem(funcId, per); return; }
+  const x = calcDiarista(f, periodoDaSexta(fcSexta, per));
+  window.open(`https://wa.me/${numero}?text=${encodeURIComponent(mensagemPagamento(x))}`, '_blank');
+}
+
 /* Copiar precisa dos dois caminhos: `execCommand` funciona com o arquivo aberto
    direto do disco (file://), onde a API nova do navegador é bloqueada; a API
    nova é a que funciona no celular. Tentamos uma e caímos na outra. */
@@ -4684,7 +4708,7 @@ function renderFechamento(){
                     onclick="togglePago('${x.f.id}','${fcSexta}','${per}',${x.liquido})">
                 </td>
                 <td style="white-space:nowrap;">
-                  <button class="btn btn-secondary btn-sm" onclick="abrirMensagem('${x.f.id}','${per}')" title="Texto pronto para o WhatsApp">Mensagem</button>
+                  <button class="btn btn-secondary btn-sm" onclick="abrirWhatsAppPagamento('${x.f.id}','${per}')" title="Abre o WhatsApp dele com a mensagem pronta">WhatsApp</button>
                   <button class="btn btn-secondary btn-sm" onclick="printRecibaDiarista('${x.f.id}')">Recibo</button>
                 </td>
               </tr>`;}).join('')}
