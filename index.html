@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.2.7';
+const VERSAO = '1.2.8';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1074,6 +1074,13 @@ function migrate(db){
   (db.funcionarios||[]).forEach(f=>{
     if(!f.salarioHistorico){
       f.salarioHistorico = f.salario ? [{salario: Number(f.salario)||0, inicio: f.admissao || '0001-01-01'}] : [];
+    }
+  });
+  /* Mesma lógica, para o valor da diária (16/09/2026) — ver `valorDiariaHistoricoEm`,
+     acima. Protege semanas já fechadas de uma correção de diária lançada depois. */
+  (db.funcionarios||[]).forEach(f=>{
+    if(!f.valorDiariaHistorico){
+      f.valorDiariaHistorico = f.valorDiaria ? [{valorDiaria: Number(f.valorDiaria)||0, inicio: f.admissao || '0001-01-01'}] : [];
     }
   });
   return db;
@@ -1446,6 +1453,20 @@ function salarioHistoricoEm(f, iso){
   const hist = (f.salarioHistorico||[]).filter(h=>h.inicio<=iso);
   if(hist.length) return hist[hist.length-1].salario;
   return Number(f.salario)||0;
+}
+
+/* Valor da DIÁRIA de um diarista NUM DIA específico — mesmo raciocínio de
+   `salarioHistoricoEm`, achado pelo Maycon em 16/09/2026: ele corrigiu a
+   diária de um diarista e isso mudou o líquido de semanas JÁ FECHADAS e
+   marcadas como pagas no Fechamento, porque `calcDiarista()` (05_diarista.js)
+   lia `f.valorDiaria` direto — o valor ATUAL, sem olhar quando ele passou a
+   valer. `f.valorDiariaHistorico` é preenchido por `saveFunc` (03_func.js)
+   sempre que o valor muda (a partir de HOJE, não retroativo); quem nunca
+   teve o valor trocado tem uma única entrada de backfill (`migrate()`). */
+function valorDiariaHistoricoEm(f, iso){
+  const hist = (f.valorDiariaHistorico||[]).filter(h=>h.inicio<=iso);
+  if(hist.length) return hist[hist.length-1].valorDiaria;
+  return Number(f.valorDiaria)||0;
 }
 
 /* Função EFETIVA de um funcionário num dia específico — pedido do Maycon
@@ -2586,6 +2607,26 @@ function saveFunc(id){
     alert('A data de demissão não pode ser anterior à data de admissão.'); return;
   }
   const existing = DB.funcionarios.find(x=>x.id===id) || {};
+
+  /* Histórico do valor da diária (16/09/2026) — achado real pelo Maycon:
+     corrigir a diária de um diarista mudava retroativamente o líquido de
+     semanas JÁ FECHADAS e marcadas como pagas no Fechamento, porque
+     `calcDiarista()` lia `f.valorDiaria` direto, sem olhar quando o valor
+     passou a valer. Mesmo raciocínio do `f.salarioHistorico`/"Promover" do
+     fichado, só que aqui não existe um botão dedicado — é a PRÓPRIA edição
+     da ficha que grava a mudança, valendo a partir de HOJE (nunca
+     retroativo): o valor antigo fica preservado para qualquer data anterior. */
+  const novoValorDiaria = numVal('f_valorDiaria');
+  let valorDiariaHistorico = existing.valorDiariaHistorico;
+  if(existing.id && Number(existing.valorDiaria||0) !== novoValorDiaria){
+    valorDiariaHistorico = (valorDiariaHistorico
+      || (existing.valorDiaria ? [{valorDiaria: Number(existing.valorDiaria)||0, inicio: existing.admissao || '0001-01-01'}] : []))
+      .concat([{valorDiaria: novoValorDiaria, inicio: todayISO()}])
+      .sort((a,b)=>a.inicio.localeCompare(b.inicio));
+  } else if(!valorDiariaHistorico){
+    valorDiariaHistorico = novoValorDiaria ? [{valorDiaria: novoValorDiaria, inicio: val('f_admissao') || '0001-01-01'}] : [];
+  }
+
   const data = Object.assign({}, existing, {
     id, nome,
     tipo: val('f_tipo'),
@@ -2605,7 +2646,8 @@ function saveFunc(id){
     matricula: val('f_matricula'),
     cbo: val('f_cbo'),
     salario: numVal('f_salario'),
-    valorDiaria: numVal('f_valorDiaria'),
+    valorDiaria: novoValorDiaria,
+    valorDiariaHistorico,
     cpf: val('f_cpf'), nascimento: val('f_nascimento'), localNascimento: val('f_localNascimento'),
     uf: val('f_uf'), pis: val('f_pis'), fone: val('f_fone'), cel: val('f_cel'),
     tituloEleitor: val('f_tituloEleitor'), zona: val('f_zona'), secao: val('f_secao'),
@@ -4212,13 +4254,13 @@ function renderCalendarDiarista(){
 
   let cells = '';
   for(let i=0;i<firstDow;i++) cells += `<div class="day blank"></div>`;
-  let dias=0, faltas=0, quent=0;
+  let dias=0, faltas=0, quent=0, totalBrutoMes=0;
 
   for(let d=1; d<=nd; d++){
     const iso = `${pdAno}-${String(pdMes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const e = pdEntry(pdFuncId, iso);
     const st = e ? e.status : '';
-    if(st==='trabalhado') dias++;
+    if(st==='trabalhado'){ dias++; totalBrutoMes += valorDiariaHistoricoEm(f, iso); }
     else if(st==='falta') faltas++;
     if(e && e.quentinha) quent++;
 
@@ -4241,8 +4283,12 @@ function renderCalendarDiarista(){
     </div>`;
   }
 
-  const vd = f.valorDiaria||0;
-  const total = dias*vd;
+  /* taxa de REFERÊNCIA pro rótulo "R$X/dia" no topo — o total de verdade
+     (totalBrutoMes) já foi somado dia a dia, acima, com a taxa que valia em
+     CADA dia (ver valorDiariaHistoricoEm), então continua certo mesmo revendo
+     um mês passado depois de a diária ter mudado. */
+  const vd = valorDiariaHistoricoEm(f, `${pdAno}-${String(pdMes).padStart(2,'0')}-${String(nd).padStart(2,'0')}`);
+  const total = totalBrutoMes;
 
   return `
     <div style="margin-top:16px;">
@@ -4372,14 +4418,16 @@ function salvarFuncaoComissaoDiarista(iso){
 
 /* ---- cálculo de um diarista dentro de um período ---- */
 function calcDiarista(f, periodo){
-  const vd = f.valorDiaria||0;
-  let diasTrabalhados=0, faltas=0, quentinhas=0, totalComissao=0, totalVtExtra=0;
+  let diasTrabalhados=0, faltas=0, quentinhas=0, totalComissao=0, totalVtExtra=0, bruto=0;
   const detalhe = [];
   let iso = periodo.inicio;
   while(iso <= periodo.fim){
     const e = pdEntry(f.id, iso);
     if(e){
-      if(e.status==='trabalhado') diasTrabalhados++;
+      /* valor da diária NO DIA trabalhado, não o valor atual do cadastro — ver
+         `valorDiariaHistoricoEm` (02_core.js). Sem isso, corrigir a diária hoje
+         mudava o líquido de semanas já fechadas e pagas (achado real, 16/09/2026). */
+      if(e.status==='trabalhado'){ diasTrabalhados++; bruto += valorDiariaHistoricoEm(f, iso); }
       else if(e.status==='falta') faltas++;
       if(e.quentinha) quentinhas++;
       if(e.status) detalhe.push({data:iso, status:e.status, quentinha:!!e.quentinha});
@@ -4393,7 +4441,10 @@ function calcDiarista(f, periodo){
     totalComissao += comissaoNoDia(f, iso);   // função/comissão do dia, ver 02_core.js
     iso = addDays(iso, 1);
   }
-  const bruto = diasTrabalhados*vd;
+  /* `vd` é só o valor de REFERÊNCIA mostrado na tela (a taxa vigente no fim do
+     período) — o `bruto` de verdade já foi somado dia a dia, acima, e é o que
+     vale mesmo se a diária mudou no meio do período (caso raro). */
+  const vd = valorDiariaHistoricoEm(f, periodo.fim);
 
   /* vales do diarista: descontados no fechamento da semana em que foram dados */
   const vales = DB.adiantamentos
