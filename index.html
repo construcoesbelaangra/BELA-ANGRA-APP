@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.2.6';
+const VERSAO = '1.2.7';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4515,7 +4515,11 @@ function pagamentoDe(funcId, sexta, per){
    Desmarcar apaga esse lançamento; a marca é dona dele, os dois não podem
    discordar. A data do lançamento é a PRÓPRIA SEXTA sendo fechada, não o dia
    em que se clicou — pagamento lançado com atraso (ex.: marcado em setembro,
-   de uma sexta de 28/08) tem que cair em agosto, não no dia do clique. */
+   de uma sexta de 28/08) tem que cair em agosto, não no dia do clique.
+   Exceção (16/09/2026): se pago ANTES da sexta (adiantado), a BAIXA usa hoje —
+   travar numa sexta futura escondia a saída do saldo até ela chegar. O
+   `vencimento` continua sempre a sexta; só a baixa acompanha o menor entre
+   hoje e a sexta. */
 function togglePago(funcId, sexta, per, valor){
   const ja = pagamentoDe(funcId, sexta, per);
   if(ja){
@@ -4554,7 +4558,15 @@ function togglePago(funcId, sexta, per, valor){
         : `Diária(s) — ${f.nome} — sexta ${fmtDate(sexta)}`,
       valor: liquido, vencimento: sexta, obs: ''
     };
-    lanc.baixas.push({id: uid(), data: sexta, valor: liquido, contaId});
+    /* A BAIXA usa a sexta, exceto quando o pagamento é feito ANTES dela —
+       aí o dinheiro já saiu de verdade hoje, e travar a baixa numa sexta
+       futura escondia essa saída do saldo até a sexta chegar (achado real,
+       16/09/2026: pagou dois diaristas 3 dias adiantado, e "saldo hoje"
+       ficou R$418 maior que o banco até a sexta acontecer). Pagar com
+       ATRASO continua caindo na sexta, não no dia do clique — só a ida pro
+       futuro é que precisa travar em hoje. */
+    const dataBaixa = todayISO() < sexta ? todayISO() : sexta;
+    lanc.baixas.push({id: uid(), data: dataBaixa, valor: liquido, contaId});
     DB.lancamentos.push(lanc);
     pagamento.lancamentoId = lanc.id;
   }
@@ -5352,6 +5364,10 @@ function setLiquidoContabilidade(funcId, mes, valor){
    06a_vales.js): marcar cria o lançamento já com baixa; desmarcar apaga.
    A data usada é a do PRÓPRIO evento (dia 20 / 5º dia útil), não o dia do
    clique — mesmo motivo de sempre: lançar com atraso não pode bagunçar o mês.
+   Exceção (16/09/2026): se o clique acontece ANTES do dia do evento (pagou
+   adiantado), a BAIXA usa hoje — travar numa data futura escondia a saída
+   do saldo até o evento chegar. O `vencimento` continua sempre a data do
+   evento; só a baixa é que acompanha o menor entre hoje e o evento.
    --------------------------------------------------------- */
 function toggleAdiantamentoFichadoPago(funcId, mes){
   const f = func(funcId);
@@ -5385,7 +5401,10 @@ function toggleAdiantamentoFichadoPago(funcId, mes){
     descricao: `Adiantamento de salário (dia 20) — ${f.nome} — ${monthLabel(mes)}`,
     valor: c.adiantamento, vencimento: c.dataAdiantamento, obs: ''
   };
-  lanc.baixas.push({id: uid(), data: c.dataAdiantamento, valor: c.adiantamento, contaId});
+  /* baixa trava no dia 20, exceto quando pago ANTES dele — aí o dinheiro já
+     saiu hoje (mesmo raciocínio do togglePago em 05_diarista.js). */
+  const dataBaixaAdiant = todayISO() < c.dataAdiantamento ? todayISO() : c.dataAdiantamento;
+  lanc.baixas.push({id: uid(), data: dataBaixaAdiant, valor: c.adiantamento, contaId});
   DB.lancamentos.push(lanc);
   reg.adiantamentoLancamentoId = lanc.id;
 
@@ -5434,7 +5453,10 @@ function toggleSaldoFichadoPago(funcId, mes){
     descricao: `Saldo de salário (5º dia útil) — ${f.nome} — ${monthLabel(mes)}`,
     valor: c.saldo, vencimento: c.dataPagamento, obs: ''
   };
-  lanc.baixas.push({id: uid(), data: c.dataPagamento, valor: c.saldo, contaId});
+  /* baixa trava no 5º dia útil, exceto quando pago ANTES dele — aí o
+     dinheiro já saiu hoje (mesmo raciocínio do togglePago em 05_diarista.js). */
+  const dataBaixaSaldo = todayISO() < c.dataPagamento ? todayISO() : c.dataPagamento;
+  lanc.baixas.push({id: uid(), data: dataBaixaSaldo, valor: c.saldo, contaId});
   DB.lancamentos.push(lanc);
   reg.saldoLancamentoId = lanc.id;
 
