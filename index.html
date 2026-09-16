@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.2.8';
+const VERSAO = '1.3.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -7483,6 +7483,23 @@ function renderConfig(){
     </div>
 
     <div class="card">
+      <h2>Preço por unidade — Medição de Empreitada</h2>
+      <p class="help" style="margin-top:0;">
+        Usada em <b>Medição de Empreitada</b> para calcular o valor de cada etapa e extra a
+        partir do aço/forma/concreto realizado. Muda de contrato para contrato — os valores
+        de partida são os praticados com a Bandeira em 2026.
+      </p>
+      <div class="grid grid-3">
+        <div class="field"><label>Aço (R$/kg)</label><input type="number" step="0.01" id="c_precoAco" value="${cfg.precosEmpreitada.aco}"></div>
+        <div class="field"><label>Forma (R$/m²)</label><input type="number" step="0.01" id="c_precoForma" value="${cfg.precosEmpreitada.forma}"></div>
+        <div class="field"><label>Concreto lançado (R$/m³)</label><input type="number" step="0.01" id="c_precoConcreto" value="${cfg.precosEmpreitada.concreto}"></div>
+      </div>
+      <button class="btn btn-primary" onclick="savePrecosEmpreitada()">Salvar preços</button>
+      <p class="help">Uma <b>Medição aprovada já congelou</b> o valor calculado com o preço da
+        época — trocar o preço aqui não recalcula medição nenhuma já aprovada, só as próximas.</p>
+    </div>
+
+    <div class="card">
       <h2>Desconto de INSS do funcionário</h2>
       <div class="table-wrap">
         <table>
@@ -7710,6 +7727,16 @@ function saveTabelaHH(){
     profissional: numVal('c_hhProfissional'), eletricista: numVal('c_hhEletricista')
   };
   saveDB(); toast('Tabela de preço da diária salva.'); renderConfig();
+}
+/* Preço por unidade da Medição de Empreitada (aço/forma/concreto) — a tela já dizia
+   "fica em Configurações" (15_medicao_empreitada.js) desde que o módulo foi construído
+   em 10/09/2026, mas o formulário nunca chegou a ser feito. Achado pelo Maycon em
+   16/09/2026, tentando corrigir o preço do concreto (80 → 85) e não achando onde. */
+function savePrecosEmpreitada(){
+  DB.config.precosEmpreitada = {
+    aco: numVal('c_precoAco'), forma: numVal('c_precoForma'), concreto: numVal('c_precoConcreto')
+  };
+  saveDB(); toast('Preços da Medição de Empreitada salvos.'); renderConfig();
 }
 function restaurarPadraoEncargos(){
   if(!confirm('Restaurar as alíquotas padrão da construção civil (20% + 3% + 5,8% + 8% + 3,2% + 8,33% + 11,11%)?')) return;
