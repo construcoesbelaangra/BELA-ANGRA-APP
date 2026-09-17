@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.4.0';
+const VERSAO = '1.5.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2056,6 +2056,34 @@ let funcFiltroObra = '';
 let funcFiltroStatus = '';
 let funcFiltroRegistro = '';
 
+/* Os mesmos 5 filtros da tela (busca/tipo/obra/status/registro) — extraído pra
+   função própria porque o relatório impresso (`printListaFuncionarios`, pedido do
+   Maycon em 17/09/2026: "filtro os funcionários como quero e emito esse relatório")
+   precisa exatamente da MESMA lista que está na tela, sem duplicar a lógica. */
+function listaFuncionariosFiltrada(){
+  const filtrados = DB.funcionarios
+    .filter(f => (f.nome||'').toLowerCase().includes(funcFiltro.toLowerCase()))
+    .filter(f => !funcFiltroTipo || f.tipo===funcFiltroTipo || f.tipoServico===funcFiltroTipo || f.periodicidade===funcFiltroTipo)
+    .filter(f => !funcFiltroStatus || f.status===funcFiltroStatus)
+    /* o registro (CTPS/eSocial) só existe pra fichado — filtrar por um status
+       específico esconde diarista de propósito, não só quem não bate o valor */
+    .filter(f => !funcFiltroRegistro || (f.tipo==='fichado' && (f.statusRegistro||'nao_enviado')===funcFiltroRegistro));
+  return ordenarFuncionarios(filtraObra(filtrados, funcFiltroObra));
+}
+/* Descrição legível dos filtros ativos — entra no relatório impresso, pra quem olhar
+   o PDF depois saber POR QUE só essas pessoas aparecem (não é a lista toda). */
+function descricaoFiltrosFuncionarios(){
+  const partes = [];
+  if(funcFiltro) partes.push(`nome contém "${funcFiltro}"`);
+  const TIPO_LABEL = {fichado:'só fichados', diarista:'só diaristas', semanal:'diaristas semanais',
+    quinzenal:'diaristas quinzenais', homem_hora:'Homem-Hora', empreitada:'Empreitada'};
+  if(funcFiltroTipo) partes.push(TIPO_LABEL[funcFiltroTipo] || funcFiltroTipo);
+  if(funcFiltroObra) partes.push(`obra: ${obraNome(funcFiltroObra)}`);
+  if(funcFiltroStatus) partes.push(funcFiltroStatus==='ativo' ? 'só ativos' : 'só demitidos');
+  if(funcFiltroRegistro) partes.push(`registro: ${STATUS_REGISTRO_LABEL[funcFiltroRegistro]}`);
+  return partes.length ? partes.join(' · ') : 'Todos os funcionários, sem filtro';
+}
+
 function renderFuncionarios(){
   const c = document.getElementById('content');
 
@@ -2067,14 +2095,7 @@ function renderFuncionarios(){
   const eraBusca = !!(ativo && ativo.classList && ativo.classList.contains('searchbar'));
   const cursor = eraBusca ? ativo.selectionStart : null;
 
-  const filtrados = DB.funcionarios
-    .filter(f => (f.nome||'').toLowerCase().includes(funcFiltro.toLowerCase()))
-    .filter(f => !funcFiltroTipo || f.tipo===funcFiltroTipo || f.tipoServico===funcFiltroTipo || f.periodicidade===funcFiltroTipo)
-    .filter(f => !funcFiltroStatus || f.status===funcFiltroStatus)
-    /* o registro (CTPS/eSocial) só existe pra fichado — filtrar por um status
-       específico esconde diarista de propósito, não só quem não bate o valor */
-    .filter(f => !funcFiltroRegistro || (f.tipo==='fichado' && (f.statusRegistro||'nao_enviado')===funcFiltroRegistro));
-  const lista = ordenarFuncionarios(filtraObra(filtrados, funcFiltroObra));
+  const lista = listaFuncionariosFiltrada();
 
   c.innerHTML = `
     <div class="card">
@@ -2107,8 +2128,12 @@ function renderFuncionarios(){
           <span style="font-size:12px;color:#9aa0ab;">Ordem:</span>
           ${selectOrdem('renderFuncionarios();')}
         </div>
-        <button class="btn btn-primary" onclick="openFuncModal()">+ Novo funcionário</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-secondary" onclick="printListaFuncionarios()">🖨️ Imprimir esta lista</button>
+          <button class="btn btn-primary" onclick="openFuncModal()">+ Novo funcionário</button>
+        </div>
       </div>
+      <p class="help" style="margin:-4px 0 0;">${esc(descricaoFiltrosFuncionarios())} — ${lista.length} funcionário${lista.length===1?'':'s'}</p>
       <div class="table-wrap">
         ${lista.length ? `
         <table>
@@ -2706,6 +2731,40 @@ function saveFunc(id){
   const idx = DB.funcionarios.findIndex(x=>x.id===id);
   if(idx>=0) DB.funcionarios[idx] = data; else DB.funcionarios.push(data);
   saveDB(); closeModal(); renderFuncionarios(); toast('Funcionário salvo.');
+}
+
+/* --------- RELATÓRIO DA LISTA DE FUNCIONÁRIOS EM PDF (17/09/2026) ---------
+   Pedido do Maycon: "às vezes eu quero um arquivo pra imprimir a página, que
+   filtrei só dos funcionários que faltam fichar, ou uma página só dos
+   funcionários que foram demitidos" — usa exatamente os MESMOS filtros que
+   já estão aplicados na tela (`listaFuncionariosFiltrada`), nunca uma lista
+   à parte — o que ele vê filtrado é o que sai no papel. */
+function printListaFuncionarios(){
+  const lista = listaFuncionariosFiltrada();
+  const descricao = descricaoFiltrosFuncionarios();
+  if(!lista.length){ toast('Nenhum funcionário no filtro atual — ajuste o filtro antes de imprimir.'); return; }
+
+  const linhas = lista.map(f=>`
+    <tr>
+      <td>${esc(f.nome)}</td>
+      <td>${esc(f.funcao||'—')}</td>
+      <td>${f.tipo==='fichado'?'Fichado':'Diarista'}</td>
+      <td>${f.status==='inativo' ? (f.demissao?`Demitido em ${fmtDate(f.demissao)}`:'Inativo') : 'Ativo'}</td>
+      <td>${f.tipo==='fichado' ? STATUS_REGISTRO_LABEL[f.statusRegistro||'nao_enviado'] : '—'}</td>
+      <td>${esc(obraNome(f.obraPadrao))}</td>
+    </tr>`).join('');
+
+  const html = `
+  <div class="doc">
+    ${docHead('Lista de Funcionários', esc(descricao), `Emitida em<br><b>${fmtDate(todayISO())}</b>`)}
+    <table class="dtab">
+      <thead><tr><th>Nome</th><th>Função</th><th>Vínculo</th><th>Situação</th><th>Registro (contabilidade)</th><th>Obra</th></tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>
+    <p class="dnote">${lista.length} funcionário${lista.length===1?'':'s'} neste filtro.</p>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, `Funcionarios - ${descricao}`);
 }
 
 /* --------- FICHA DE ADMISSÃO EM PDF (espelha o formulário oficial) --------- */
