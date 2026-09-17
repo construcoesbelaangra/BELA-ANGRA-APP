@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.5.0';
+const VERSAO = '1.6.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1349,7 +1349,9 @@ const ORDENACOES = {
   padrao: 'Padrão (cargo, antigo primeiro)',
   nome:   'Nome (A–Z)',
   funcao: 'Função (A–Z)',
-  obra:   'Obra'
+  obra:   'Obra',
+  admissao_asc:  'Tempo de casa (mais antigos primeiro)',
+  admissao_desc: 'Tempo de casa (mais novos primeiro)'
 };
 let ordemFuncionarios = 'padrao';
 
@@ -1366,6 +1368,13 @@ function cmpFuncionarios(a, b){
     case 'nome':   return cmpNome(a,b);
     case 'funcao': return normFuncao(a.funcao).localeCompare(normFuncao(b.funcao),'pt-BR') || cmpPadrao(a,b);
     case 'obra':   return obraNome(a.obraPadrao).localeCompare(obraNome(b.obraPadrao),'pt-BR') || cmpPadrao(a,b);
+    /* tempo de casa — pedido do Maycon (17/09/2026). Quem não tem admissão
+       cadastrada vai pro fim dos dois jeitos (mesmo raciocínio de sempre:
+       cadastro incompleto fica visível, nunca se passa por antigo nem por
+       novo à toa — ver `chaveAdmissao`). */
+    case 'admissao_asc':  return chaveAdmissao(a).localeCompare(chaveAdmissao(b)) || cmpNome(a,b);
+    case 'admissao_desc': return (chaveAdmissao(a)==='9999-99-99'?1:0) - (chaveAdmissao(b)==='9999-99-99'?1:0)
+      || chaveAdmissao(b).localeCompare(chaveAdmissao(a)) || cmpNome(a,b);
     default:       return cmpPadrao(a,b);
   }
 }
@@ -1706,6 +1715,14 @@ const STATUS_REGISTRO_LABEL = {
   em_processo: 'Em processo de registro',
   efetivado: 'Registro efetivado'
 };
+/* Quem tem `statusRegistro` — fichado, e também o diarista que a contabilidade trata
+   como fichado de verdade (`apareceNaFolhaContabil`, ver "Cadastro duplicado" — é o
+   caso do João Martins/Jeferson Martins Caetano: achado real, 17/09/2026, conferindo
+   as Fichas de Registro reais — os dois têm documento de registro na contabilidade,
+   mas são diarista no cadastro, então o campo ficava escondido pra eles sem motivo).
+   Mesma condição de `elegivelHolerite` (06b_holerite.js), por coincidência de regra —
+   não a mesma função, de propósito: são conceitos diferentes que hoje se sobrepõem. */
+function elegivelStatusRegistro(f){ return f.tipo==='fichado' || !!f.apareceNaFolhaContabil; }
 
 /* ---------------- NAVEGAÇÃO ----------------
    O menu ganhou SEÇÕES em 30/08/2026, ao entrar o financeiro: com 15 telas numa
@@ -2065,9 +2082,12 @@ function listaFuncionariosFiltrada(){
     .filter(f => (f.nome||'').toLowerCase().includes(funcFiltro.toLowerCase()))
     .filter(f => !funcFiltroTipo || f.tipo===funcFiltroTipo || f.tipoServico===funcFiltroTipo || f.periodicidade===funcFiltroTipo)
     .filter(f => !funcFiltroStatus || f.status===funcFiltroStatus)
-    /* o registro (CTPS/eSocial) só existe pra fichado — filtrar por um status
-       específico esconde diarista de propósito, não só quem não bate o valor */
-    .filter(f => !funcFiltroRegistro || (f.tipo==='fichado' && (f.statusRegistro||'nao_enviado')===funcFiltroRegistro));
+    /* o registro (CTPS/eSocial) só existe pra fichado — e pro diarista que a
+       contabilidade trata como fichado (elegivelStatusRegistro, 02_core.js — achado
+       real do João Martins/Jeferson Martins Caetano, 17/09/2026). Filtrar por um
+       status específico esconde quem não é elegível de propósito, não só quem não
+       bate o valor. */
+    .filter(f => !funcFiltroRegistro || (elegivelStatusRegistro(f) && (f.statusRegistro||'nao_enviado')===funcFiltroRegistro));
   return ordenarFuncionarios(filtraObra(filtrados, funcFiltroObra));
 }
 /* Descrição legível dos filtros ativos — entra no relatório impresso, pra quem olhar
@@ -2157,7 +2177,7 @@ function renderFuncionarios(){
                       ? `<span class="badge badge-red">${f.demissao?'Demitido':'Inativo'}</span>${
                           f.demissao?`<br><span style="color:#9aa0ab;font-size:11px;">saiu em ${fmtDate(f.demissao)}</span>`:''}`
                       : '<span class="badge badge-green">Ativo</span>'}${
-                      (f.tipo==='fichado' && f.status!=='inativo' && f.statusRegistro!=='efetivado')
+                      (elegivelStatusRegistro(f) && f.status!=='inativo' && f.statusRegistro!=='efetivado')
                         ? `<br><span class="badge ${f.statusRegistro==='em_processo'?'badge-yellow':'badge-red'}" title="Edite pra atualizar o status do registro">${STATUS_REGISTRO_LABEL[f.statusRegistro||'nao_enviado']}</span>` : ''}</td>
                 <td style="white-space:nowrap;">
                   <button class="btn btn-secondary btn-sm" onclick="openFuncModal('${f.id}')">Editar</button>
@@ -2440,7 +2460,7 @@ function openFuncModal(id){
         Preenchendo a data de demissão o funcionário some das telas de ponto e não dá mais para apontar dia
         depois dela. Ele continua aparecendo no fechamento e no holerite do período em que saiu, para o acerto.
       </p>
-      <div class="field" id="wrap_registroEfetivado" style="${f.tipo==='fichado'?'':'display:none;'}">
+      <div class="field" id="wrap_registroEfetivado" style="${elegivelStatusRegistro(f)?'':'display:none;'}">
         <label>Status do registro (contabilidade)</label>
         <select id="f_statusRegistro">
           <option value="nao_enviado" ${(!f.statusRegistro||f.statusRegistro==='nao_enviado')?'selected':''}>${STATUS_REGISTRO_LABEL.nao_enviado}</option>
@@ -2619,7 +2639,12 @@ function toggleFuncTipo(){
   document.getElementById('wrap_periodicidade').style.display = diarista ? '' : 'none';
   document.getElementById('wrap_periodicidadeComissao').style.display = diarista ? 'none' : '';
   document.getElementById('wrap_folhaContabil').style.display = diarista ? '' : 'none';
-  document.getElementById('wrap_registroEfetivado').style.display = diarista ? 'none' : '';
+  /* o registro também vale pro diarista que já está marcado como
+     apareceNaFolhaContabil (João Martins/Jeferson Martins Caetano, ver
+     elegivelStatusRegistro em 02_core.js) — não esconder o campo dele à toa
+     se ele trocar o vínculo pra diarista sem desmarcar essa caixinha. */
+  document.getElementById('wrap_registroEfetivado').style.display =
+    (!diarista || checked('f_apareceNaFolhaContabil')) ? '' : 'none';
   document.getElementById('wrap_salario').style.display = diarista ? 'none' : '';
   const reg = document.getElementById('f_regimePagamento');
   if(reg && !reg.dataset.touched) reg.value = diarista ? 'dia' : 'mes';
@@ -2744,13 +2769,17 @@ function printListaFuncionarios(){
   const descricao = descricaoFiltrosFuncionarios();
   if(!lista.length){ toast('Nenhum funcionário no filtro atual — ajuste o filtro antes de imprimir.'); return; }
 
+  /* Pedido do Maycon (17/09/2026): a lista de só demitidos não precisa de Vínculo
+     nem de Registro — quem já saiu não tem essa pendência pra acompanhar. */
+  const soDemitidos = funcFiltroStatus === 'inativo';
+
   const linhas = lista.map(f=>`
     <tr>
       <td>${esc(f.nome)}</td>
       <td>${esc(f.funcao||'—')}</td>
-      <td>${f.tipo==='fichado'?'Fichado':'Diarista'}</td>
+      ${soDemitidos ? '' : `<td>${f.tipo==='fichado'?'Fichado':'Diarista'}</td>`}
       <td>${f.status==='inativo' ? (f.demissao?`Demitido em ${fmtDate(f.demissao)}`:'Inativo') : 'Ativo'}</td>
-      <td>${f.tipo==='fichado' ? STATUS_REGISTRO_LABEL[f.statusRegistro||'nao_enviado'] : '—'}</td>
+      ${soDemitidos ? '' : `<td>${elegivelStatusRegistro(f) ? STATUS_REGISTRO_LABEL[f.statusRegistro||'nao_enviado'] : '—'}</td>`}
       <td>${esc(obraNome(f.obraPadrao))}</td>
     </tr>`).join('');
 
@@ -2758,7 +2787,7 @@ function printListaFuncionarios(){
   <div class="doc">
     ${docHead('Lista de Funcionários', esc(descricao), `Emitida em<br><b>${fmtDate(todayISO())}</b>`)}
     <table class="dtab">
-      <thead><tr><th>Nome</th><th>Função</th><th>Vínculo</th><th>Situação</th><th>Registro (contabilidade)</th><th>Obra</th></tr></thead>
+      <thead><tr><th>Nome</th><th>Função</th>${soDemitidos?'':'<th>Vínculo</th>'}<th>Situação</th>${soDemitidos?'':'<th>Registro (contabilidade)</th>'}<th>Obra</th></tr></thead>
       <tbody>${linhas}</tbody>
     </table>
     <p class="dnote">${lista.length} funcionário${lista.length===1?'':'s'} neste filtro.</p>
