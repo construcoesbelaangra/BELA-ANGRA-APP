@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.7.1';
+const VERSAO = '1.7.2';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2522,8 +2522,8 @@ function openFuncModal(id){
           <select id="f_funcao" onchange="aplicarSalarioPadraoCargo()">
             <option value="">—</option>
             ${DB.cargos.slice().sort((a,b)=>cargoRank(a.nome)-cargoRank(b.nome)).map(cg=>
-              `<option value="${esc(cg.nome)}" ${f.funcao===cg.nome?'selected':''}>${esc(cg.nome)}</option>`).join('')}
-            ${f.funcao && !DB.cargos.some(cg=>cg.nome===f.funcao) ? `<option value="${esc(f.funcao)}" selected>${esc(f.funcao)} (fora da lista)</option>` : ''}
+              `<option value="${esc(cg.nome)}" ${normFuncao(f.funcao)===normFuncao(cg.nome)?'selected':''}>${esc(cg.nome)}</option>`).join('')}
+            ${f.funcao && !DB.cargos.some(cg=>normFuncao(cg.nome)===normFuncao(f.funcao)) ? `<option value="${esc(f.funcao)}" selected>${esc(f.funcao)} (fora da lista)</option>` : ''}
           </select>
           ${!DB.cargos.length ? '<p class="help">Nenhum cargo cadastrado ainda — cadastre em Configurações → Cargos / Funções.</p>' : ''}
         </div>
@@ -8102,7 +8102,7 @@ function wipeData(){
    raciocínio de CATEGORIAS_SUGERIDAS/feriados nacionais). O salário nunca vem
    sugerido: é dado real da empresa, só entra pela mão do usuário.
    ========================================================= */
-const CARGOS_SUGERIDOS = ['Encarregado','Administrativo','Armador','Carpinteiro','Pedreiro','Eletricista','Meio Oficial','Servente'];
+const CARGOS_SUGERIDOS = ['ENCARREGADO','ADMINISTRATIVO','ARMADOR','CARPINTEIRO','PEDREIRO','ELETRICISTA','MEIO OFICIAL','SERVENTE'];
 
 function sugerirCargosPadrao(){
   const existentes = DB.cargos.map(c=>normFuncao(c.nome));
@@ -8117,7 +8117,7 @@ function abrirNovoCargo(id){
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
     <h2>${cg?'Editar':'Novo'} cargo / função</h2>
-    <div class="field"><label>Nome</label><input id="cg_nome" value="${esc(cg?cg.nome:'')}" placeholder="Ex: Servente"></div>
+    <div class="field"><label>Nome</label><input id="cg_nome" value="${esc(cg?cg.nome:'')}" placeholder="Ex: SERVENTE"></div>
     <div class="field"><label>Salário padrão do fichado (R$)</label>
       <input inputmode="decimal" id="cg_salario" value="${formatarMoeda(cg?cg.salarioPadrao:0)}"
              data-valor="${cg&&cg.salarioPadrao?cg.salarioPadrao:0}" oninput="mascaraMoeda(this)" placeholder="0,00">
@@ -8127,7 +8127,7 @@ function abrirNovoCargo(id){
   `);
 }
 function salvarCargo(id){
-  const nome = val('cg_nome').trim();
+  const nome = val('cg_nome').trim().toUpperCase();   // cargo sempre em MAIÚSCULO (18/09/2026), pra lista e ficha ficarem iguais
   if(!nome){ alert('Informe o nome do cargo.'); return; }
   if(DB.cargos.some(x=>x.id!==id && normFuncao(x.nome)===normFuncao(nome))){
     alert('Já existe um cargo com este nome.'); return;
