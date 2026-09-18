@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.7.0';
+const VERSAO = '1.7.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -9770,9 +9770,11 @@ function lancamentosFiltrados(){
     }
     return true;
   }).sort((a,b)=>{
-    /* vencido primeiro, depois por vencimento */
-    const va = a.vencimento || '9999-99-99', vb = b.vencimento || '9999-99-99';
-    return va.localeCompare(vb);
+    /* do mais NOVO para o mais antigo (pedido do Maycon, 18/09/2026) — vale para as
+       quatro abas (a pagar, a receber, transferências e todos). Sem vencimento vai por
+       último, em vez de subir ao topo. */
+    const va = a.vencimento || '', vb = b.vencimento || '';
+    return vb.localeCompare(va);
   });
 }
 
