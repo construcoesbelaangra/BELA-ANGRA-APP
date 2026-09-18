@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.6.1';
+const VERSAO = '1.6.2';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2740,9 +2740,14 @@ function saveFunc(id){
   const novoValorDiaria = numVal('f_valorDiaria');
   let valorDiariaHistorico = existing.valorDiariaHistorico;
   if(existing.id && Number(existing.valorDiaria||0) !== novoValorDiaria){
+    /* o valor novo vale desde o começo do período AINDA NÃO PAGO (ver `inicioNovaDiaria`);
+       trocas anteriores que caíam dentro dele (ex.: 2ª edição na mesma semana) são
+       substituídas, senão a mais recente por data venceria o valor que acabou de ser digitado */
+    const inicioNovo = inicioNovaDiaria(existing);
     valorDiariaHistorico = (valorDiariaHistorico
       || (existing.valorDiaria ? [{valorDiaria: Number(existing.valorDiaria)||0, inicio: existing.admissao || '0001-01-01'}] : []))
-      .concat([{valorDiaria: novoValorDiaria, inicio: todayISO()}])
+      .filter(h=>h.inicio < inicioNovo)
+      .concat([{valorDiaria: novoValorDiaria, inicio: inicioNovo}])
       .sort((a,b)=>a.inicio.localeCompare(b.inicio));
   } else if(!valorDiariaHistorico){
     valorDiariaHistorico = novoValorDiaria ? [{valorDiaria: novoValorDiaria, inicio: val('f_admissao') || '0001-01-01'}] : [];
@@ -4637,6 +4642,30 @@ function calcDiarista(f, periodo){
     liquido: bruto - totalVales + totalComissao + totalVtExtra,
     totalDias: diasTrabalhados
   };
+}
+
+/* A partir de que dia uma diária NOVA deve valer (18/09/2026). Achado real com o
+   Adilson: ele trocou a diária de 279 para 305 na quarta (16/09) e a semana ainda
+   NÃO paga (12 a 18/09) saiu misturada — segunda e terça a 279, o resto a 305 —,
+   porque o histórico gravava "a partir de hoje". Congelar é só para o que JÁ FOI
+   PAGO; a semana em aberto deve sair inteira pelo valor novo. Então o valor novo
+   vale desde o começo do período ainda não pago (o da próxima sexta) — e, se essa
+   sexta já está marcada como paga, aí sim só a partir de hoje. */
+function inicioNovaDiaria(f){
+  const hoje = todayISO();
+  if(f.tipo!=='diarista') return hoje;
+  let sexta = sextaDaSemana(hoje);
+  if(periodicidadeHistoricaEm(f, sexta)==='quinzenal' && !isSextaQuinzenal(sexta)) sexta = addDays(sexta, 7);
+  const per = periodicidadeHistoricaEm(f, sexta);
+  if(pagamentoDe(f.id, sexta, per)) return hoje;   // este período já foi pago: não mexe nele
+  let inicio = periodoDaSexta(sexta, per).inicio;
+  if(f.admissao && f.admissao > inicio) inicio = f.admissao;
+  /* nunca invade um período já pago (marca de pago mais recente antes desta sexta) */
+  (DB.pagamentos||[]).filter(p=>p.funcionarioId===f.id && p.sexta<sexta).forEach(p=>{
+    const dia = addDays(p.sexta, 1);
+    if(dia > inicio) inicio = dia;
+  });
+  return inicio > hoje ? hoje : inicio;
 }
 
 /* =========================================================
