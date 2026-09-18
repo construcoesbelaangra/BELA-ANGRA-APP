@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.6.2';
+const VERSAO = '1.7.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -5869,6 +5869,11 @@ function renderFechamentoFichados(){
       <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
         <button class="btn btn-primary"   onclick="printFolhaFichados()">Folha de pagamento do mês (PDF)</button>
         <button class="btn btn-secondary" onclick="printTodosAdiantamentos()">Recibos de adiantamento (PDF)</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-primary" onclick="printRelatorioFichados('adiantamento')">Fechamento do adiantamento — dia 20 (PDF)</button>
+        <button class="btn btn-primary" onclick="printRelatorioFichados('saldo')">Fechamento do saldo — 5º dia útil (PDF)</button>
+        <span class="help" style="margin:0;">Um documento só, somando tudo e separado por obra — para conferir ou mostrar ao sócio.</span>
       </div>` : ''}
       <p class="help">
         O adiantamento sai sempre no <b>dia 20</b> e o saldo no <b>5º dia útil do mês seguinte</b> —
@@ -5961,6 +5966,111 @@ function printFolhaFichados(){
     <div class="assinatura"><div>${esc(DB.empresa.razaoSocial)}</div><div>Responsável</div></div>
     ${docFoot()}
   </div>`);
+}
+
+/* ---------------------------------------------------------
+   RELATÓRIO DE CONFERÊNCIA — um por pagamento (18/09/2026)
+
+   Pedido do Maycon: ele já via a lista com o total na tela, mas na hora de
+   IMPRIMIR só existiam os recibos, um por funcionário. Faltava um documento
+   fechado somando o pagamento inteiro, para validar antes de pagar (ou para
+   mostrar ao sócio) — sem abrir recibo por recibo.
+
+   Dois relatórios, porque são dois pagamentos diferentes, em datas diferentes:
+     'adiantamento' → dia 20 (40% do salário, ou proporcional a quem entrou no mês)
+     'saldo'        → 5º dia útil do mês seguinte (líquido da contabilidade − adiantamento)
+   Cada um lista quem recebe, agrupado por OBRA (com subtotal — é o que mostra
+   para onde o dinheiro vai), o total geral e o quanto já foi marcado como pago
+   × ainda a pagar. Quem está sem o líquido informado (só no saldo) aparece como
+   "(pendente)" e NÃO entra na soma — o aviso no rodapé diz quantos faltam, para
+   ninguém confundir um total incompleto com o total final.
+   --------------------------------------------------------- */
+function relatorioFichadosHTML(tipo, mes){
+  const ehAdiant = tipo==='adiantamento';
+  const dataEvento = ehAdiant ? `${mes}-20` : quintoDiaUtil(mesMais(mes,1));
+  const refObra = ultimoDiaMes(mes);   // obra/cargo do funcionário NO mês (mesmo critério da folha), não os de hoje
+  let rows = ativosNoMes(mes).filter(f=>f.tipo==='fichado').sort(cmpFuncionarios).map(f=>calcFichado(f, mes));
+  if(ehAdiant) rows = rows.filter(r=>r.temDireitoAdiantamento);
+  if(!rows.length) return '';
+
+  const valorDe  = r => ehAdiant ? r.adiantamento : r.saldo;      // null = líquido ainda não informado
+  const pagoDe   = r => ehAdiant ? r.reg.adiantamentoPago : r.reg.saldoPago;
+  const quandoDe = r => ehAdiant ? r.reg.adiantamentoQuando : r.reg.saldoQuando;
+  const soma = lista => Math.round(lista.reduce((s,r)=>s+(valorDe(r)||0),0)*100)/100;
+
+  /* agrupa por obra (uma tabela por obra, como no Fechamento dos diaristas);
+     quem está sem obra vai para o último grupo */
+  const grupos = {};
+  rows.forEach(r=>{ const oid = obraDoFuncionarioEm(r.f, refObra) || ''; (grupos[oid] = grupos[oid] || []).push(r); });
+  const ordemGrupos = Object.keys(grupos).sort((a,b)=>{
+    if(!a) return 1; if(!b) return -1;
+    return obraNome(a).localeCompare(obraNome(b), 'pt-BR');
+  });
+
+  const NCOL = 7;
+  const cab = ehAdiant
+    ? `<th>#</th><th>Funcionário</th><th>Cargo</th><th style="text-align:right;">Salário</th><th>Observação</th><th style="text-align:right;">Adiantamento</th><th>Situação</th>`
+    : `<th>#</th><th>Funcionário</th><th>Cargo</th><th style="text-align:right;">Líquido (contabilidade)</th><th style="text-align:right;">(−) Adiantamento</th><th style="text-align:right;">Saldo a pagar</th><th>Situação</th>`;
+
+  const blocos = ordemGrupos.map(oid=>{
+    const lista = grupos[oid];
+    const nomeObra = oid ? esc(obraNome(oid)).toUpperCase() : 'SEM OBRA DEFINIDA';
+    const linhas = lista.map((r,i)=>{
+      const v = valorDe(r);
+      const sit = pagoDe(r) ? `Pago${quandoDe(r)?' em '+fmtDate(quandoDe(r)):''}` : 'A pagar';
+      const cargo = esc(funcaoHistoricaEm(r.f, refObra)||'—');
+      if(ehAdiant){
+        const obs = r.admitidoNesteMes ? `proporcional a ${r.diasProporcionais}/${r.nd} dias` : '';
+        return `<tr><td class="c">${i+1}</td><td>${esc(r.f.nome)}</td><td class="c">${cargo}</td>
+          <td class="n">${fmtNum(r.salario)}</td><td>${obs}</td>
+          <td class="n"><b>${fmtNum(v)}</b></td><td>${sit}</td></tr>`;
+      }
+      return `<tr><td class="c">${i+1}</td><td>${esc(r.f.nome)}</td><td class="c">${cargo}</td>
+        <td class="n">${r.liquido===null?'(pendente)':fmtNum(r.liquido)}</td>
+        <td class="n">${r.temDireitoAdiantamento?fmtNum(r.adiantamento):'—'}</td>
+        <td class="n"><b>${v===null?'(pendente)':fmtNum(v)}</b></td><td>${v===null?'—':sit}</td></tr>`;
+    }).join('');
+    return `
+    <table class="dtab" style="margin-top:12px;">
+      <thead>
+        <tr class="grp"><td colspan="${NCOL}">${nomeObra}</td></tr>
+        <tr>${cab}</tr>
+      </thead>
+      <tbody>${linhas}</tbody>
+      <tfoot><tr><td colspan="${NCOL-2}" style="text-align:right;">SUBTOTAL · ${lista.length} pessoa(s)</td>
+        <td class="n">${fmtNum(soma(lista))}</td><td></td></tr></tfoot>
+    </table>`;
+  }).join('');
+
+  const comValor = rows.filter(r=>valorDe(r)!==null);
+  const pagos = comValor.filter(pagoDe);
+  const aPagar = comValor.filter(r=>!pagoDe(r));
+  const pendentes = rows.length - comValor.length;
+  const titulo = ehAdiant ? 'Fechamento do Adiantamento — Funcionários Fichados' : 'Fechamento do Saldo — Funcionários Fichados';
+
+  return `
+  <div class="doc">
+    ${docHead(titulo, `Referência: ${monthLabel(mes)}`, `Pagamento<br><b>${fmtDate(dataEvento)}</b>`)}
+    <div class="dsub" style="margin-top:16px;text-align:left;font-weight:800;">
+      ${ehAdiant ? `Adiantamento de ${rows[0].pctAdiant}% — dia 20` : `Saldo — 5º dia útil de ${monthLabel(mesMais(mes,1))}`}
+      · ${rows.length} pessoa(s) · ${fmtMoney(soma(comValor))}
+    </div>
+    ${blocos}
+    <div class="dtotais">TOTAL GERAL A PAGAR: <b>${fmtMoney(soma(comValor))}</b>
+      <br>Já marcado como pago (${pagos.length}): ${fmtMoney(soma(pagos))} · Ainda a pagar (${aPagar.length}): ${fmtMoney(soma(aPagar))}</div>
+    <p class="dnote">${ehAdiant
+      ? `Adiantamento de ${rows[0].pctAdiant}% do salário, pago no dia 20. Quem foi admitido dentro do mês recebe proporcional aos dias; quem foi admitido depois do dia 20 não recebe adiantamento e não aparece aqui.`
+      : `Saldo = líquido informado pela contabilidade − adiantamento já pago no dia 20. Pago no 5º dia útil de ${monthLabel(mesMais(mes,1))} (conta sábado; só domingo e feriado ficam de fora).`}
+    ${pendentes ? `<br><b>Atenção:</b> ${pendentes} funcionário(s) ainda sem o líquido informado — não entram na soma; o total ainda vai aumentar.` : ''}</p>
+    <div class="assinatura"><div>Responsável pelo pagamento</div><div>${esc(DB.empresa.razaoSocial)}</div></div>
+    ${docFoot()}
+  </div>`;
+}
+function printRelatorioFichados(tipo){
+  const mes = fcMesFichados || currentYM();
+  const html = relatorioFichadosHTML(tipo, mes);
+  if(!html){ alert(tipo==='adiantamento' ? 'Nenhum fichado com adiantamento a receber neste mês.' : 'Nenhum fichado ativo neste mês.'); return; }
+  doPrint(html, `${tipo==='adiantamento'?'Relatorio Adiantamento':'Relatorio Saldo'} Fichados - ${monthLabel(mes)}`);
 }
 /* =========================================================
    VALES VT / VR — só dos fichados
