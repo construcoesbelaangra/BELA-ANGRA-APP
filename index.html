@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.7.2';
+const VERSAO = '1.7.3';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -10261,7 +10261,22 @@ function saveTransferencia(id){
   };
 
   if(id){
-    Object.assign(DB.lancamentos.find(x=>x.id===id), dados);
+    const alvo = DB.lancamentos.find(x=>x.id===id);
+    /* Editar valor/data/conta de uma transferência TEM que levar a baixa junto (19/09/2026).
+       O saldo anda pela BAIXA, e uma transferência já feita tem exatamente uma baixa, criada
+       com o valor da hora do lançamento. Sem isto, corrigir 177.966,66 para 17.966,66 mudava
+       o lançamento mas a baixa continuava com o valor errado — o extrato e o saldo das duas
+       contas seguiam R$ 160.000 fora, sem nenhum aviso (achado real do Maycon). Só acompanha
+       quando é a baixa única "cheia" (igual ao valor antigo); baixa parcial, ou várias, é
+       decisão de quem lançou e fica como está. */
+    const baixas = alvo.baixas || [];
+    const acompanha = baixas.length === 1 && Math.abs((Number(baixas[0].valor)||0) - (Number(alvo.valor)||0)) < 0.005;
+    Object.assign(alvo, dados);
+    if(acompanha){
+      baixas[0].valor = valor;
+      baixas[0].data = data;
+      baixas[0].contaId = origem;
+    }
   }else{
     const novo = Object.assign({id: uid(), baixas: [], origem: 'manual'}, dados);
     if(checked('t_jaFoi')) novo.baixas.push({id: uid(), data, valor, contaId: origem});
