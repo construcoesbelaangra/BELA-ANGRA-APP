@@ -755,7 +755,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.7.3';
+const VERSAO = '1.8.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1090,6 +1090,15 @@ function migrate(db){
   (db.funcionarios||[]).forEach(f=>{
     if(!f.periodicidadeHistorico){
       f.periodicidadeHistorico = f.periodicidade ? [{periodicidade: f.periodicidade, inicio: f.admissao || '0001-01-01'}] : [];
+    }
+  });
+  /* Histórico do VÍNCULO (diarista × fichado) — 19/09/2026. Mesmo padrão dos outros
+     históricos: quem nunca mudou de vínculo tem uma entrada só, desde a admissão. `f.tipo`
+     continua sendo o vínculo de HOJE (as telas de cadastro leem ele); o histórico é o que
+     as telas de período consultam (`vinculoEm`, `vinculoNoPeriodo`). */
+  (db.funcionarios||[]).forEach(f=>{
+    if(!f.vinculoHistorico){
+      f.vinculoHistorico = f.tipo ? [{tipo: f.tipo, inicio: f.admissao || '0001-01-01'}] : [];
     }
   });
   return db;
@@ -1507,6 +1516,60 @@ function periodicidadeHistoricaEm(f, iso){
   return f.periodicidade || 'semanal';
 }
 
+/* =========================================================
+   VÍNCULO COM HISTÓRICO (diarista × fichado) — 19/09/2026
+
+   Pedido do Maycon, caso real do Jackson: diarista até 13/09, fichado desde 14/09. Antes
+   só dava para criar um SEGUNDO cadastro e inativar o primeiro — duas fichas da mesma
+   pessoa, com a mesma bagunça que a duplicata do João/Jeferson já causou.
+
+   `f.vinculoHistorico = [{tipo, inicio}]` (mesmo formato dos outros históricos). `f.tipo`
+   continua sendo o vínculo de HOJE — tudo que é "quem é agora" (lista, ficha) segue lendo
+   ele. As telas que trabalham com um PERÍODO ou um DIA perguntam ao histórico:
+     · `vinculoEm(f, iso)` — 'diarista' ou 'fichado' naquele dia;
+     · `vinculoNoPeriodo(f, tipo, ini, fim)` — teve esse vínculo em algum dia do período
+       (é o que decide se entra no fechamento dos diaristas, no dos fichados, no vale...);
+     · `admissaoFolha(f)` — a data que vale PARA A FOLHA/CONTABILIDADE: quem foi diarista
+       antes tem duas datas, a de entrada na empresa (`f.admissao`, tempo de casa) e a de
+       fichado (`fichadoDesde`), que é a que a contabilidade usa e a que faz o adiantamento e
+       o vale serem proporcionais.
+   ========================================================= */
+function vinculoHistoricoDe(f){
+  return (f.vinculoHistorico && f.vinculoHistorico.length)
+    ? f.vinculoHistorico.slice().sort((a,b)=>a.inicio.localeCompare(b.inicio))
+    : [{tipo: f.tipo, inicio: f.admissao || '0001-01-01'}];
+}
+function vinculoEm(f, iso){
+  const h = vinculoHistoricoDe(f);
+  let t = h[0].tipo;                       // antes da primeira entrada vale o vínculo de origem
+  h.forEach(x=>{ if(x.inicio <= iso) t = x.tipo; });
+  return t;
+}
+function vinculoMudou(f){ const h = vinculoHistoricoDe(f); return h.some(x=>x.tipo !== h[0].tipo); }
+function vinculoNoPeriodo(f, tipo, ini, fim){
+  const h = vinculoHistoricoDe(f);
+  for(let i=0;i<h.length;i++){
+    if(h[i].tipo !== tipo) continue;
+    const de  = i===0 ? '0000-00-00' : h[i].inicio;
+    const ate = i===h.length-1 ? '9999-99-99' : addDays(h[i+1].inicio, -1);
+    if(de <= fim && ate >= ini) return true;
+  }
+  return false;
+}
+function teveVinculo(f, tipo){ return vinculoNoPeriodo(f, tipo, '0000-00-00', '9999-99-99'); }
+/* data em que virou fichado ('' se nunca foi). Entrada de backfill ('0001-01-01') = desde a admissão. */
+function fichadoDesde(f){
+  const x = vinculoHistoricoDe(f).find(e=>e.tipo==='fichado');
+  if(!x) return '';
+  return x.inicio === '0001-01-01' ? (f.admissao||'') : x.inicio;
+}
+/* Data de admissão para FOLHA e contabilidade: a de fichado, quando a pessoa foi fichada.
+   Quem nunca mudou de vínculo cai na admissão de sempre — nada muda para ninguém mais. */
+function admissaoFolha(f){
+  if(teveVinculo(f, 'fichado')){ const d = fichadoDesde(f); if(d) return d; }
+  return f.admissao;
+}
+
 /* Função EFETIVA de um funcionário num dia específico — pedido do Maycon
    (05/09/2026): às vezes um homem-hora faz um serviço diferente do cargo dele
    naquele dia (ex.: servente que trabalhou de eletricista), e isso precisa
@@ -1516,7 +1579,7 @@ function periodicidadeHistoricaEm(f, iso){
    pode carregar uma `funcao`). Sem exceção, cai no cargo DEFINITIVO daquele
    dia (`funcaoHistoricaEm`) — respeita uma promoção, não só o cargo atual. */
 function funcaoEfetivaNoDia(f, iso){
-  if(f.tipo === 'fichado'){
+  if(vinculoEm(f, iso) === 'fichado'){
     const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
     const exc = reg && reg.excecaoDia ? reg.excecaoDia[iso] : null;
     return (exc && exc.funcao) || funcaoHistoricaEm(f, iso);
@@ -1530,7 +1593,7 @@ function funcaoEfetivaNoDia(f, iso){
    (soma no Fechamento) — nunca a Medição HH, que não cobra a comissão da
    Bandeira, só a categoria certa do dia. */
 function comissaoNoDia(f, iso){
-  if(f.tipo === 'fichado'){
+  if(vinculoEm(f, iso) === 'fichado'){
     const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
     const exc = reg && reg.excecaoDia ? reg.excecaoDia[iso] : null;
     return (exc && Number(exc.comissao)) || 0;
@@ -1540,10 +1603,16 @@ function comissaoNoDia(f, iso){
 }
 
 /* Ponto não pode ser lançado fora do vínculo. Devolve 'antes', 'depois' ou ''. */
-function foraDoVinculo(f, iso){
+function foraDoVinculo(f, iso, folha){
   if(!f) return '';
   if(f.admissao && iso < f.admissao) return 'antes';
   if(f.demissao && iso > f.demissao) return 'depois';
+  /* Quem mudou de vínculo (diarista que virou fichado) tem UMA folha válida por dia: a
+     `folha` ('fichado' | 'diarista') diz de qual estamos falando. Sem esse parâmetro, ou
+     para quem nunca mudou, vale só a regra de admissão/demissão acima — nada muda. */
+  if(folha && vinculoMudou(f) && vinculoEm(f, iso) !== folha){
+    return vinculoHistoricoDe(f).some(x=>x.tipo===folha && x.inicio > iso) ? 'antes' : 'depois';
+  }
   return '';
 }
 
@@ -1567,12 +1636,14 @@ function ehFuturo(iso){ return iso > todayISO(); }
 /* dias presumidos (ainda não conferidos) de um funcionário num mês */
 function presumidosDoMes(f, ym){
   let n = 0;
-  if(f.tipo === 'fichado'){
+  const ini = primeiroDiaMes(ym), fim = ultimoDiaMes(ym);
+  if(vinculoNoPeriodo(f, 'fichado', ini, fim)){
     const reg = DB.pontoMensal[`${f.id}_${ym}`];
     if(reg && reg.auto) Object.keys(reg.auto).forEach(iso=>{
       if(reg.auto[iso] && reg.dias[iso]) n++;
     });
-  } else {
+  }
+  if(vinculoNoPeriodo(f, 'diarista', ini, fim)){
     DB.pontoDiarista.forEach(e=>{
       if(e.funcionarioId===f.id && e.auto && e.status && (e.data||'').slice(0,7)===ym) n++;
     });
@@ -1602,9 +1673,9 @@ function totalPresumidosAteHoje(tipo){
       if(!reg || !reg.auto) return;
       const fid = k.replace(/_\d{4}-\d{2}$/,'');
       const f = func(fid);
-      if(!f || f.tipo!=='fichado') return;
+      if(!f || !teveVinculo(f, 'fichado')) return;
       Object.keys(reg.auto).forEach(iso=>{
-        if(reg.auto[iso] && reg.dias[iso] && iso <= hoje && !foraDoVinculo(f, iso)) conta(iso);
+        if(reg.auto[iso] && reg.dias[iso] && iso <= hoje && !foraDoVinculo(f, iso, 'fichado')) conta(iso);
       });
     });
   }
@@ -1612,18 +1683,24 @@ function totalPresumidosAteHoje(tipo){
     DB.pontoDiarista.forEach(e=>{
       if(!e.auto || !e.status || e.data > hoje) return;
       const f = func(e.funcionarioId);
-      if(!f || f.tipo!=='diarista') return;
-      if(foraDoVinculo(f, e.data)) return;
+      if(!f || !teveVinculo(f, 'diarista')) return;
+      if(foraDoVinculo(f, e.data, 'diarista')) return;
       conta(e.data);
     });
   }
   return {n, maisAntigo};
 }
 
-function motivoBloqueio(f, iso){
-  const fora = foraDoVinculo(f, iso);
-  if(fora === 'antes')  return `Antes da admissão (${fmtDate(f.admissao)})`;
-  if(fora === 'depois') return `Depois da demissão (${fmtDate(f.demissao)})`;
+function motivoBloqueio(f, iso, folha){
+  const fora = foraDoVinculo(f, iso, folha);
+  if(fora === 'antes'){
+    if(f.admissao && iso < f.admissao) return `Antes da admissão (${fmtDate(f.admissao)})`;
+    return folha === 'fichado' ? `Antes de ser fichado (${fmtDate(fichadoDesde(f))})` : 'Antes do vínculo de diarista';
+  }
+  if(fora === 'depois'){
+    if(f.demissao && iso > f.demissao) return `Depois da demissão (${fmtDate(f.demissao)})`;
+    return folha === 'diarista' ? 'Neste dia já era fichado (lance na folha dos fichados)' : 'Neste dia já era diarista';
+  }
   return '';
 }
 
@@ -1712,10 +1789,11 @@ function quintoDiaUtil(ym){
    É a base do vale: quem entra dia 17 não recebe o mês inteiro. */
 function diasUteisDoFuncionarioNoMes(f, ym){
   const ini = primeiroDiaMes(ym), fim = ultimoDiaMes(ym);
+  const adm = admissaoFolha(f);                        // quem foi diarista antes conta a partir de quando virou fichado
   // admitido antes do mês começar: vale o número de dias do mês (com o ajuste global, se houver)
-  if(!f.admissao || f.admissao <= ini) return diasVale(ym);
-  if(f.admissao > fim) return 0;                       // ainda não tinha entrado
-  let n = 0, iso = f.admissao;
+  if(!adm || adm <= ini) return diasVale(ym);
+  if(adm > fim) return 0;                              // ainda não tinha entrado
+  let n = 0, iso = adm;
   while(iso <= fim){
     const dw = dowOf(iso);
     if(dw>=1 && dw<=5 && !isFeriado(iso)) n++;
@@ -2422,6 +2500,7 @@ function confirmarPromocao(id){
 }
 
 let modalDependentes = [];
+let modalTipoOriginal = '';   // vínculo com que a ficha foi aberta — pra saber se o usuário está MUDANDO de vínculo
 
 function openFuncModal(id){
   const f = id ? DB.funcionarios.find(x=>x.id===id) : {
@@ -2430,6 +2509,10 @@ function openFuncModal(id){
   };
   modalDependentes = (f.dependentes||[]).slice();
   const isEdit = !!id;
+  modalTipoOriginal = isEdit ? f.tipo : '';
+  /* data em que o vínculo ATUAL começou (só faz sentido se já mudou de vínculo alguma vez) */
+  const vinculoMudouAntes = isEdit && vinculoMudou(f);
+  const vinculoDesdeValor = vinculoMudouAntes ? vinculoHistoricoDe(f)[vinculoHistoricoDe(f).length-1].inicio : todayISO();
   const obrasOpts = DB.obras.map(o=>`<option value="${o.id}" ${f.obraPadrao===o.id?'selected':''}>${esc(o.nome)}</option>`).join('');
 
   openModal(`
@@ -2477,7 +2560,14 @@ function openFuncModal(id){
         <div class="field"><label>Obra padrão</label>
           <select id="f_obraPadrao"><option value="">—</option>${obrasOpts}</select>
         </div>
-        <div class="field"><label>Data de admissão</label><input type="date" id="f_admissao" value="${f.admissao||''}"></div>
+        <div class="field"><label>Data de admissão <span style="font-weight:400;color:#9aa0ab;">(entrada na empresa)</span></label><input type="date" id="f_admissao" value="${f.admissao||''}"></div>
+      </div>
+      <div class="grid grid-3" id="wrap_vinculoDesde" data-ja-mudou="${vinculoMudouAntes?1:0}" style="${vinculoMudouAntes ? '' : 'display:none;'}">
+        <div class="field"><label id="lbl_vinculoDesde">Fichado desde</label>
+          <input type="date" id="f_vinculoDesde" value="${vinculoDesdeValor}"></div>
+        <div class="field" style="grid-column:span 2;">
+          <p class="help" id="vinculoResumo" style="margin:22px 0 0;">${vinculoMudouAntes ? esc(vinculoResumoTexto(f)) : ''}</p>
+        </div>
       </div>
       <div class="grid grid-3">
         <div class="field"><label>Data de demissão</label><input type="date" id="f_demissao" value="${f.demissao||''}"></div>
@@ -2661,9 +2751,35 @@ function renderDependentes(){
 }
 function addDependente(){ modalDependentes.push({nome:'', nascimento:''}); renderDependentes(); }
 
+/* Histórico do vínculo em uma frase, para a ficha não ficar cheia de campo: "Diarista de 07/07/2026 a
+   13/09/2026 · Fichado desde 14/09/2026". A data de admissão fica UMA (a de entrada na empresa); a
+   data em que virou fichado é a que vale para a folha/contabilidade (`admissaoFolha`, 02_core.js). */
+function vinculoResumoTexto(f){
+  const h = vinculoHistoricoDe(f);
+  return h.map((e,i)=>{
+    const nome = e.tipo==='fichado' ? 'Fichado' : 'Diarista';
+    const ini = e.inicio==='0001-01-01' ? (f.admissao||'') : e.inicio;
+    const prox = h[i+1];
+    return prox
+      ? `${nome} de ${ini?fmtDate(ini):'?'} a ${fmtDate(addDays(prox.inicio,-1))}`
+      : `${nome} desde ${ini?fmtDate(ini):'?'}`;
+  }).join(' · ');
+}
+/* mostra o campo "desde quando" só quando faz sentido: mudando de vínculo agora, ou ficha de quem já mudou */
+function toggleVinculoDesde(){
+  const wrap = document.getElementById('wrap_vinculoDesde');
+  if(!wrap) return;
+  const mudando = !!modalTipoOriginal && val('f_tipo') !== modalTipoOriginal;
+  const jaMudou = wrap.dataset.jaMudou === '1';
+  wrap.style.display = (mudando || jaMudou) ? '' : 'none';
+  const lbl = document.getElementById('lbl_vinculoDesde');
+  if(lbl) lbl.textContent = val('f_tipo')==='fichado' ? 'Fichado desde (registro na contabilidade)' : 'Diarista desde';
+}
+
 function toggleFuncTipo(){
   const tipo = val('f_tipo');
   const diarista = tipo==='diarista';
+  toggleVinculoDesde();
   document.getElementById('wrap_diaria').style.display = diarista ? '' : 'none';
   document.getElementById('wrap_periodicidade').style.display = diarista ? '' : 'none';
   document.getElementById('wrap_periodicidadeComissao').style.display = diarista ? 'none' : '';
@@ -2770,9 +2886,38 @@ function saveFunc(id){
     periodicidadeHistorico = novaPeriodicidade ? [{periodicidade: novaPeriodicidade, inicio: val('f_admissao') || '0001-01-01'}] : [];
   }
 
+  /* Histórico do VÍNCULO (19/09/2026) — diarista que vira fichado (ou o contrário) continua sendo
+     a MESMA pessoa, com um único cadastro: a mudança entra aqui com a data em que passou a valer
+     (`f_vinculoDesde`), e as telas de período (fechamento, ponto, vale, folha) consultam esse
+     histórico — ver `vinculoEm`/`vinculoNoPeriodo` (02_core.js). `f.tipo` segue sendo o vínculo de hoje. */
+  const novoTipo = val('f_tipo');
+  let vinculoHistorico = (existing.vinculoHistorico && existing.vinculoHistorico.length)
+    ? existing.vinculoHistorico.map(h=>Object.assign({}, h))
+    : (existing.tipo ? [{tipo: existing.tipo, inicio: existing.admissao || '0001-01-01'}] : []);
+  vinculoHistorico.sort((a,b)=>a.inicio.localeCompare(b.inicio));
+  if(!existing.id){
+    vinculoHistorico = [{tipo: novoTipo, inicio: val('f_admissao') || '0001-01-01'}];
+  } else {
+    const desde = val('f_vinculoDesde') || todayISO();
+    const ultimo = vinculoHistorico[vinculoHistorico.length-1];
+    const anterior = vinculoHistorico.length > 1 ? vinculoHistorico[vinculoHistorico.length-2] : null;
+    if(ultimo && ultimo.tipo !== novoTipo){
+      if(existing.admissao && desde < existing.admissao){ alert('A data da mudança de vínculo não pode ser antes da admissão.'); return; }
+      if(desde <= ultimo.inicio){ alert(`A mudança de vínculo precisa ser depois de ${fmtDate(ultimo.inicio)}, quando o vínculo anterior começou.`); return; }
+      vinculoHistorico.push({tipo: novoTipo, inicio: desde});
+    } else if(ultimo && anterior && document.getElementById('wrap_vinculoDesde').dataset.jaMudou === '1' && desde !== ultimo.inicio){
+      /* corrigindo a data em que o vínculo atual começou (ex.: o fichado passou a valer em 14/09) */
+      if(desde <= anterior.inicio){ alert(`A data precisa ser depois de ${fmtDate(anterior.inicio)}, quando o vínculo anterior começou.`); return; }
+      ultimo.inicio = desde;
+    } else if(vinculoHistorico.length === 1 && ultimo.inicio === (existing.admissao || '0001-01-01')){
+      ultimo.inicio = val('f_admissao') || '0001-01-01';   // só a admissão mudou: a entrada única acompanha
+    }
+  }
+
   const data = Object.assign({}, existing, {
     id, nome,
-    tipo: val('f_tipo'),
+    tipo: novoTipo,
+    vinculoHistorico,
     tipoServico: val('f_tipoServico'),
     periodicidade: novaPeriodicidade,
     periodicidadeHistorico,
@@ -2871,7 +3016,7 @@ function printFicha(id){
     <div class="fbox">
       <div class="frow">
         ${fc('Empresa', DB.empresa.razaoSocial, 'w4')}
-        ${fc('Data de admissão', f.admissao?fmtDate(f.admissao):'')}
+        ${fc('Data de admissão', admissaoFolha(f)?fmtDate(admissaoFolha(f)):'')}
         ${fc('Função', f.funcao||'', 'w2')}
       </div>
       <div class="frow">
@@ -3224,7 +3369,9 @@ function renderPontoMensal(){
   const c = document.getElementById('content');
   /* ativosNoMes, não status!=='inativo': quem foi demitido dentro deste mês
      continua aparecendo para lançar/corrigir os dias em que trabalhou. */
-  const todos = ativosNoMes(`${pmAno}-${String(pmMes).padStart(2,'0')}`).filter(f=>f.tipo==='fichado');
+  const ymPm = `${pmAno}-${String(pmMes).padStart(2,'0')}`;
+  /* quem foi fichado em algum dia do mês (inclusive quem era diarista e virou fichado no meio dele) */
+  const todos = ativosNoMes(ymPm).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ymPm), ultimoDiaMes(ymPm)));
   /* filtrar por obra é o jeito de apontar: chega na obra, vê quem está lá, aponta só aquela equipe */
   const fichados = ordenarFuncionarios(filtraObra(todos, pmObraFiltro));
   if(!fichados.some(f=>f.id===pmFuncId)) pmFuncId = fichados.length ? fichados[0].id : null;
@@ -3294,7 +3441,7 @@ function renderCalendarMensal(){
   for(let d=1; d<=nd; d++){
     const iso = `${pmAno}-${String(pmMes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const st = reg.dias[iso] || '';
-    const bloqueado = antesDaAdmissao(f, iso);
+    const bloqueado = antesDaAdmissao(f, iso, 'fichado');
     const porConfirmar = !!auto[iso] && !!st;
     /* feriado só decora a célula (nome no title, marquinha 🎉) — continua
        dando para marcar 'trabalhado' se a pessoa trabalhou no feriado
@@ -3316,7 +3463,7 @@ function renderCalendarMensal(){
     if(exc.comissao) partesExc.push('comissão ' + fmtMoney(exc.comissao));
     let titulo = STATUS_LABEL[st] || 'Sem lançamento';
     if(fer) titulo = `${fer.nome} (feriado)${st?' — '+titulo:''}`;
-    if(bloqueado) titulo = motivoBloqueio(f, iso);
+    if(bloqueado) titulo = motivoBloqueio(f, iso, 'fichado');
     cells += `<div class="day ${st} ${bloqueado?'fora':''} ${porConfirmar?'aconfirmar':''} ${fer&&!st?'feriado':''}" onclick="cycleDia('${iso}')"
         title="${titulo}${porConfirmar?' — presumido, ainda não confirmado':''}${partesExc.length?' — hoje: '+esc(partesExc.join(', ')):''}">
       <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
@@ -3359,7 +3506,7 @@ function renderCalendarMensal(){
 
 function cycleDia(iso){
   const f = func(pmFuncId);
-  if(antesDaAdmissao(f, iso)){ avisaAdmissao(f, iso); return; }
+  if(antesDaAdmissao(f, iso, 'fichado')){ avisaAdmissao(f, iso, 'fichado'); return; }
   const key = pmKey();
   const reg = DB.pontoMensal[key] = DB.pontoMensal[key] || {dias:{}, ts:{}, auto:{}};
   reg.dias = reg.dias||{}; reg.auto = reg.auto||{};
@@ -3388,7 +3535,7 @@ function cycleDia(iso){
 function abrirExcecaoDiaModal(iso){
   const f = func(pmFuncId);
   if(!f) return;
-  if(antesDaAdmissao(f, iso)){ avisaAdmissao(f, iso); return; }
+  if(antesDaAdmissao(f, iso, 'fichado')){ avisaAdmissao(f, iso, 'fichado'); return; }
   const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`] || {};
   const exc = (reg.excecaoDia||{})[iso] || {};
   const definitiva = obraHistoricaEm(f, iso);
@@ -3455,7 +3602,7 @@ function preencherMesUtil(){
   for(let d=1; d<=nd; d++){
     const iso = `${pmAno}-${String(pmMes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dow = dowOf(iso);
-    if(antesDaAdmissao(f, iso) || isFeriado(iso)) continue;
+    if(antesDaAdmissao(f, iso, 'fichado') || isFeriado(iso)) continue;
     if(dow>=1 && dow<=5 && !DB.pontoMensal[key].dias[iso]){ DB.pontoMensal[key].dias[iso] = 'trabalhado'; n++; }
   }
   saveDB(); renderPontoMensal(); toast(`${n} dia(s) preenchido(s).`);
@@ -3556,7 +3703,7 @@ function initPdia(){ if(!pdiaData) pdiaData = todayISO(); }
 
 /* ---------- leitura/escrita de um dia, independente do tipo ---------- */
 function statusDoDia(f, iso){
-  if(f.tipo === 'fichado'){
+  if(vinculoEm(f, iso) === 'fichado'){
     const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
     if(!reg) return {status:'', auto:false};
     return {status: reg.dias[iso] || '', auto: !!(reg.auto||{})[iso]};
@@ -3568,7 +3715,7 @@ function statusDoDia(f, iso){
 /* grava o status de um dia. `auto` diz se é presunção do sistema ou decisão do usuário. */
 function setStatusDoDia(f, iso, status, auto){
   if(foraDoVinculo(f, iso)) return false;
-  if(f.tipo === 'fichado'){
+  if(vinculoEm(f, iso) === 'fichado'){
     const k = `${f.id}_${iso.slice(0,7)}`;
     const reg = DB.pontoMensal[k] = DB.pontoMensal[k] || {dias:{}, ts:{}, auto:{}};
     reg.dias = reg.dias||{}; reg.ts = reg.ts||{}; reg.auto = reg.auto||{};
@@ -3623,7 +3770,7 @@ function equipeDoDia(){
      lançado — um diarista admitido dia 10 e demitido dia 14 sumia do Ponto
      antes de dar para marcar a presença dos dias 10 a 14 que ele trabalhou. */
   const base = ativosNoPeriodo(pdiaData, pdiaData).filter(f=>
-    (pdiaTipo === 'todos' || f.tipo === pdiaTipo));
+    (pdiaTipo === 'todos' || vinculoEm(f, pdiaData) === pdiaTipo));
   /* Filtro de obra tem que respeitar o DIA sendo lançado, não a obra atual do
      cadastro — senão um fichado transferido (`f.obraHistorico`) aparece na
      obra nova mesmo em dias de ANTES da transferência (bug relatado pelo
@@ -3633,7 +3780,7 @@ function equipeDoDia(){
      em `DB.pontoDiarista`, não usa `obraHistorico`. */
   if(!pdiaObra) return ordenarFuncionarios(base);
   const filtrada = base.filter(f=>
-    f.tipo==='fichado' ? obraDoFuncionarioEm(f, pdiaData)===pdiaObra : f.obraPadrao===pdiaObra);
+    vinculoEm(f, pdiaData)==='fichado' ? obraDoFuncionarioEm(f, pdiaData)===pdiaObra : f.obraPadrao===pdiaObra);
   return ordenarFuncionarios(filtrada);
 }
 
@@ -3702,7 +3849,7 @@ function renderPontoDia(){
       return op('trabalhado', 'T', 'Trabalhou (feriado — direito a pagamento em dobro)', '#1f8a4c')
            + op('',           '—', 'Não trabalhou (feriado)',                            '#6c7280');
     }
-    if(f.tipo === 'fichado'){
+    if(vinculoEm(f, pdiaData) === 'fichado'){
       return op('trabalhado',          'P',  'Presente',           '#1f8a4c')
            + op('falta_injustificada', 'F',  'Falta',              '#c0392b')
            + op('falta_justificada',   'FJ', 'Falta justificada',  '#b8860b')
@@ -3808,7 +3955,7 @@ function renderPontoDia(){
               return `<tr${s.auto&&s.status?' style="background:#fffaf0;"':''}>
                 <td class="num">${i+1}</td>
                 <td class="nome" title="${esc(f.nome)}"><b>${esc(f.nome)}</b>${s.auto&&s.status?' <span class="badge badge-yellow" style="font-size:9.5px;">a confirmar</span>':''}</td>
-                ${misto?`<td><span class="badge ${f.tipo==='fichado'?'badge-blue':'badge-yellow'}"><span class="ini">${f.tipo==='fichado'?'F':'D'}</span><span class="detalhe">${f.tipo==='fichado'?'Fichado':'Diarista'}</span></span></td>`:''}
+                ${misto?`<td><span class="badge ${vinculoEm(f, pdiaData)==='fichado'?'badge-blue':'badge-yellow'}"><span class="ini">${vinculoEm(f, pdiaData)==='fichado'?'F':'D'}</span><span class="detalhe">${vinculoEm(f, pdiaData)==='fichado'?'Fichado':'Diarista'}</span></span></td>`:''}
                 <td title="${esc(f.funcao||'')}"><span class="detalhe">${esc(f.funcao||'—')}</span><span class="ini">${esc(cargoCurto(f.funcao))}</span></td>
                 ${mostrarObra?`<td style="font-size:11.5px;color:#6c7280;">${esc(obraNome(f.obraPadrao))}</td>`:''}
                 <td class="lancamento">${botoes(f)}</td>
@@ -3898,14 +4045,14 @@ function preencherPresenca(tipo, ini, fim){
   /* ativosNoPeriodo, não status!=='inativo': mesmo motivo do equipeDoDia —
      quem foi demitido dentro do período escolhido precisa continuar entrando. */
   ativosNoPeriodo(ini, fim).filter(f=>
-    (tipo==='todos' || f.tipo===tipo)).forEach(f=>{
+    (tipo==='todos' || vinculoNoPeriodo(f, tipo, ini, fim))).forEach(f=>{
     let tocou = false;
     let iso = ini;
     while(iso <= fim){
       const dw = dowOf(iso);
       /* pula feriado: o padrão nesse dia é o contrário — geralmente ninguém
          trabalha, então presumir presença estaria quase sempre errado */
-      if(dw>=1 && dw<=5 && !foraDoVinculo(f, iso) && !isFeriado(iso)){
+      if(dw>=1 && dw<=5 && !foraDoVinculo(f, iso) && (tipo==='todos' || vinculoEm(f, iso)===tipo) && !isFeriado(iso)){
         const s = statusDoDia(f, iso);
         if(!s.status){                       // nunca sobrescreve o que já existe
           setStatusDoDia(f, iso, 'trabalhado', true);
@@ -4027,7 +4174,7 @@ function executarPreenchimento(tipo){
    `STATUS_CYCLE` do fichado. `f.apareceNaFolhaContabil` (03_func.js) é quem liga
    isso, funcionário por funcionário — sem precisar duplicar o cadastro dele. */
 function statusParaFolhaContabil(f, iso, ym){
-  if(f.tipo === 'fichado'){
+  if(vinculoEm(f, iso) === 'fichado'){
     const reg = DB.pontoMensal[`${f.id}_${ym}`] || {dias:{}};
     return reg.dias[iso] || '';
   }
@@ -4102,7 +4249,7 @@ function printFolhaContabilidade(){
      filtro de obra da tela. `ativosNoMes` é o que mantém na folha quem foi
      demitido no meio do mês — senão não haveria como pagar o acerto dele. */
   const equipe = ordenarFuncionarios(
-    filtraObra(ativosNoMes(ym).filter(f=>f.tipo==='fichado' || f.apareceNaFolhaContabil), pmObraFiltro));
+    filtraObra(ativosNoMes(ym).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ym), ultimoDiaMes(ym)) || f.apareceNaFolhaContabil), pmObraFiltro));
 
   if(!equipe.length){
     alert('Nenhum fichado com vínculo ativo neste mês'
@@ -4135,7 +4282,7 @@ function printFolhaContabilidade(){
         if(!doMes){
           return `<td class="c fora">${MESES[parseInt(iso.slice(5,7),10)-1].toUpperCase().slice(0,3)}</td>`;
         }
-        if(foraDoVinculo(f, iso)) return `<td class="c fora">X</td>`;
+        if(foraDoVinculo(f, iso, vinculoMudou(f) ? 'fichado' : undefined)) return `<td class="c fora">X</td>`;
         const st = statusParaFolhaContabil(f, iso, ym);
         const sig = SIGLA_CONTABIL[st] || '';
         if(sig === '1') total++;
@@ -4222,7 +4369,7 @@ function resumoMesFuncionario(f, ym){
     const dw = dowOf(iso);
     if(dw >= 1 && dw <= 5){
       r.uteis++;
-      if(!foraDoVinculo(f, iso)){
+      if(!foraDoVinculo(f, iso, vinculoMudou(f) ? 'fichado' : undefined)){
         r.comVinculo++;
         const st = statusParaFolhaContabil(f, iso, ym);
         /* feriado sem lançamento é o esperado (ninguém trabalha) — não é
@@ -4249,7 +4396,7 @@ function printResumoMensal(){
   const ini = primeiroDiaMes(ym), fim = ultimoDiaMes(ym);
 
   const equipe = ordenarFuncionarios(
-    filtraObra(ativosNoMes(ym).filter(f=>f.tipo==='fichado' || f.apareceNaFolhaContabil), pmObraFiltro));
+    filtraObra(ativosNoMes(ym).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ym), ultimoDiaMes(ym)) || f.apareceNaFolhaContabil), pmObraFiltro));
 
   if(!equipe.length){
     alert('Nenhum fichado com vínculo ativo neste mês'
@@ -4269,7 +4416,8 @@ function printResumoMensal(){
 
     /* o que a contabilidade precisa saber para calcular proporcional */
     const obs = [];
-    if(f.admissao && f.admissao >= ini && f.admissao <= fim) obs.push(`Admitido em ${fmtDate(f.admissao)}`);
+    const admF = admissaoFolha(f);   // a de fichado, para quem foi diarista antes
+    if(admF && admF >= ini && admF <= fim) obs.push(`Admitido em ${fmtDate(admF)}`);
     if(f.demissao && f.demissao >= ini && f.demissao <= fim){
       obs.push(`Demitido em ${fmtDate(f.demissao)}${f.motivoDemissao?' — '+esc(f.motivoDemissao):''}`);
     }
@@ -4279,7 +4427,7 @@ function printResumoMensal(){
       <td class="c">${i+1}</td>
       <td>${esc(f.nome)}</td>
       <td>${esc((f.funcao||'—').toUpperCase())}</td>
-      <td class="c">${f.admissao?fmtDate(f.admissao):'—'}</td>
+      <td class="c">${admissaoFolha(f)?fmtDate(admissaoFolha(f)):'—'}</td>
       <td class="c">${r.comVinculo}</td>
       <td class="c"><b>${r.trabalhado}</b></td>
       <td class="c">${r.injustificada||''}</td>
@@ -4370,10 +4518,16 @@ const PD_SIGLA  = {trabalhado:'✓', falta:'F'};
 const PD_CYCLE  = ['trabalhado','falta',''];
 
 /* impede lançar ponto fora do vínculo (antes da admissão ou depois da demissão) */
-function antesDaAdmissao(f, iso){
-  return !!foraDoVinculo(f, iso);
+function antesDaAdmissao(f, iso, folha){
+  return !!foraDoVinculo(f, iso, folha);
 }
-function avisaAdmissao(f, iso){
+function avisaAdmissao(f, iso, folha){
+  /* quem mudou de vínculo (diarista <-> fichado): o motivo é o vínculo do dia, não admissão/demissão */
+  const semAdmDem = !(f.admissao && iso < f.admissao) && !(f.demissao && iso > f.demissao);
+  if(folha && semAdmDem && foraDoVinculo(f, iso, folha)){
+    alert(`${f.nome}: ${motivoBloqueio(f, iso, folha)}.\n\nNão dá para lançar ponto em ${fmtDate(iso)} nesta folha.`);
+    return;
+  }
   if(foraDoVinculo(f, iso) === 'depois'){
     alert(`${f.nome} foi demitido em ${fmtDate(f.demissao)}.\n\n`
         + `Não dá para lançar ponto em ${fmtDate(iso)}, que é depois disso.\n\n`
@@ -4447,7 +4601,7 @@ function renderCalendarDiarista(){
     else if(st==='falta') faltas++;
     if(e && e.quentinha) quent++;
 
-    const bloqueado = antesDaAdmissao(f, iso);
+    const bloqueado = antesDaAdmissao(f, iso, 'diarista');
     const porConfirmar = !!(e && e.auto && e.status);
     /* feriado só decora (nome no title, 🎉): diarista não trabalha feriado por
        regra, mas se marcar "trabalhado" mesmo assim a cor do status prevalece,
@@ -4455,7 +4609,7 @@ function renderCalendarDiarista(){
     const fer = feriadoDoDia(iso);
     let titulo = PD_LABEL[st] || 'Sem lançamento';
     if(fer) titulo = `${fer.nome} (feriado)${st?' — '+titulo:''}`;
-    if(bloqueado) titulo = motivoBloqueio(f, iso);
+    if(bloqueado) titulo = motivoBloqueio(f, iso, 'diarista');
     cells += `<div class="day ${st} ${bloqueado?'fora':''} ${porConfirmar?'aconfirmar':''} ${fer&&!st?'feriado':''}" onclick="cyclePd('${iso}')"
         title="${titulo}${porConfirmar?' — presumido, ainda não confirmado':''}">
       <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
@@ -4505,7 +4659,7 @@ function renderCalendarDiarista(){
 
 function cyclePd(iso){
   const f = func(pdFuncId);
-  if(antesDaAdmissao(f, iso)){ avisaAdmissao(f, iso); return; }
+  if(antesDaAdmissao(f, iso, 'diarista')){ avisaAdmissao(f, iso, 'diarista'); return; }
   let e = pdEntry(pdFuncId, iso);
   if(!e){
     DB.pontoDiarista.push({id:uid(), funcionarioId:pdFuncId, obraId:f.obraPadrao||'', data:iso, status:'trabalhado', quentinha:false});
@@ -4525,7 +4679,7 @@ function cyclePd(iso){
 
 function toggleQuentinha(iso){
   const f = func(pdFuncId);
-  if(antesDaAdmissao(f, iso)){ avisaAdmissao(f, iso); return; }
+  if(antesDaAdmissao(f, iso, 'diarista')){ avisaAdmissao(f, iso, 'diarista'); return; }
   let e = pdEntry(pdFuncId, iso);
   if(!e){
     DB.pontoDiarista.push({id:uid(), funcionarioId:pdFuncId, obraId:f.obraPadrao||'', data:iso, status:'', quentinha:true});
@@ -4549,7 +4703,7 @@ function toggleQuentinha(iso){
 function abrirFuncaoComissaoDiaristaModal(iso){
   const f = func(pdFuncId);
   if(!f) return;
-  if(antesDaAdmissao(f, iso)){ avisaAdmissao(f, iso); return; }
+  if(antesDaAdmissao(f, iso, 'diarista')){ avisaAdmissao(f, iso, 'diarista'); return; }
   const e = pdEntry(pdFuncId, iso) || {};
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
@@ -4698,8 +4852,10 @@ function calcsDoFechamento(sexta, obraFiltro){
     /* `periodicidadeHistoricaEm(f, sexta)`, não `f.periodicidade` cru (18/09/2026) —
        reabrir uma sexta antiga precisa continuar vendo quem era semanal/quinzenal
        NAQUELA data, não quem é hoje (ver `periodicidadeHistoricaEm`, 02_core.js). */
+    /* vínculo NO PERÍODO, não o de hoje: quem virou fichado depois continua aparecendo
+       nas sextas em que ainda era diarista (senão o pagamento antigo sumia do fechamento) */
     let lista = ativosNoPeriodo(periodo.inicio, periodo.fim)
-      .filter(f=>f.tipo==='diarista' && periodicidadeHistoricaEm(f, sexta)===p);
+      .filter(f=>vinculoNoPeriodo(f, 'diarista', periodo.inicio, periodo.fim) && periodicidadeHistoricaEm(f, sexta)===p);
     if(obraFiltro) lista = lista.filter(f=>f.obraPadrao===obraFiltro);
     lista.forEach(f=>{
       const x = calcDiarista(f, periodo);
@@ -4740,7 +4896,8 @@ function linhasComissaoFichados(sexta, obraFiltro){
   /* janela mais larga (quinzenal) só pra achar quem estava no vínculo em
      algum ponto do período — cada pessoa depois usa o período exato dela */
   const periodoAmplo = periodoDaSexta(sexta, 'quinzenal');
-  let fichados = ativosNoPeriodo(periodoAmplo.inicio, periodoAmplo.fim).filter(f=>f.tipo==='fichado');
+  let fichados = ativosNoPeriodo(periodoAmplo.inicio, periodoAmplo.fim)
+    .filter(f=>vinculoNoPeriodo(f, 'fichado', periodoAmplo.inicio, periodoAmplo.fim));
   if(obraFiltro) fichados = fichados.filter(f=>f.obraPadrao===obraFiltro);
   const out = [];
   fichados.forEach(f=>{
@@ -5443,7 +5600,7 @@ function atualizaDestinoVale(){
   const box = document.getElementById('a_destino');
   const wrap = document.getElementById('wrap_parcelas');
   if(!f || !box) return;
-  const fichado = f.tipo === 'fichado';
+  const fichado = vinculoEm(f, val('a_data') || todayISO()) === 'fichado';   // o vínculo da DATA do vale, não o de hoje
   wrap.style.display = fichado ? '' : 'none';
 
   const valor = numVal('a_valor');
@@ -5513,7 +5670,7 @@ function saveAdiantamento(id){
   const ehDesconto = val('a_tipo') === 'desconto';
   const contaId = ehDesconto ? '' : val('a_conta');
   if(!ehDesconto && !contaId){ alert('Escolha de qual conta saiu o dinheiro — é o que mantém o saldo do app batendo com o do banco.'); return; }
-  const fichado = f.tipo === 'fichado';
+  const fichado = vinculoEm(f, val('a_data') || todayISO()) === 'fichado';   // o vínculo da DATA do vale, não o de hoje
   const dataISO = val('a_data');
   const existente = DB.adiantamentos.find(x=>x.id===id) || {};
   const data = {
@@ -5600,8 +5757,9 @@ function calcFichado(f, mes){
      restantes de um mês de 31) rendeu R$ 713,96 de adiantamento para um
      salário de R$ 1.908 — bate exato com 1908/31*29*40%. Quem já trabalhava
      desde antes do mês (a maioria) usa o salário cheio, sem proporção. */
-  const admitidoNesteMes = !!f.admissao && f.admissao >= primeiroDia && f.admissao <= ultimoDia;
-  const diaAdmissao = admitidoNesteMes ? Number(f.admissao.slice(8,10)) : null;
+  const admFolha = admissaoFolha(f);   // quem foi diarista antes conta a partir de quando virou fichado
+  const admitidoNesteMes = !!admFolha && admFolha >= primeiroDia && admFolha <= ultimoDia;
+  const diaAdmissao = admitidoNesteMes ? Number(admFolha.slice(8,10)) : null;
   const diasProporcionais = admitidoNesteMes ? (nd - diaAdmissao + 1) : null;
   const salarioProporcional = admitidoNesteMes
     ? Math.round(salario/nd*diasProporcionais*100)/100
@@ -5609,7 +5767,7 @@ function calcFichado(f, mes){
 
   /* quem foi admitido depois do dia 20 não recebeu adiantamento nenhum —
      só vai receber o saldo do mês inteiro, sem desconto nenhum */
-  const temDireitoAdiantamento = !f.admissao || f.admissao <= dataAdiantamento;
+  const temDireitoAdiantamento = !admFolha || admFolha <= dataAdiantamento;
   const adiantamento = temDireitoAdiantamento ? Math.round(salarioProporcional*pctAdiant/100*100)/100 : 0;
 
   const reg = getFechFichado(f.id, mes);
@@ -5739,7 +5897,7 @@ function renderFechamentoFichados(){
   const c = document.getElementById('content');
   if(!fcMesFichados) fcMesFichados = currentYM();
   const mes = fcMesFichados;
-  const fichados = ativosNoMes(mes).filter(f=>f.tipo==='fichado')
+  const fichados = ativosNoMes(mes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(mes), ultimoDiaMes(mes)))
     .sort(cmpFuncionarios);
   const rows = fichados.map(f=>calcFichado(f, mes));
 
@@ -5894,7 +6052,7 @@ function reciboAdiantamentoHTML(r){
         <tr><td style="width:24%"><b>Salário base</b></td><td class="n" style="width:26%">${fmtNum(r.salario)}</td>
             <td style="width:24%"><b>Percentual</b></td><td class="n">${fmtNum(r.pctAdiant,0)}%</td></tr>
         <tr><td><b>CPF</b></td><td>${esc(r.f.cpf||'—')}</td>
-            <td><b>Admissão</b></td><td>${r.f.admissao?fmtDate(r.f.admissao):'—'}</td></tr>
+            <td><b>Admissão</b></td><td>${admissaoFolha(r.f)?fmtDate(admissaoFolha(r.f)):'—'}</td></tr>
         ${r.admitidoNesteMes ? `<tr><td><b>Salário proporcional</b></td><td class="n">${fmtNum(r.salarioProporcional)}</td>
             <td><b>Dias no mês</b></td><td class="n">${r.diasProporcionais} de ${r.nd}</td></tr>` : ''}
       </tbody>
@@ -5920,7 +6078,7 @@ function printReciboAdiantamento(funcId){
   doPrint(reciboAdiantamentoHTML(r), `Recibo Adiantamento - ${monthLabel(fcMesFichados)} - ${r.f.nome}`);
 }
 function printTodosAdiantamentos(){
-  const rows = ativosNoMes(fcMesFichados).filter(f=>f.tipo==='fichado')
+  const rows = ativosNoMes(fcMesFichados).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(fcMesFichados), ultimoDiaMes(fcMesFichados)))
     .sort(cmpFuncionarios)
     .map(f=>calcFichado(f, fcMesFichados))
     .filter(r=>r.temDireitoAdiantamento);
@@ -5931,7 +6089,7 @@ function printTodosAdiantamentos(){
 
 function printFolhaFichados(){
   const mes = fcMesFichados;
-  const rows = ativosNoMes(mes).filter(f=>f.tipo==='fichado')
+  const rows = ativosNoMes(mes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(mes), ultimoDiaMes(mes)))
     .sort(cmpFuncionarios)
     .map(f=>calcFichado(f, mes));
   if(!rows.length){ alert('Nenhum fichado ativo.'); return; }
@@ -5989,7 +6147,7 @@ function relatorioFichadosHTML(tipo, mes){
   const ehAdiant = tipo==='adiantamento';
   const dataEvento = ehAdiant ? `${mes}-20` : quintoDiaUtil(mesMais(mes,1));
   const refObra = ultimoDiaMes(mes);   // obra/cargo do funcionário NO mês (mesmo critério da folha), não os de hoje
-  let rows = ativosNoMes(mes).filter(f=>f.tipo==='fichado').sort(cmpFuncionarios).map(f=>calcFichado(f, mes));
+  let rows = ativosNoMes(mes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(mes), ultimoDiaMes(mes))).sort(cmpFuncionarios).map(f=>calcFichado(f, mes));
   if(ehAdiant) rows = rows.filter(r=>r.temDireitoAdiantamento);
   if(!rows.length) return '';
 
@@ -6165,7 +6323,7 @@ function calcVale(f, mes){
 function renderVales(){
   initValesMes();
   const c = document.getElementById('content');
-  const fichados = ativosNoMes(valesMes).filter(f=>f.tipo==='fichado' && recebeAlgumVale(f))
+  const fichados = ativosNoMes(valesMes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(valesMes), ultimoDiaMes(valesMes)) && recebeAlgumVale(f))
     .sort(cmpFuncionarios);
 
   const diasPadrao = diasDeSemanaDoMes(valesMes);
@@ -6259,7 +6417,7 @@ function renderVales(){
           <tbody>
           ${rows.map(r=>{
             const auto = diasUteisDoFuncionarioNoMes(r.f, valesMes);
-            const parcial = r.f.admissao && r.f.admissao > primeiroDiaMes(valesMes);
+            const parcial = admissaoFolha(r.f) && admissaoFolha(r.f) > primeiroDiaMes(valesMes);
             const pago = r.v.pago;
             const dis = pago ? 'disabled title="Pago — desmarque \'Pago\' para editar"' : '';
             return `<tr ${pago?'style="background:#f6fbf8;"':''}>
@@ -6267,7 +6425,7 @@ function renderVales(){
             <td class="num">${fmtMoney(r.vtDia)}</td>
             <td class="num">${fmtMoney(r.vrDia)}</td>
             <td><input type="number" min="0" max="31" style="text-align:center;min-width:52px;" value="${r.dias}" onwheel="this.blur()" ${dis} onchange="setValeCampo('${r.f.id}','dias',this.value)" title="Ajuste só desta pessoa">
-                ${parcial?`<span style="font-size:10px;color:var(--azul-esc);">desde ${fmtDate(r.f.admissao).slice(0,5)}</span>`:''}
+                ${parcial?`<span style="font-size:10px;color:var(--azul-esc);">desde ${fmtDate(admissaoFolha(r.f)).slice(0,5)}</span>`:''}
                 ${r.v.dias!=='' && r.v.dias!=null && Number(r.v.dias)!==auto?`<span style="font-size:10px;color:var(--amarelo);">manual (auto: ${auto})</span>`:''}</td>
             <td class="num">${fmtMoney(r.totalVT)}</td>
             <td class="num">${fmtMoney(r.totalVR)}</td>
@@ -6344,7 +6502,7 @@ function setValeCampo(funcId, campo, valor){
    lançamento já criado no financeiro.
    --------------------------------------------------------- */
 function recalcularVales(){
-  const fichados = ativosNoMes(valesMes).filter(f=>f.tipo==='fichado' && recebeAlgumVale(f));
+  const fichados = ativosNoMes(valesMes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(valesMes), ultimoDiaMes(valesMes)) && recebeAlgumVale(f));
   const pendentes = fichados.filter(f=>!getVale(f.id, valesMes).pago);
   if(!pendentes.length){ toast('Nada para recalcular — todo mundo já está marcado como pago.'); return; }
   const pagosQtd = fichados.length - pendentes.length;
@@ -6440,8 +6598,8 @@ function reciboValeHTML(funcId){
         <tr><td>Vale-refeição / alimentação</td>
             <td>${r.dias} dias × ${fmtMoney(r.vrDia)}</td><td class="n">${fmtNum(r.totalVR)}</td></tr>
         <tr><td colspan="2" style="text-align:right;font-weight:800;">Subtotal referente a ${r.dias} dias${
-              r.f.admissao && r.f.admissao > primeiroDiaMes(valesMes)
-                ? ` (${fmtDate(r.f.admissao)} à ${nd} de ${MESES[m-1]})`
+              admissaoFolha(r.f) && admissaoFolha(r.f) > primeiroDiaMes(valesMes)
+                ? ` (${fmtDate(admissaoFolha(r.f))} à ${nd} de ${MESES[m-1]})`
                 : ` (01 à ${nd} de ${MESES[m-1]})`}</td>
             <td class="n" style="font-weight:800;">${fmtNum(r.bruto)}</td></tr>
         ${r.descFaltas ? `<tr><td>Desconto referente a dias não efetivados em ${mesAnterior}</td>
@@ -6466,13 +6624,13 @@ function printRecibo(funcId){
   doPrint(reciboValeHTML(funcId), `Vale VT-VR - ${monthLabel(valesMes)} - ${f.nome}`);
 }
 function printTodosRecibosVale(){
-  const fichados = ativosNoMes(valesMes).filter(f=>f.tipo==='fichado' && recebeAlgumVale(f));
+  const fichados = ativosNoMes(valesMes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(valesMes), ultimoDiaMes(valesMes)) && recebeAlgumVale(f));
   if(!fichados.length){ alert('Nenhum recibo a gerar.'); return; }
   doPrint(fichados.map((f,i)=>`<div class="${i<fichados.length-1?'pagebreak':''}">${reciboValeHTML(f.id)}</div>`).join(''),
     `Vale VT-VR - ${monthLabel(valesMes)} - Todos`);
 }
 function printResumoVales(){
-  const rows = ativosNoMes(valesMes).filter(f=>f.tipo==='fichado' && recebeAlgumVale(f))
+  const rows = ativosNoMes(valesMes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(valesMes), ultimoDiaMes(valesMes)) && recebeAlgumVale(f))
     .sort(cmpFuncionarios).map(f=>calcVale(f, valesMes));
   if(!rows.length){ alert('Nada a imprimir.'); return; }
   doPrint(`
@@ -6588,10 +6746,11 @@ function getHolerite(funcId, mes){
    documento de rescisão à parte (ver `CLAUDE.md`, caso do Valter de Souza Pereira). */
 function diasSaldoSalarioNoMes(f, mes){
   const ini = primeiroDiaMes(mes), fim = ultimoDiaMes(mes);
-  if(!f.admissao || f.admissao <= ini) return 30;
-  if(f.admissao > fim) return 0;
+  const adm = admissaoFolha(f);   // quem foi diarista antes conta a partir de quando virou fichado
+  if(!adm || adm <= ini) return 30;
+  if(adm > fim) return 0;
   const nd = daysInMonth(...mes.split('-').map(Number));
-  return nd - Number(f.admissao.slice(8,10)) + 1;
+  return nd - Number(adm.slice(8,10)) + 1;
 }
 
 /* sugestões automáticas a partir do que o sistema já sabe */
@@ -6642,7 +6801,11 @@ function sugestoesHolerite(f, mes){
    todo mês (mesmo raciocínio já usado na Folha de Ponto para a Contabilidade,
    `04c_folha_contabil.js` — ver "Cadastro duplicado" no `CLAUDE.md`). Sem isso, a tela
    nunca deixava lançar o holerite real que a contabilidade manda desses dois. */
-function elegivelHolerite(f){ return f.tipo==='fichado' || f.apareceNaFolhaContabil || f.holeriteDiarista; }
+function elegivelHolerite(f, mes){
+  /* com o mês, quem foi diarista e só depois virou fichado NÃO tem holerite de fichado nos meses de diarista */
+  const fichadoNoMes = mes ? vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(mes), ultimoDiaMes(mes)) : f.tipo==='fichado';
+  return fichadoNoMes || f.apareceNaFolhaContabil || f.holeriteDiarista;
+}
 
 /* Recibo no formato de holerite para DIARISTA de verdade (10/09/2026), pedido do Maycon
    pra ter algo com essa aparência pra mostrar pra fora (ex.: pra Bandeira). DIFERENTE do
@@ -6710,7 +6873,7 @@ function renderHolerite(){
   initValesMes();
   if(!holMes) holMes = valesMes;
   const c = document.getElementById('content');
-  const fichados = filtraObraNoMes(ativosNoMes(holMes).filter(elegivelHolerite), holObraFiltro, holMes);
+  const fichados = filtraObraNoMes(ativosNoMes(holMes).filter(f=>elegivelHolerite(f, holMes)), holObraFiltro, holMes);
   if((!holFuncId || !fichados.some(f=>f.id===holFuncId)) && fichados.length) holFuncId = fichados[0].id;
 
   if(!fichados.length){
@@ -6959,7 +7122,7 @@ function holeriteViaHTML(f, h, comVales){
     <div class="hfun">
       <div class="l">
         <b>${esc(f.matricula||'----')}-${esc((f.nome||'').toUpperCase())}</b><br>
-        FUNÇÃO : ${esc(funcaoHistoricaEm(f, ultimoDiaMes(h.mes)).toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${f.admissao?fmtDate(f.admissao):'--/--/----'}
+        FUNÇÃO : ${esc(funcaoHistoricaEm(f, ultimoDiaMes(h.mes)).toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${admissaoFolha(f)?fmtDate(admissaoFolha(f)):'--/--/----'}
       </div>
       <div class="r">C.B.O.: ${esc(f.cbo||'—')}<br>CPF: ${esc(f.cpf||'—')}</div>
     </div>
@@ -7019,7 +7182,7 @@ function printHolerite(comVales){
    sem rubricas em comum pra decidir isso depois. Diarista fictício sem nenhum dia
    trabalhado no mês não entra (não faz sentido um recibo de R$0,00 no lote). */
 function corposHoleriteEmLote(mes, obraFiltro, comVales){
-  const elegiveis = filtraObraNoMes(ativosNoMes(mes).filter(elegivelHolerite), obraFiltro, mes);
+  const elegiveis = filtraObraNoMes(ativosNoMes(mes).filter(f=>elegivelHolerite(f, mes)), obraFiltro, mes);
   return elegiveis.map(f=>{
     if(f.tipo==='diarista' && f.holeriteDiarista && !f.apareceNaFolhaContabil){
       const r = calcReciboDiariaHolerite(f, mes);
@@ -7190,7 +7353,7 @@ function encargosViaHTML(f, mes){
     <div class="hfun">
       <div class="l">
         <b>${esc(f.matricula||'----')}-${esc((f.nome||'').toUpperCase())}</b><br>
-        FUNÇÃO : ${esc(funcaoHistoricaEm(f, ultimoDiaMes(mes)).toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${f.admissao?fmtDate(f.admissao):'--/--/----'}
+        FUNÇÃO : ${esc(funcaoHistoricaEm(f, ultimoDiaMes(mes)).toUpperCase())} &nbsp;&nbsp;&nbsp; ADMISSÃO : ${admissaoFolha(f)?fmtDate(admissaoFolha(f)):'--/--/----'}
       </div>
       <div class="r">OBRA: ${esc(obraNome(obraDoFuncionarioEm(f, ultimoDiaMes(mes))).toUpperCase())}<br>${esc((SERVICO_LABEL[f.tipoServico]||'').toUpperCase())}</div>
     </div>
@@ -11107,7 +11270,7 @@ function medicaoHH(id){ return DB.medicoesHH.find(m=>m.id===id); }
    recebe VT/VR à parte mesmo (a diária já engloba tudo). */
 function diaContaNaMedicaoHH(f, iso, obraId){
   if(foraDoVinculo(f, iso)) return null;
-  if(f.tipo === 'fichado'){
+  if(vinculoEm(f, iso) === 'fichado'){
     if(obraDoFuncionarioEm(f, iso) !== obraId) return null;
     const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
     const st = reg && reg.dias ? (reg.dias[iso]||'') : '';
