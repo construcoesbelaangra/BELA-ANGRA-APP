@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.9.1';
+const VERSAO = '1.9.2';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2271,8 +2271,8 @@ function renderDashboard(){
   const dSaldo = quintoDiaUtil(ym);
   const dAdiant = `${ym}-20`;
   const primeiro = primeiroDiaMes(ym);
-  const offset = (dowOf(primeiro) + 6) % 7;              // semana começa na segunda
-  const NOME_DOW = ['SEG','TER','QUA','QUI','SEX','SÁB','DOM'];
+  const offset = dowOf(primeiro);                        // calendário tradicional: semana começa no domingo
+  const NOME_DOW = ['DOM','SEG','TER','QUA','QUI','SEX','SÁB'];
   let cel = NOME_DOW.map(n=>`<div class="dow">${n}</div>`).join('');
   for(let i=0;i<offset;i++) cel += '<div class="d fora"></div>';
   for(let dia=1; dia<=nd; dia++){
