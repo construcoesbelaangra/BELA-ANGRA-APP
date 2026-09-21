@@ -412,6 +412,80 @@ tr:hover td{background:#fafbfd;}
 .kpi .v{font-size:23px;font-weight:800;color:var(--azul-esc);}
 .kpi .l{font-size:11.5px;color:#7a808c;margin-top:3px;}
 
+/* ---------- DASHBOARD (redesenhado em 21/09/2026: tudo numa tela só, sem rolar) ---------- */
+.dash{display:flex;flex-direction:column;gap:10px;}
+.dkpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;}
+.dkpis .kpi{padding:9px 13px;}
+.dkpis .kpi .v{font-size:20px;line-height:1.15;}
+.dkpis .kpi .l{font-size:10.8px;margin-top:2px;line-height:1.3;}
+.dkpis .kpi.click{cursor:pointer;} .dkpis .kpi.click:hover{border-color:var(--azul);}
+.dkpis .kpi.aviso{background:#fdf6e6;border-color:#ecd9a6;} .dkpis .kpi.aviso .v{color:var(--amarelo);}
+.dmain{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:10px;align-items:stretch;}
+.dcol{display:flex;flex-direction:column;gap:10px;min-width:0;}
+.dcard{background:#fff;border:1px solid var(--cinza-borda);border-radius:var(--radius);padding:11px 14px;min-width:0;}
+.dcard h2{font-size:12.5px;margin:0 0 7px;color:var(--chumbo);}
+.dbot{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
+.fraco{color:#9aa0ab;font-size:11px;}
+.dcal-topo{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+.dcal-topo h2{margin:0;}
+.dcal-nav{display:flex;gap:4px;}
+.dcal-corpo{display:grid;grid-template-columns:minmax(0,1fr) 168px;gap:12px;}
+.dcal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;align-content:start;}
+.dcal .dow{font-size:9.5px;text-align:center;color:#9aa0ab;font-weight:700;letter-spacing:.03em;}
+.dcal .d{min-height:41px;border:1px solid #eceef2;border-radius:6px;padding:3px 5px;font-size:12px;position:relative;background:#fff;}
+.dcal .d.fora{background:transparent;border-color:transparent;}
+.dcal .d.fds .n{color:#b0b5bf;}
+.dcal .d.fer{background:#f0e9fb;border-color:#dccff2;}
+.dcal .d.sexta{box-shadow:inset 0 -3px 0 #9db8f5;}
+.dcal .d.quinz{box-shadow:inset 0 -3px 0 #1c4fd8;}
+.dcal .d.hoje{border-color:var(--azul);background:var(--azul-claro);}
+.dcal .d.hoje .n{color:var(--azul-esc);font-weight:800;}
+.dcal .d .ic{position:absolute;left:4px;right:4px;bottom:5px;font-size:10.5px;line-height:1;display:flex;gap:3px;flex-wrap:wrap;}
+.dcal-lado{font-size:11.5px;line-height:1.35;min-width:0;}
+.dcal-lado .lt{font-weight:700;color:var(--chumbo-claro);margin:6px 0 2px;font-size:11px;} .dcal-lado .lt:first-child{margin-top:0;}
+.dcal-lado .li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dcal-lado .mais{color:#9aa0ab;font-size:10.5px;}
+.dcal-leg{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:7px;font-size:10.5px;color:#7a808c;align-items:center;}
+.dcal-leg .sw{display:inline-block;width:14px;height:9px;border:1px solid #eceef2;border-radius:3px;margin-right:4px;vertical-align:middle;background:#fff;}
+.dpag-lin{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:12.5px;}
+.dpag-rot{font-weight:700;color:var(--chumbo-claro);}
+.dpag-sub{font-size:11px;color:#7a808c;margin:1px 0 7px;}
+.dats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}
+.dats .at{display:flex;align-items:center;gap:6px;padding:7px 8px;border:1px solid var(--cinza-borda);background:#fff;border-radius:8px;font-size:11.5px;font-weight:600;color:var(--chumbo);cursor:pointer;text-align:left;font-family:inherit;min-width:0;}
+.dats .at:hover{background:var(--azul-claro);border-color:var(--azul);color:var(--azul-esc);}
+.dats .at .ico{width:16px;height:16px;flex:none;} .dats .at span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
+.al{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;} .al:not(.ok){cursor:pointer;} .al:not(.ok):hover{color:var(--azul-esc);}
+.al.ok{color:#6c7280;}
+.pt{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border-radius:10px;font-size:11px;font-weight:800;}
+.pt.am{background:#fdf0cf;color:#8a5a00;} .pt.ok{background:#e4f5ea;color:#1f6b3e;} .pt.info{background:var(--azul-claro);color:var(--azul-esc);}
+.drod{font-size:11.5px;color:#6c7280;padding:0 2px;}
+/* notebook / janela baixa: compacta pra continuar cabendo sem rolar */
+@media(min-width:1101px) and (max-height:860px){
+  .dcal .d{min-height:33px;padding:2px 4px;} .dcal .d .ic{bottom:3px;}
+  .dcal-leg{display:none;} .drod{display:none;}
+  .dash,.dmain,.dcol,.dbot,.dkpis{gap:8px;}
+  .dcard{padding:9px 12px;} .dcard h2{margin-bottom:5px;}
+  .dats .at{padding:5px 8px;}
+  #content{padding-top:14px;padding-bottom:10px;}
+}
+@media(min-width:1101px) and (max-height:700px){
+  .dkpis .kpi{padding:6px 12px;} .dkpis .kpi .v{font-size:18px;}
+  .dcal .d{min-height:29px;} #topbar{padding-top:8px;padding-bottom:8px;}
+  .dcal-topo{margin-bottom:3px;} .al{padding:1px 0;}
+  .dpag-sub{display:none;} .dcal-lado .lt{margin-top:3px;}
+}
+@media(max-width:1100px){
+  .dkpis{grid-template-columns:repeat(3,minmax(0,1fr));}
+  .dmain{grid-template-columns:minmax(0,1fr);}
+  .dbot{grid-template-columns:minmax(0,1fr);}
+}
+@media(max-width:640px){
+  .dkpis{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .dcal-corpo{grid-template-columns:minmax(0,1fr);}
+  .dats{grid-template-columns:repeat(2,minmax(0,1fr));}
+}
+
 .modal-bg{position:fixed;inset:0;background:rgba(20,22,26,.55);display:flex;align-items:flex-start;justify-content:center;z-index:100;overflow-y:auto;padding:30px 14px;}
 .modal{background:#fff;border-radius:12px;max-width:820px;width:100%;padding:22px 24px;margin-bottom:30px;}
 .modal.wide{max-width:1000px;}
@@ -755,7 +829,7 @@ tr:hover td{background:#fafbfd;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.8.0';
+const VERSAO = '1.9.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2084,90 +2158,291 @@ function doPrint(html, nomeArquivo){
 }
 /* =========================================================
    DASHBOARD
+
+   Redesenhado em 21/09/2026, a pedido do Maycon: estava "muito vazio". Tudo cabe numa
+   tela só, sem rolar (no computador): faixa de números em cima, calendário do mês (com
+   feriados, aniversariantes e os dias de pagamento), próximo pagamento (só datas — sem o
+   valor a descontar), atalhos e três quadros embaixo. O estoque de EPI saiu do dashboard
+   (continua na tela dele). O texto "como este sistema funciona" virou uma linha no rodapé.
    ========================================================= */
+let dashMes = '';   // mês mostrado no calendário ('' = o mês de hoje)
+
+function dashIrMes(delta){
+  dashMes = delta === 0 ? '' : mesMais(dashMes || currentYM(), delta);
+  renderDashboard();
+}
+
+/* "JOÃO LUIZ DA SILVA ELIAS" -> "João Elias" (cabe numa linha do quadro) */
+function nomeCurtoDash(nome){
+  const p = (nome||'').trim().split(/\s+/).filter(Boolean);
+  const bonito = s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  if(p.length <= 1) return p.length ? bonito(p[0]) : '—';
+  return bonito(p[0]) + ' ' + bonito(p[p.length-1]);
+}
+
+/* aniversariantes ATIVOS do mês: [{dia, nome, idade}] */
+function aniversariantesDoMes(ym){
+  const mm = ym.slice(5,7), ano = Number(ym.slice(0,4));
+  return DB.funcionarios
+    .filter(f=>f.status!=='inativo' && f.nascimento && f.nascimento.slice(5,7)===mm)
+    .map(f=>({dia: Number(f.nascimento.slice(8,10)), nome: nomeCurtoDash(f.nome), idade: ano - Number(f.nascimento.slice(0,4))}))
+    .sort((a,b)=>a.dia-b.dia || a.nome.localeCompare(b.nome,'pt-BR'));
+}
+
+/* próxima data de pagamento dos fichados a partir de hoje: adiantamento (dia 20) ou saldo (5º dia útil) */
+function proximoPagamentoFichados(){
+  const hoje = todayISO(), ym = hoje.slice(0,7), prox = mesMais(ym, 1);
+  const cand = [
+    {data: `${ym}-20`,          tipo: 'Adiantamento (dia 20)'},
+    {data: quintoDiaUtil(ym),   tipo: 'Saldo do mês anterior (5º dia útil)'},
+    {data: `${prox}-20`,        tipo: 'Adiantamento (dia 20)'},
+    {data: quintoDiaUtil(prox), tipo: 'Saldo do mês (5º dia útil)'}
+  ].filter(c=>c.data >= hoje).sort((a,b)=>a.data.localeCompare(b.data));
+  return cand[0];
+}
+
+function dashAtalhoRegistro(){
+  const pend = DB.funcionarios.filter(f=>f.status!=='inativo' && elegivelStatusRegistro(f) && (f.statusRegistro||'nao_enviado')!=='efetivado');
+  funcFiltro = ''; funcFiltroTipo = ''; funcFiltroObra = '';
+  funcFiltroStatus = 'ativo';
+  funcFiltroRegistro = pend.some(f=>(f.statusRegistro||'nao_enviado')==='nao_enviado') ? 'nao_enviado' : 'em_processo';
+  goTo('funcionarios');
+}
+function dashNovoFuncionario(){ goTo('funcionarios'); setTimeout(()=>openFuncModal(), 60); }
+
 function renderDashboard(){
   const c = document.getElementById('content');
-  const totalFunc = DB.funcionarios.length;
-  const fichados  = DB.funcionarios.filter(f=>f.tipo==='fichado').length;
-  const diaristas = DB.funcionarios.filter(f=>f.tipo==='diarista').length;
-  const hh = DB.funcionarios.filter(f=>f.tipoServico==='homem_hora' && f.status!=='inativo').length;
-  const emp = DB.funcionarios.filter(f=>f.tipoServico==='empreitada' && f.status!=='inativo').length;
+  const hoje = todayISO();
+  const ymHoje = currentYM();
+  const ym = dashMes || ymHoje;
 
-  const ym = currentYM();
+  /* ---- números ---- */
+  const ativosL   = DB.funcionarios.filter(f=>f.status!=='inativo');
+  const fichados  = ativosL.filter(f=>f.tipo==='fichado').length;
+  const diaristas = ativosL.filter(f=>f.tipo==='diarista').length;
+  const hh  = ativosL.filter(f=>f.tipoServico==='homem_hora').length;
+  const emp = ativosL.filter(f=>f.tipoServico==='empreitada').length;
   let faltasMes = 0;
   Object.keys(DB.pontoMensal).forEach(k=>{
-    if(k.endsWith('_'+ym)){
+    if(k.endsWith('_'+ymHoje)){
       Object.values(DB.pontoMensal[k].dias||{}).forEach(st=>{ if(st && st.indexOf('falta')===0) faltasMes++; });
     }
   });
+  const aConfirmar = totalPresumidosAteHoje().n;
+  const regPend = ativosL.filter(f=>elegivelStatusRegistro(f) && (f.statusRegistro||'nao_enviado')!=='efetivado');
+  const regNaoEnv = regPend.filter(f=>(f.statusRegistro||'nao_enviado')==='nao_enviado').length;
+  const regProc   = regPend.length - regNaoEnv;
+  const fin = financeiroPronto();
+  const saldo = fin ? saldoGeral() : null;
 
-  const custoEstoque = DB.epiEntradas.reduce((s,e)=> s + (Number(e.quantidade)*Number(e.valorUnit)), 0);
-  const saidaEstoque = DB.epiSaidas.reduce((s,e)=> s + (Number(e.quantidade)*Number(e.valorUnit)), 0);
-
+  /* ---- próximo pagamento ---- */
   const proximaSexta = proximaSextaISO();
-  const semanais   = ativos().filter(f=>f.tipo==='diarista' && f.periodicidade==='semanal');
-  const quinzenais = ativos().filter(f=>f.tipo==='diarista' && f.periodicidade==='quinzenal');
+  const semanais   = ativosL.filter(f=>f.tipo==='diarista' && f.periodicidade==='semanal').length;
+  const quinzenais = ativosL.filter(f=>f.tipo==='diarista' && f.periodicidade==='quinzenal').length;
   const ehQuinzena = isSextaQuinzenal(proximaSexta);
+  const proxFichado = proximoPagamentoFichados();
+  const diasAte = iso => Math.round((parseISO(iso) - parseISO(hoje)) / 86400000);
+  const emDias = n => n===0 ? 'hoje' : (n===1 ? 'amanhã' : `em ${n} dias`);
 
-  const valesAbertos = DB.adiantamentos.filter(a=>{
-    const f = func(a.funcionarioId);
-    if(!f) return false;
-    const per = periodoDaSexta(proximaSexta, f.periodicidade);
-    return a.data >= per.inicio && a.data <= per.fim;
+  /* ---- financeiro: a pagar / a receber ---- */
+  let aPagar = 0, aReceber = 0, vencidas = 0, vencidasN = 0, sem7 = 0;
+  const vencPorDia = {};
+  if(fin){
+    DB.lancamentos.forEach(l=>{
+      if(l.tipo==='transferencia' || statusLanc(l)==='quitado') return;
+      const s = saldoAberto(l);
+      if(l.tipo==='despesa'){
+        aPagar += s;
+        if(estaVencido(l)){ vencidas += s; vencidasN++; }
+        else if(l.vencimento && l.vencimento <= addDays(hoje,7)) sem7 += s;
+        if(l.vencimento && l.vencimento.slice(0,7)===ym){
+          const v = vencPorDia[l.vencimento] = vencPorDia[l.vencimento] || {n:0, valor:0};
+          v.n++; v.valor += s;
+        }
+      } else if(l.tipo==='receita'){ aReceber += s; }
+    });
+  }
+
+  /* ---- calendário do mês ---- */
+  const [ay, am] = ym.split('-').map(Number);
+  const nd = daysInMonth(ay, am);
+  const aniv = aniversariantesDoMes(ym);
+  const anivPorDia = {};
+  aniv.forEach(a=>{ (anivPorDia[a.dia] = anivPorDia[a.dia] || []).push(a); });
+  const dSaldo = quintoDiaUtil(ym);
+  const dAdiant = `${ym}-20`;
+  const primeiro = primeiroDiaMes(ym);
+  const offset = (dowOf(primeiro) + 6) % 7;              // semana começa na segunda
+  const NOME_DOW = ['SEG','TER','QUA','QUI','SEX','SÁB','DOM'];
+  let cel = NOME_DOW.map(n=>`<div class="dow">${n}</div>`).join('');
+  for(let i=0;i<offset;i++) cel += '<div class="d fora"></div>';
+  for(let dia=1; dia<=nd; dia++){
+    const iso = `${ym}-${String(dia).padStart(2,'0')}`;
+    const dw = dowOf(iso);
+    const fer = feriadoDoDia(iso);
+    const an = anivPorDia[dia];
+    const venc = vencPorDia[iso];
+    const cls = ['d'];
+    const tips = [];
+    const ic = [];
+    if(iso===hoje) cls.push('hoje');
+    if(dw===0 || dw===6) cls.push('fds');
+    if(fer){ cls.push('fer'); ic.push('🎉'); tips.push(`Feriado: ${fer.nome}`); }
+    if(an){ ic.push(`🎂${an.length>1?an.length:''}`); tips.push('Aniversário: ' + an.map(a=>`${a.nome} (${a.idade} anos)`).join(', ')); }
+    if(iso===dAdiant){ ic.push('💵'); tips.push('Adiantamento dos fichados (dia 20)'); }
+    if(iso===dSaldo){  ic.push('💵'); tips.push('Saldo dos fichados (5º dia útil)'); }
+    if(dw===5){
+      const q = isSextaQuinzenal(iso);
+      cls.push(q ? 'quinz' : 'sexta');
+      tips.push(q ? 'Sexta de pagamento — semanais e quinzenais' : 'Sexta de pagamento — diaristas semanais');
+    }
+    if(venc){ ic.push(`<span style="color:var(--vermelho);font-weight:800;">●${venc.n>1?venc.n:''}</span>`); tips.push(`${venc.n} conta(s) a pagar vencem: ${fmtMoney(venc.valor)}`); }
+    cel += `<div class="${cls.join(' ')}" ${tips.length?`title="${esc(tips.join(' · '))}"`:''}><span class="n">${dia}</span>${ic.length?`<span class="ic">${ic.join(' ')}</span>`:''}</div>`;
+  }
+  const feriadosMes = DB.feriados.filter(x=>x.data && x.data.slice(0,7)===ym).sort((a,b)=>a.data.localeCompare(b.data));
+  const lista = (itens, max) => itens.slice(0,max).join('') + (itens.length>max ? `<div class="mais">…e mais ${itens.length-max}</div>` : '');
+  const listaAniv = lista(aniv.map(a=>`<div class="li"><b>${String(a.dia).padStart(2,'0')}</b> ${esc(a.nome)} <span class="fraco">${a.idade}</span></div>`), 7);
+  const listaFer  = lista(feriadosMes.map(x=>`<div class="li"><b>${fmtDateShort(x.data).slice(0,2)}</b> ${esc(x.nome)}</div>`), 3);
+
+  /* ---- equipe por obra ---- */
+  const porObra = {};
+  ativosL.forEach(f=>{
+    const k = f.obraPadrao || '';
+    const o = porObra[k] = porObra[k] || {f:0, d:0};
+    if(f.tipo==='fichado') o.f++; else o.d++;
   });
-  const totalValesAbertos = valesAbertos.reduce((s,a)=>s+Number(a.valor||0),0);
+  const linhasObra = Object.keys(porObra)
+    .sort((a,b)=>(porObra[b].f+porObra[b].d)-(porObra[a].f+porObra[a].d))
+    .slice(0,6)
+    .map(k=>`<tr><td>${k ? esc(obraNome(k)) : '<i>Sem obra</i>'}</td><td class="num">${porObra[k].f}</td><td class="num">${porObra[k].d}</td><td class="num"><b>${porObra[k].f+porObra[k].d}</b></td></tr>`).join('');
+
+  /* ---- atenção ---- */
+  const semCpf = ativosL.filter(f=>!f.cpf).length;
+  const semAdm = ativosL.filter(f=>!f.admissao).length;
+  const recentes = ativosL.filter(f=>f.admissao && f.admissao >= addDays(hoje,-30)).length;
+  /* n > 0: aviso clicável (âmbar); n == 0: "tudo certo" (verde) */
+  const alerta = (n, texto, textoOk, onclick) => n
+    ? `<div class="al" onclick="${onclick}"><span class="pt am">${n}</span> ${texto}</div>`
+    : `<div class="al ok"><span class="pt ok">✓</span> ${textoOk}</div>`;
+  const alertas = [
+    alerta(aConfirmar, 'dia(s) de ponto a confirmar', 'ponto em dia', "goTo('ponto')"),
+    alerta(regNaoEnv, 'fichado(s) com documentos não enviados', 'todos os fichados com documentos enviados', 'dashAtalhoRegistro()'),
+    fin ? alerta(vencidasN, 'conta(s) a pagar vencida(s)', 'nenhuma conta vencida', "goTo('lancamentos')") : '',
+    alerta(semCpf, 'ativo(s) sem CPF', 'todos com CPF', "goTo('funcionarios')"),
+    alerta(semAdm, 'ativo(s) sem data de admissão', 'todos com data de admissão', "goTo('funcionarios')")
+  ].join('');
+
+  const atalho = (rot, js, ic) => `<button class="at" onclick="${js}">${icone(ic)}<span>${rot}</span></button>`;
+
+  const kpi = (v, l, js, extraCls) => `<div class="kpi ${js?'click':''} ${extraCls||''}" ${js?`onclick="${js}"`:''}><div class="v">${v}</div><div class="l">${l}</div></div>`;
 
   c.innerHTML = `
-    <div class="kpis">
-      <div class="kpi"><div class="v">${totalFunc}</div><div class="l">Funcionários cadastrados</div></div>
-      <div class="kpi"><div class="v">${fichados} / ${diaristas}</div><div class="l">Fichados / Diaristas</div></div>
-      <div class="kpi"><div class="v">${hh} / ${emp}</div><div class="l">Homem-Hora / Empreitada</div></div>
-      <div class="kpi"><div class="v">${faltasMes}</div><div class="l">Faltas em ${monthLabel(ym)}</div></div>
+  <div class="dash">
+    <div class="dkpis">
+      ${kpi(ativosL.length, `Ativos · ${fichados} fichados / ${diaristas} diaristas`, "goTo('funcionarios')")}
+      ${kpi(`${hh} / ${emp}`, 'Homem-Hora / Empreitada', "goTo('obras')")}
+      ${kpi(faltasMes, `Faltas em ${monthLabel(ymHoje)}`, "goTo('ponto')")}
+      ${kpi(aConfirmar, 'Dias de ponto a confirmar', "goTo('ponto')", aConfirmar ? 'aviso' : '')}
+      ${kpi(regPend.length, `Registro pendente · ${regNaoEnv} sem enviar / ${regProc} em processo`, 'dashAtalhoRegistro()', regNaoEnv ? 'aviso' : '')}
+      ${kpi(fin ? fmtMoney(saldo) : '—', fin ? 'Saldo total das contas' : 'Cadastre as contas em Caixa', "goTo('caixa')")}
     </div>
 
-    <div class="card" style="border-left:4px solid var(--azul);">
-      <h2>Próximo pagamento — sexta-feira ${fmtDate(proximaSexta)}</h2>
-      <div class="grid grid-3">
-        <div class="kpi"><div class="v">${semanais.length}</div><div class="l">Diaristas semanais (recebem toda sexta)</div></div>
-        <div class="kpi"><div class="v">${ehQuinzena ? quinzenais.length : 0}</div><div class="l">Diaristas quinzenais ${ehQuinzena?'— fecha nesta sexta':'— não fecha nesta sexta'}</div></div>
-        <div class="kpi"><div class="v">${fmtMoney(totalValesAbertos)}</div><div class="l">Vales a descontar no período (${valesAbertos.length})</div></div>
+    <div class="dmain">
+      <div class="dcard dcalcard">
+        <div class="dcal-topo">
+          <h2>Calendário — ${monthLabel(ym)}</h2>
+          <div class="dcal-nav">
+            <button class="btn btn-secondary btn-sm" onclick="dashIrMes(-1)" title="Mês anterior">‹</button>
+            <button class="btn btn-secondary btn-sm" onclick="dashIrMes(0)" ${ym===ymHoje?'disabled':''}>Hoje</button>
+            <button class="btn btn-secondary btn-sm" onclick="dashIrMes(1)" title="Próximo mês">›</button>
+          </div>
+        </div>
+        <div class="dcal-corpo">
+          <div class="dcal">${cel}</div>
+          <div class="dcal-lado">
+            <div class="lt">🎂 Aniversariantes</div>
+            ${listaAniv || '<div class="li fraco">Ninguém neste mês.</div>'}
+            <div class="lt">🎉 Feriados</div>
+            ${listaFer || '<div class="li fraco">Nenhum cadastrado.</div>'}
+            <div class="lt">💵 Fichados</div>
+            <div class="li"><b>${fmtDateShort(dAdiant).slice(0,2)}</b> adiantamento</div>
+            <div class="li"><b>${fmtDateShort(dSaldo).slice(0,2)}</b> saldo (5º dia útil)</div>
+          </div>
+        </div>
+        <div class="dcal-leg">
+          <span><i class="sw" style="box-shadow:inset 0 -3px 0 #9db8f5;"></i>sexta de pagamento</span>
+          <span><i class="sw" style="box-shadow:inset 0 -3px 0 #1c4fd8;"></i>sexta de quinzena</span>
+          <span>🎉 feriado</span><span>🎂 aniversário</span><span>💵 fichados</span>
+          <span style="color:var(--vermelho);">● conta a pagar vence</span>
+        </div>
       </div>
-      <button class="btn btn-primary" style="margin-top:6px;" onclick="goTo('fechamento')">Abrir fechamento desta sexta →</button>
-    </div>
 
-    <div class="grid grid-2">
-      <div class="card">
-        <h2>Estoque de EPI / uniformes</h2>
-        <table>
-          <tr><td>Total comprado</td><td class="num" style="font-weight:700;">${fmtMoney(custoEstoque)}</td></tr>
-          <tr><td>Total entregue (saída)</td><td class="num" style="font-weight:700;">${fmtMoney(saidaEstoque)}</td></tr>
-          <tr><td>Saldo em valor no almoxarifado</td><td class="num" style="font-weight:700;color:var(--azul-esc);">${fmtMoney(custoEstoque-saidaEstoque)}</td></tr>
-        </table>
-      </div>
-      <div class="card">
-        <h2>Atalhos</h2>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          <button class="btn btn-secondary" onclick="goTo('funcionarios')">+ Novo funcionário</button>
-          <button class="btn btn-secondary" onclick="goTo('adiantamentos')">+ Lançar vale de diarista</button>
-          <button class="btn btn-secondary" onclick="goTo('holerite')">Gerar holerite / encargos</button>
-          <button class="btn btn-secondary" onclick="goTo('sync')">⟳ Sincronizar com o Drive</button>
+      <div class="dcol">
+        <div class="dcard" style="border-left:4px solid var(--azul);">
+          <h2>Próximo pagamento</h2>
+          <div class="dpag">
+            <div class="dpag-lin"><span class="dpag-rot">Diaristas</span>
+              <span class="dpag-val"><b>${fmtDate(proximaSexta)}</b> · sexta <span class="fraco">${emDias(diasAte(proximaSexta))}</span></span></div>
+            <div class="dpag-sub">${semanais} semanais${ehQuinzena ? ` + ${quinzenais} quinzenais (fecha quinzena)` : ` · quinzenais não fecham nesta sexta`}</div>
+            <div class="dpag-lin"><span class="dpag-rot">Fichados</span>
+              <span class="dpag-val"><b>${fmtDate(proxFichado.data)}</b> · ${DOW_FULL[dowOf(proxFichado.data)].toLowerCase()} <span class="fraco">${emDias(diasAte(proxFichado.data))}</span></span></div>
+            <div class="dpag-sub">${proxFichado.tipo} · ${fichados} fichados</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" onclick="goTo('fechamento')">Abrir fechamento →</button>
+            <button class="btn btn-secondary btn-sm" onclick="goTo('vales')">Vales VT/VR</button>
+          </div>
+        </div>
+
+        <div class="dcard">
+          <h2>Atalhos</h2>
+          <div class="dats">
+            ${atalho('Novo cadastro', 'dashNovoFuncionario()', 'pessoa')}
+            ${atalho('Lançar o ponto', "goTo('ponto')", 'calendario')}
+            ${atalho('Fechamento', "goTo('fechamento')", 'confere')}
+            ${atalho('Vale / adiant.', "goTo('adiantamentos')", 'dinheiro')}
+            ${atalho('Vales VT / VR', "goTo('vales')", 'ticket')}
+            ${atalho('Holerite', "goTo('holerite')", 'documento')}
+            ${atalho('Pagar / Receber', "goTo('lancamentos')", 'lista')}
+            ${atalho('Caixa e contas', "goTo('caixa')", 'cofre')}
+            ${atalho('Fluxo de caixa', "goTo('fluxo')", 'fluxo')}
+            ${atalho('Medição HH', "goTo('medicaoHH')", 'regua')}
+            ${atalho('Custos', "goTo('custos')", 'grafico')}
+            ${atalho('Sincronizar', "goTo('sync')", 'nuvem')}
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="card">
-      <h2>Como este sistema funciona</h2>
-      <p class="help" style="font-size:13px;color:var(--chumbo-claro);">
-      Tudo o que você cadastra fica salvo <b>neste computador</b> e funciona sem internet.
-      Para levar as alterações para outro computador, use a tela <b>Sincronizar (Drive)</b> — ela <b>junta</b> os dados
-      dos dois lados em vez de substituir, então ninguém perde lançamento.
-      O <b>backup</b> (canto superior direito) é outra coisa: serve para restaurar tudo se der problema, e restaurar substitui.
-      Os relatórios são gerados em PDF pela opção <b>Imprimir → Salvar como PDF</b> do próprio navegador.
-      </p>
-      ${DB._meta && DB._meta.ultimaSync
-        ? `<p class="help">Última sincronização: <b>${new Date(DB._meta.ultimaSync).toLocaleString('pt-BR')}</b>.</p>`
-        : `<p class="help" style="color:var(--amarelo);font-weight:600;">Você ainda não configurou a sincronização com o Drive.</p>`}
+    <div class="dbot">
+      <div class="dcard">
+        <h2>Equipe por obra <span class="fraco" style="font-weight:400;">(ativos)</span></h2>
+        ${linhasObra ? `<table class="dt"><thead><tr><th>Obra</th><th class="num">Fich.</th><th class="num">Diar.</th><th class="num">Total</th></tr></thead><tbody>${linhasObra}</tbody></table>` : '<div class="fraco">Nenhum funcionário ativo.</div>'}
+      </div>
+      <div class="dcard">
+        <h2>Contas a pagar e a receber</h2>
+        ${fin ? `<table class="dt"><tbody>
+          <tr><td>A pagar em aberto</td><td class="num"><b>${fmtMoney(aPagar)}</b></td></tr>
+          <tr><td>Vencidas (${vencidasN})</td><td class="num" style="color:${vencidasN?'var(--vermelho)':'inherit'};"><b>${fmtMoney(vencidas)}</b></td></tr>
+          <tr><td>Vencem nos próximos 7 dias</td><td class="num"><b>${fmtMoney(sem7)}</b></td></tr>
+          <tr><td>A receber em aberto</td><td class="num" style="color:var(--verde);"><b>${fmtMoney(aReceber)}</b></td></tr>
+        </tbody></table>` : `<div class="fraco">Cadastre uma conta em <a href="#" onclick="goTo('caixa'); return false;">Caixa e Contas</a> para acompanhar aqui.</div>`}
+      </div>
+      <div class="dcard">
+        <h2>Atenção</h2>
+        ${alertas}
+        <div class="al ok" style="margin-top:4px;"><span class="pt info">${recentes}</span> admitido(s) nos últimos 30 dias</div>
+      </div>
     </div>
+
+    <div class="drod">
+      ${DB._meta && DB._meta.ultimaSync
+        ? `Última sincronização: <b>${new Date(DB._meta.ultimaSync).toLocaleString('pt-BR')}</b>`
+        : `<b style="color:var(--amarelo);">Você ainda não configurou a sincronização com o Drive.</b>`}
+      · <a href="#" onclick="goTo('sync'); return false;">Sincronizar agora</a>
+      <span class="fraco">— os dados ficam neste computador e funcionam sem internet; o Drive só junta os dois lados.</span>
+    </div>
+  </div>
   `;
 }
 
