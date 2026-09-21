@@ -414,7 +414,7 @@ tr:hover td{background:#fafbfd;}
 
 /* ---------- DASHBOARD (redesenhado em 21/09/2026: tudo numa tela só, sem rolar) ---------- */
 .dash{display:flex;flex-direction:column;gap:10px;}
-.dkpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;}
+.dkpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;}
 .dkpis .kpi{padding:9px 13px;}
 .dkpis .kpi .v{font-size:20px;line-height:1.15;}
 .dkpis .kpi .l{font-size:10.8px;margin-top:2px;line-height:1.3;}
@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.9.0';
+const VERSAO = '1.9.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2233,7 +2233,6 @@ function renderDashboard(){
   const regNaoEnv = regPend.filter(f=>(f.statusRegistro||'nao_enviado')==='nao_enviado').length;
   const regProc   = regPend.length - regNaoEnv;
   const fin = financeiroPronto();
-  const saldo = fin ? saldoGeral() : null;
 
   /* ---- próximo pagamento ---- */
   const proximaSexta = proximaSextaISO();
@@ -2344,7 +2343,6 @@ function renderDashboard(){
       ${kpi(faltasMes, `Faltas em ${monthLabel(ymHoje)}`, "goTo('ponto')")}
       ${kpi(aConfirmar, 'Dias de ponto a confirmar', "goTo('ponto')", aConfirmar ? 'aviso' : '')}
       ${kpi(regPend.length, `Registro pendente · ${regNaoEnv} sem enviar / ${regProc} em processo`, 'dashAtalhoRegistro()', regNaoEnv ? 'aviso' : '')}
-      ${kpi(fin ? fmtMoney(saldo) : '—', fin ? 'Saldo total das contas' : 'Cadastre as contas em Caixa', "goTo('caixa')")}
     </div>
 
     <div class="dmain">
