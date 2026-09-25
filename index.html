@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.10.0';
+const VERSAO = '1.10.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -5419,11 +5419,11 @@ function refazerPrevisao(sexta){
   garantirPrevisao(sexta, true); saveDB(); renderFechamento();
   toast(`Previsão de ${fmtDate(sexta)} refeita com os números de hoje.`);
 }
-/* Para cada sexta: previsto, quanto falta pagar, e o saldo da empresa que paga (a da conta
+/* Para cada sexta: previsto, quanto falta pagar, e o saldo da conta que paga (a
    escolhida no fechamento) DEPOIS de pagar tudo o que está previsto até aquela sexta. */
 function previsaoComCaixa(sextas){
   const ct = conta(DB.config.fechamentoContaPadrao);
-  const pj = ct ? projecao(ct.empresaId, 90) : null;
+  const pj = ct ? projecaoDaConta(ct.id, 90) : null;
   let acum = 0;
   return sextas.map(s=>{
     const pr = previsaoDaSexta(s);
@@ -5437,7 +5437,7 @@ function previsaoComCaixa(sextas){
       antes = Math.round((saldo - (acum - falta))*100)/100;
       depois = Math.round((saldo - acum)*100)/100;
     }
-    return {sexta:s, pr, pago, falta, antes, depois, empresa: ct ? empresaFinNome(ct.empresaId) : ''};
+    return {sexta:s, pr, pago, falta, antes, depois, empresa: ct ? ct.nome : ''};
   });
 }
 function previsaoDetalhe(sexta){
@@ -5475,7 +5475,7 @@ function previsaoPainelHTML(){
     <p class="help" style="margin:0 0 10px;">
       Estimativa do que vai sair em cada sexta: o que já está no ponto + os dias ainda em branco
       contados como trabalhados. Serve para saber, antes do dia, se o caixa aguenta.
-      ${semConta ? '<b style="color:var(--vermelho);">Escolha a conta de pagamento (mais abaixo) para ver se o caixa cobre.</b>' : `Saldo considerado: empresa <b>${esc(linhas[0].empresa)}</b>, com as contas já lançadas em A Pagar / A Receber.`}
+      ${semConta ? '<b style="color:var(--vermelho);">Escolha a conta de pagamento (mais abaixo) para ver se o caixa cobre.</b>' : `Saldo considerado: só a conta <b>${esc(linhas[0].empresa)}</b>, com o que já está lançado nela em A Pagar / A Receber.`}
     </p>
     <div class="table-wrap"><table>
       <thead><tr><th>Sexta</th><th>Quem fecha</th><th class="num">Previsto</th><th class="num">Já no ponto</th><th class="num">Já pago</th>
@@ -11182,6 +11182,40 @@ function projecao(empresaId, dias){
     linhas, saldoFinal: saldo, menor,
     primeiroNegativo: linhas.find(x=>x.saldo < 0) || null
   };
+}
+
+/* Mesma projeção de `projecao`, mas de UMA conta só (25/09/2026, pedido do Maycon: a
+   previsão dos pagamentos das sextas conta só com o saldo da conta de onde sai o
+   pagamento). Mesma regra pessimista: vencido a pagar entra na partida, vencido a
+   receber não. Só valem os lançamentos cuja conta (prevista) é esta. */
+function projecaoDaConta(contaId, dias){
+  const hoje = todayISO();
+  const fim  = addDays(hoje, dias);
+  let atrasadoSaida = 0;
+  const porDia = {};
+  DB.lancamentos.filter(l=>statusLanc(l) !== 'quitado').forEach(l=>{
+    const val = saldoAberto(l);
+    let v = 0;
+    if(l.tipo === 'transferencia'){
+      if(l.contaId === contaId) v -= val;
+      if(l.contaDestinoId === contaId) v += val;
+    }else if(l.contaId === contaId){
+      v = l.tipo === 'receita' ? val : -val;
+    }
+    if(!v) return;
+    const venc = l.vencimento || hoje;
+    if(venc < hoje){ if(v < 0) atrasadoSaida += v; return; }
+    if(venc > fim) return;
+    porDia[venc] = (porDia[venc] || 0) + v;
+  });
+  const saldoPartida = Math.round((saldoConta(contaId, hoje) + atrasadoSaida) * 100) / 100;
+  let saldo = saldoPartida;
+  const linhas = [];
+  Object.keys(porDia).sort().forEach(d=>{
+    saldo = Math.round((saldo + porDia[d]) * 100) / 100;
+    linhas.push({data: d, mov: porDia[d], saldo});
+  });
+  return {saldoPartida, linhas};
 }
 
 function blocoProjecao(){
