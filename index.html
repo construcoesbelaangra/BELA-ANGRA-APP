@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.9.3';
+const VERSAO = '1.10.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -950,6 +950,10 @@ function defaultDB(){
        o Maycon digita esse número direto aqui; o app só desconta o adiantamento
        de 40% por cima, que é o único desconto que a contabilidade não sabe. */
     fechFichados: [],
+    /* Previsão dos pagamentos das sextas (25/09/2026): {id:'prev'+sexta, sexta, valor,
+       pessoas, quando}. Foto da estimativa feita ANTES da sexta, para comparar com o
+       que foi pago de verdade. Ver `previsaoDaSexta` (05_diarista.js). */
+    previsoesPagamento: [],
     holerites: [],
     epiEntradas: [],
     epiSaidas: [],
@@ -1088,6 +1092,7 @@ function migrate(db){
   (db.medicoesEmpreitada).forEach(m=>{ m.itens = m.itens || []; m.extras = m.extras || []; });
   db.adiantamentos = db.adiantamentos || [];
   db.pagamentos    = db.pagamentos    || [];   /* marca de pago no fechamento */
+  db.previsoesPagamento = db.previsoesPagamento || [];
   db.diasUteisMes  = db.diasUteisMes  || {};
   /* financeiro — coleções novas em 30/08/2026. Banco antigo não tem nenhuma
      delas, e o app precisa abrir igual com ou sem financeiro cadastrado. */
@@ -5348,6 +5353,165 @@ function copiarMensagem(){
   toast('Não consegui copiar. O texto já está selecionado — copie à mão.');
 }
 
+/* =========================================================
+   PREVISÃO DOS PAGAMENTOS DA SEXTA (25/09/2026)
+
+   Pedido do Maycon: só sabia o valor do pagamento NO DIA, depois de lançar o ponto.
+   Ele precisa saber antes se o caixa aguenta a semana ou se tem que cobrar da outra
+   empresa do grupo — e, depois, ver a diferença entre o previsto e o pago.
+
+   Estimativa por pessoa: o que já está lançado no ponto (diárias, vales, comissão,
+   VT extra) + os dias úteis (seg–sex, fora feriado e fora do vínculo) que ainda
+   estão em branco, presumidos como trabalhados à diária da época — a mesma lógica
+   da presença presumida do ponto. Falta/atestado já lançados não contam.
+   ========================================================= */
+function previsaoDaSexta(sexta){
+  const tipos = ['semanal'];
+  if(isSextaQuinzenal(sexta)) tipos.push('quinzenal');
+  const linhas = [];
+  tipos.forEach(p=>{
+    const periodo = periodoDaSexta(sexta, p);
+    ativosNoPeriodo(periodo.inicio, periodo.fim)
+      .filter(f=>vinculoNoPeriodo(f, 'diarista', periodo.inicio, periodo.fim) && periodicidadeHistoricaEm(f, sexta)===p)
+      .forEach(f=>{
+        const x = calcDiarista(f, periodo);
+        let presumidos = 0, valorPres = 0;
+        let iso = periodo.inicio;
+        while(iso <= periodo.fim){
+          const dow = dowOf(iso);
+          const e = pdEntry(f.id, iso);
+          if(dow>=1 && dow<=5 && !isFeriado(iso) && !(e && e.status) && !foraDoVinculo(f, iso, 'diarista')){
+            presumidos++; valorPres += valorDiariaHistoricoEm(f, iso);
+          }
+          iso = addDays(iso, 1);
+        }
+        const previsto = Math.max(0, x.liquido + valorPres);
+        if(previsto > 0 || x.totalDias > 0)
+          linhas.push({f, periodicidade:p, lancados:x.totalDias, presumidos, real:x.liquido, previsto});
+      });
+  });
+  linhasComissaoFichados(sexta).forEach(x=>{
+    linhas.push({f:x.f, periodicidade:'comissao', lancados:0, presumidos:0, real:x.liquido, previsto:x.liquido});
+  });
+  const r2 = n => Math.round(n*100)/100;
+  return {
+    sexta, linhas,
+    total: r2(linhas.reduce((s,l)=>s+l.previsto, 0)),
+    real:  r2(linhas.reduce((s,l)=>s+l.real, 0))
+  };
+}
+function pagoNaSexta(sexta){
+  return Math.round((DB.pagamentos||[]).filter(p=>p.sexta===sexta).reduce((s,p)=>s+(Number(p.valor)||0), 0)*100)/100;
+}
+/* Guarda a foto da estimativa da sexta na primeira vez que ela aparece (id fixo por
+   sexta: dois aparelhos que criem juntos não duplicam). Só olha sextas de hoje em diante. */
+function garantirPrevisao(sexta, refazer){
+  DB.previsoesPagamento = DB.previsoesPagamento || [];
+  const id = 'prev' + sexta;
+  let p = DB.previsoesPagamento.find(x=>x.id===id);
+  if(p && !refazer) return false;
+  const pr = previsaoDaSexta(sexta);
+  if(!p){ p = {id, sexta}; DB.previsoesPagamento.push(p); }
+  p.valor = pr.total; p.pessoas = pr.linhas.length; p.quando = todayISO();
+  return true;
+}
+function refazerPrevisao(sexta){
+  garantirPrevisao(sexta, true); saveDB(); renderFechamento();
+  toast(`Previsão de ${fmtDate(sexta)} refeita com os números de hoje.`);
+}
+/* Para cada sexta: previsto, quanto falta pagar, e o saldo da empresa que paga (a da conta
+   escolhida no fechamento) DEPOIS de pagar tudo o que está previsto até aquela sexta. */
+function previsaoComCaixa(sextas){
+  const ct = conta(DB.config.fechamentoContaPadrao);
+  const pj = ct ? projecao(ct.empresaId, 90) : null;
+  let acum = 0;
+  return sextas.map(s=>{
+    const pr = previsaoDaSexta(s);
+    const pago = pagoNaSexta(s);
+    const falta = Math.max(0, Math.round((pr.total - pago)*100)/100);
+    acum += falta;
+    let antes = null, depois = null;
+    if(pj){
+      let saldo = pj.saldoPartida;
+      pj.linhas.forEach(l=>{ if(l.data <= s) saldo = l.saldo; });
+      antes = Math.round((saldo - (acum - falta))*100)/100;
+      depois = Math.round((saldo - acum)*100)/100;
+    }
+    return {sexta:s, pr, pago, falta, antes, depois, empresa: ct ? empresaFinNome(ct.empresaId) : ''};
+  });
+}
+function previsaoDetalhe(sexta){
+  const pr = previsaoDaSexta(sexta);
+  const linhas = pr.linhas.slice().sort((a,b)=>cmpFuncionarios(a.f,b.f));
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Previsão — sexta ${fmtDate(sexta)}</h2>
+    <p class="help" style="margin:0 0 10px;">Dias em branco (seg–sex, sem feriado) são contados como trabalhados até você lançar o ponto.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Funcionário</th><th>Vínculo</th><th class="num">Dias lançados</th><th class="num">Dias presumidos</th><th class="num">Previsto</th></tr></thead>
+      <tbody>${linhas.map(l=>`<tr>
+        <td>${esc(l.f.nome)}</td>
+        <td>${l.periodicidade==='comissao'?'Fichado (comissão)':PERIODICIDADE_LABEL[l.periodicidade]}</td>
+        <td class="num">${l.lancados||''}</td><td class="num">${l.presumidos||''}</td>
+        <td class="num"><b>${fmtMoney(l.previsto)}</b></td></tr>`).join('') || '<tr><td colspan="5" class="empty">Ninguém previsto para esta sexta.</td></tr>'}</tbody>
+      <tfoot><tr><th colspan="4" style="text-align:right;">Total previsto</th><th class="num">${fmtMoney(pr.total)}</th></tr></tfoot>
+    </table></div>
+    <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);
+}
+function previsaoPainelHTML(){
+  const base = proximaSextaISO();
+  const proximas = [0,1,2,3].map(i=>addDays(base, i*7));
+  let criou = false;
+  proximas.forEach(s=>{ if(garantirPrevisao(s)) criou = true; });
+  if(criou) saveDB();
+  const linhas = previsaoComCaixa(proximas);
+  const semConta = !DB.config.fechamentoContaPadrao || !conta(DB.config.fechamentoContaPadrao);
+  const passadas = [-1,-2,-3,-4].map(i=>addDays(base, i*7))
+    .map(s=>({sexta:s, prev:(DB.previsoesPagamento||[]).find(x=>x.id==='prev'+s), pago:pagoNaSexta(s)}))
+    .filter(x=>x.prev);
+  return `
+  <div class="card">
+    <div class="section-title"><h2 style="margin:0;">Previsão dos próximos pagamentos</h2></div>
+    <p class="help" style="margin:0 0 10px;">
+      Estimativa do que vai sair em cada sexta: o que já está no ponto + os dias ainda em branco
+      contados como trabalhados. Serve para saber, antes do dia, se o caixa aguenta.
+      ${semConta ? '<b style="color:var(--vermelho);">Escolha a conta de pagamento (mais abaixo) para ver se o caixa cobre.</b>' : `Saldo considerado: empresa <b>${esc(linhas[0].empresa)}</b>, com as contas já lançadas em A Pagar / A Receber.`}
+    </p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Sexta</th><th>Quem fecha</th><th class="num">Previsto</th><th class="num">Já no ponto</th><th class="num">Já pago</th>
+        <th class="num">Saldo depois de pagar</th><th>Situação</th><th></th></tr></thead>
+      <tbody>${linhas.map(x=>{
+        const quin = isSextaQuinzenal(x.sexta);
+        const sit = x.falta<=0 ? '<span class="badge badge-green">Já pago</span>'
+          : x.depois===null ? '<span class="badge badge-gray">—</span>'
+          : x.depois<0 ? `<span class="badge badge-red">Faltam ${fmtMoney(-x.depois)} — cobrar</span>`
+          : `<span class="badge badge-green">Caixa cobre</span>`;
+        return `<tr>
+          <td style="white-space:nowrap;"><b>${fmtDate(x.sexta)}</b>${x.sexta===base?' <span class="badge badge-blue">próxima</span>':''}</td>
+          <td>${quin?'semanais + quinzenais':'só semanais'} · ${x.pr.linhas.length} pessoa(s)</td>
+          <td class="num"><b>${fmtMoney(x.pr.total)}</b></td>
+          <td class="num" style="color:var(--chumbo-claro);">${fmtMoney(x.pr.real)}</td>
+          <td class="num">${x.pago?fmtMoney(x.pago):''}</td>
+          <td class="num" style="font-weight:700;color:${x.depois!==null&&x.depois<0?'var(--vermelho)':'inherit'};">${x.depois===null?'—':fmtMoney(x.depois)}</td>
+          <td>${sit}</td>
+          <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="previsaoDetalhe('${x.sexta}')">Detalhe</button>
+            <button class="btn btn-secondary btn-sm" onclick="fcSexta='${x.sexta}'; renderFechamento();">Abrir</button></td>
+        </tr>`;}).join('')}</tbody>
+    </table></div>
+    ${passadas.length ? `
+    <h3 style="margin:16px 0 6px;">Previsto × pago (últimas sextas)</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Sexta</th><th class="num">Previsto</th><th>Previsão feita em</th><th class="num">Pago</th><th class="num">Diferença</th></tr></thead>
+      <tbody>${passadas.map(x=>{
+        const dif = Math.round((x.pago - x.prev.valor)*100)/100;
+        return `<tr><td>${fmtDate(x.sexta)}</td><td class="num">${fmtMoney(x.prev.valor)}</td><td>${fmtDate(x.prev.quando)}</td>
+          <td class="num">${fmtMoney(x.pago)}</td>
+          <td class="num" style="font-weight:700;color:${dif>0?'var(--vermelho)':dif<0?'var(--verde)':'inherit'};">${dif>0?'+ ':dif<0?'− ':''}${fmtMoney(Math.abs(dif))}</td></tr>`;}).join('')}</tbody>
+    </table></div>
+    <p class="help">Diferença positiva = pagou mais do que o previsto. A previsão fica guardada na primeira vez que a sexta aparece aqui.</p>` : ''}
+  </div>`;
+}
+
 function renderFechamento(){
   if(fcPeriodicidade === 'fichados') return renderFechamentoFichados();
   /* as abas semanal/quinzenal viraram uma só; nome antigo ainda cai aqui */
@@ -5390,7 +5554,7 @@ function renderFechamento(){
   const faltaVlr = totalLiq - pagoVlr;
   const tudoPago = calcs.length > 0 && pagos.length === calcs.length;
 
-  c.innerHTML = `
+  c.innerHTML = previsaoPainelHTML() + `
     <div class="card">
       <div class="tabs">
         <button class="tab active">Diaristas</button>
@@ -8697,6 +8861,7 @@ const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','p
      sincronizar, vale a última — a mesma limitação já avisada na tela. */
   'empresas','contas','categorias','lancamentos','recorrentes',
   'feriados',
+  'previsoesPagamento',   /* foto da previsão das sextas (25/09/2026) */
   /* Medição HH (04/09/2026) — mesmo motivo: sem entrar aqui, uma medição
      aprovada num PC (e o lançamento que ela criou) não aparece no outro. */
   'medicoesHH',
