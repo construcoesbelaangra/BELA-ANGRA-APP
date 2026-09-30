@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.11.0';
+const VERSAO = '1.12.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1098,6 +1098,14 @@ function migrate(db){
   db.pagamentos    = db.pagamentos    || [];   /* marca de pago no fechamento */
   db.previsoesPagamento = db.previsoesPagamento || [];
   db.diarioObras = db.diarioObras || [];
+  /* Etapa do dia (30/09/2026) — quem gravou diário antes de existir esse campo
+     só tem o texto puro (string); vira {texto, etapaId:''}, sem perder nada. */
+  db.diarioObras.forEach(d=>{
+    d.equipe = d.equipe || {};
+    Object.keys(d.equipe).forEach(fid=>{
+      if(typeof d.equipe[fid] === 'string') d.equipe[fid] = {texto: d.equipe[fid], etapaId:''};
+    });
+  });
   db.diasUteisMes  = db.diasUteisMes  || {};
   /* financeiro — coleções novas em 30/08/2026. Banco antigo não tem nenhuma
      delas, e o app precisa abrir igual com ou sem financeiro cadastrado. */
@@ -12472,6 +12480,8 @@ function renderMedicaoEmpreitada(abrirId){
       <button class="btn btn-primary" onclick="criarContratoObra('${medEmpObraSel}')">+ Cadastrar contrato desta obra</button>
     </div>`) : ''}
 
+    ${contrato ? blocoResultadoPorEtapa(contrato) : ''}
+
     ${contrato ? `
     <div class="card">
       <h2 style="margin-top:0;">Medições já feitas — ${esc(obraNome(medEmpObraSel))}</h2>
@@ -12512,6 +12522,136 @@ function renderMedicaoEmpreitada(abrirId){
 
     ${aberta ? detalheMedicaoEmpreitada(aberta) : ''}
   `;
+}
+
+/* =========================================================
+   CUSTO E LUCRO POR ETAPA (30/09/2026)
+
+   Pedido do Maycon: além de saber o que cada um fez no dia (Diário de Obras),
+   ele quer separar o CUSTO de mão de obra por ETAPA do contrato de empreitada
+   — tem gente na etapa 1, gente já na etapa 2 — pra saber o lucro de cada
+   etapa quando ela terminar, não só o do contrato inteiro.
+
+   A ligação nasce no Diário (`f.tipoServico==='empreitada'` ganha um seletor
+   de etapa no dia, `16_diario.js`) — aqui só se soma o que já foi marcado lá.
+   ========================================================= */
+
+/* Custo de UM DIA de uma pessoa, pra atribuir à etapa marcada naquele dia.
+   Diarista: a diária da ÉPOCA (`valorDiariaHistoricoEm`) — exato.
+   Fichado: MÉDIA do custo do mês (salário + encargos, `calcEncargos`) dividida
+   pelos dias úteis do vínculo no mês — é uma média, não o custo exato daquele
+   dia específico, porque salário/encargos são mensais, não diários. Avisado na
+   própria tela — não é o mesmo tipo de precisão da diária do diarista. */
+function custoDiaEmpreitada(f, iso){
+  if(vinculoEm(f, iso) === 'diarista') return valorDiariaHistoricoEm(f, iso);
+  const mes = iso.slice(0,7);
+  const dias = diasUteisDoFuncionarioNoMes(f, mes);
+  if(!dias) return 0;
+  return Math.round((calcEncargos(f, mes).custoTotal / dias) * 100) / 100;
+}
+
+/* Soma, pelo Diário de Obras inteiro daquela obra, o custo de mão de obra de
+   cada etapa — chave é o `etapaId` marcado no dia de cada pessoa. */
+function custoPorEtapa(obraId){
+  const custo = {};
+  (DB.diarioObras||[]).filter(d=>d.obraId===obraId).forEach(d=>{
+    Object.keys(d.equipe||{}).forEach(funcId=>{
+      const it = d.equipe[funcId];
+      const etapaId = it && it.etapaId;
+      if(!etapaId) return;
+      const f = func(funcId);
+      if(!f) return;
+      custo[etapaId] = Math.round(((custo[etapaId]||0) + custoDiaEmpreitada(f, d.data)) * 100) / 100;
+    });
+  });
+  return custo;
+}
+
+/* Receita por etapa: soma dos ITENS (não dos extras — extras não têm etapa,
+   ver "Extras ficam numa lista SEPARADA" no CLAUDE.md) de toda medição já
+   APROVADA, pelo preço de HOJE (mesmo critério já usado na própria tela de
+   detalhe da medição para o valor de cada linha — ver `detalheMedicaoEmpreitada`,
+   que também usa `valorQtdEmpreitada` direto nos itens congelados). */
+function receitaPorEtapa(contratoId){
+  const receita = {};
+  let extrasSemEtapa = 0;
+  (DB.medicoesEmpreitada||[]).filter(m=>m.contratoId===contratoId && m.status==='aprovada').forEach(m=>{
+    (m.itensCongelados||[]).forEach(it=>{
+      receita[it.etapaId] = Math.round(((receita[it.etapaId]||0) + valorQtdEmpreitada(it)) * 100) / 100;
+    });
+    (m.extrasCongelados||[]).forEach(ex=>{ extrasSemEtapa += valorExtraEmpreitada(ex); });
+  });
+  return {receita, extrasSemEtapa: Math.round(extrasSemEtapa*100)/100};
+}
+
+function resultadoPorEtapa(c){
+  const custo = custoPorEtapa(c.obraId);
+  const {receita, extrasSemEtapa} = receitaPorEtapa(c.id);
+  const linhas = c.etapas.map(e=>{
+    const rec = receita[e.id] || 0;
+    const cus = custo[e.id] || 0;
+    return {etapa:e, receita:rec, custo:cus, lucro: Math.round((rec-cus)*100)/100};
+  });
+  return {linhas, extrasSemEtapa,
+    totReceita: Math.round(linhas.reduce((s,l)=>s+l.receita,0)*100)/100,
+    totCusto:   Math.round(linhas.reduce((s,l)=>s+l.custo,0)*100)/100,
+    totLucro:   Math.round(linhas.reduce((s,l)=>s+l.lucro,0)*100)/100};
+}
+
+function blocoResultadoPorEtapa(c){
+  const r = resultadoPorEtapa(c);
+  return `
+  <div class="card">
+    <h2 style="margin-top:0;">Custo e lucro por etapa</h2>
+    <p class="help">
+      Receita = itens já medidos e APROVADOS de cada etapa, pelo preço de hoje. Custo de mão de
+      obra vem do <a href="#" onclick="goTo('diario'); return false;">Diário de Obras</a> — some lá,
+      em cada dia, a etapa de quem é <b>Empreitada</b>. Fichado entra pela MÉDIA do custo do mês
+      (salário + encargos ÷ dias úteis) — diarista entra pela diária exata do dia.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Etapa</th><th class="num">Receita (aprovada)</th>
+          <th class="num">Custo de mão de obra</th><th class="num">Lucro</th></tr></thead>
+        <tbody>${r.linhas.map(l=>`<tr>
+          <td>${esc(l.etapa.nome)}</td>
+          <td class="num">${fmtMoney(l.receita)}</td>
+          <td class="num" style="color:var(--vermelho);">${l.custo?fmtMoney(l.custo):'—'}</td>
+          <td class="num" style="font-weight:700;color:${l.lucro<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(l.lucro)}</td>
+        </tr>`).join('')}</tbody>
+        <tfoot><tr><th>Total</th><th class="num">${fmtMoney(r.totReceita)}</th>
+          <th class="num">${fmtMoney(r.totCusto)}</th>
+          <th class="num" style="color:${r.totLucro<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(r.totLucro)}</th></tr></tfoot>
+      </table>
+    </div>
+    ${!c.etapas.length ? '<div class="empty">Cadastre as etapas do contrato acima pra ver o resultado de cada uma.</div>' : ''}
+    ${r.extrasSemEtapa ? `<p class="help">+ ${fmtMoney(r.extrasSemEtapa)} de EXTRAS aprovados, fora do previsto — não entram em etapa nenhuma (extra não é vinculado a etapa).</p>` : ''}
+    <p class="help">Este custo é só MÃO DE OBRA — material, equipamento e outros custos da etapa não entram aqui.</p>
+    ${c.etapas.length ? `<button class="btn btn-secondary" onclick="printResultadoPorEtapa('${c.id}')">Imprimir (PDF)</button>` : ''}
+  </div>`;
+}
+
+function printResultadoPorEtapa(contratoId){
+  const c = contratoEmpreitada(contratoId);
+  if(!c) return;
+  const r = resultadoPorEtapa(c);
+  const html = `
+  <div class="doc">
+    ${docHead('Custo e Lucro por Etapa — Empreitada', esc(obraNome(c.obraId)))}
+    <table class="dtab">
+      <thead><tr><th>Etapa</th><th class="num">Receita</th><th class="num">Custo de mão de obra</th><th class="num">Lucro</th></tr></thead>
+      <tbody>${r.linhas.map(l=>`<tr>
+        <td>${esc(l.etapa.nome)}</td><td class="num">${fmtMoney(l.receita)}</td>
+        <td class="num">${fmtMoney(l.custo)}</td><td class="num">${fmtMoney(l.lucro)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td><b>TOTAL</b></td><td class="num"><b>${fmtMoney(r.totReceita)}</b></td>
+        <td class="num"><b>${fmtMoney(r.totCusto)}</b></td><td class="num"><b>${fmtMoney(r.totLucro)}</b></td></tr></tfoot>
+    </table>
+    ${r.extrasSemEtapa ? `<p class="dnote">+ ${fmtMoney(r.extrasSemEtapa)} de extras aprovados, fora do previsto — não entram em etapa nenhuma.</p>` : ''}
+    <p class="dnote">Custo é só mão de obra (diária do diarista, média mensal do fichado) — material e equipamento não entram.</p>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, `Custo e Lucro por Etapa - ${obraNome(c.obraId)}`);
 }
 
 function cardContratoEmpreitada(c){
@@ -12689,6 +12829,16 @@ function registroDiario(obraId, iso){
   return DB.diarioObras.find(d=>d.obraId===obraId && d.data===iso);
 }
 
+/* O que ficou gravado do dia de uma pessoa — texto + etapa (30/09/2026).
+   Backfill em `migrate()` já converte registro antigo (só texto, de antes de
+   existir etapa) para este formato; esta função tolera os dois por segurança. */
+function equipeItem(reg, funcId){
+  const v = (reg.equipe||{})[funcId];
+  if(!v) return {texto:'', etapaId:''};
+  if(typeof v === 'string') return {texto:v, etapaId:''};
+  return {texto: v.texto||'', etapaId: v.etapaId||''};
+}
+
 /* Equipe do dia, independente do estado global do Ponto (`pdiaObra`/`pdiaTipo`)
    — o diário navega pela PRÓPRIA obra/data, não pela tela de Ponto. Mesmo
    critério de sempre: fichado pela obra do DIA (`obraDoFuncionarioEm`, respeita
@@ -12728,6 +12878,12 @@ function renderDiario(){
   const reg = registroDiario(diaObraSel, iso) || {};
   const equipe = equipeDiario(diaObraSel, iso);
   const feriadoHoje = feriadoDoDia(iso);
+  /* Etapa do dia (30/09/2026): só para quem é EMPREITADA, e só quando a obra já
+     tem contrato com etapa cadastrada — ver "Custo e lucro por etapa",
+     `15_medicao_empreitada.js`. Sem contrato/etapa, a coluna nem aparece — não
+     tem o que escolher. */
+  const contrato = contratoDaObra(diaObraSel);
+  const temEtapas = !!(contrato && contrato.etapas.length);
 
   const historico = DB.diarioObras
     .filter(d=>d.obraId===diaObraSel)
@@ -12789,16 +12945,25 @@ function renderDiario(){
       ${equipe.length ? `
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Funcionário</th><th>Cargo</th><th>Ponto</th><th>O que fez</th></tr></thead>
-          <tbody>${equipe.map(f=>`
+          <thead><tr><th>Funcionário</th><th>Cargo</th><th>Ponto</th>${temEtapas?'<th>Etapa</th>':''}<th>O que fez</th></tr></thead>
+          <tbody>${equipe.map(f=>{
+            const it = equipeItem(reg, f.id);
+            const ehEmpreitada = f.tipoServico === 'empreitada';
+            return `
             <tr>
               <td><b>${esc(f.nome)}</b></td>
               <td>${esc(funcaoEfetivaNoDia(f, iso)||'—')}</td>
               <td>${statusBadgeDiario(f, iso)}</td>
-              <td><input id="dia_at_${f.id}" style="width:100%;" value="${esc((reg.equipe||{})[f.id]||'')}" placeholder="ex.: forma de pilar"></td>
-            </tr>`).join('')}</tbody>
+              ${temEtapas ? `<td>${ehEmpreitada ? `
+                <select id="dia_etapa_${f.id}" style="min-width:150px;">
+                  <option value="">— sem etapa —</option>
+                  ${contrato.etapas.map(e=>`<option value="${e.id}" ${it.etapaId===e.id?'selected':''}>${esc(e.nome)}</option>`).join('')}
+                </select>` : '<span style="color:#9aa0ab;">—</span>'}</td>` : ''}
+              <td><input id="dia_at_${f.id}" style="width:100%;" value="${esc(it.texto)}" placeholder="ex.: forma de pilar"></td>
+            </tr>`;}).join('')}</tbody>
         </table>
-      </div>` : `<div class="empty">Ninguém alocado nesta obra neste dia.</div>`}
+      </div>
+      ${temEtapas ? `<p class="help">A etapa é só para quem é <b>Empreitada</b> — é o que liga o custo de mão de obra do dia à etapa certa, pra fechar o <a href="#" onclick="goTo('medicaoEmpreitada'); return false;">custo e lucro por etapa</a> quando ela terminar.</p>` : ''}` : `<div class="empty">Ninguém alocado nesta obra neste dia.</div>`}
 
       <div class="field" style="margin-top:12px;"><label>Responsável pelo preenchimento</label>
         <input id="dia_responsavel" value="${esc(reg.responsavel||'')}" placeholder="quem está anotando o diário hoje" style="max-width:320px;">
@@ -12844,7 +13009,9 @@ function salvarDiario(){
   const equipeAtividades = {};
   equipe.forEach(f=>{
     const t = val(`dia_at_${f.id}`).trim();
-    if(t) equipeAtividades[f.id] = t;
+    const selEtapa = document.getElementById(`dia_etapa_${f.id}`);
+    const etapaId = selEtapa ? selEtapa.value : '';
+    if(t || etapaId) equipeAtividades[f.id] = {texto:t, etapaId};
   });
   const existente = registroDiario(diaObraSel, iso);
   const registro = Object.assign({id: existente ? existente.id : uid()}, {
@@ -12882,6 +13049,8 @@ function printDiario(obraId, iso){
   if(!reg){ toast('Salve o diário antes de imprimir.'); return; }
   const equipe = equipeDiario(obraId, iso);
   const feriadoHoje = feriadoDoDia(iso);
+  const contrato = contratoDaObra(obraId);
+  const nomeEtapa = id => (contrato && contrato.etapas.find(e=>e.id===id) || {}).nome || '';
   const html = `
   <div class="doc">
     ${docHead('Diário de Obra', `${esc(obraNome(obraId))} — ${fmtDate(iso)} (${DOW_FULL[dowOf(iso)]})`)}
@@ -12898,10 +13067,13 @@ function printDiario(obraId, iso){
     ${equipe.length ? `
     <table class="dtab">
       <thead><tr><th>Funcionário</th><th>Cargo</th><th>O que fez</th></tr></thead>
-      <tbody>${equipe.map(f=>`<tr>
+      <tbody>${equipe.map(f=>{
+        const it = equipeItem(reg, f.id);
+        const etapa = it.etapaId ? nomeEtapa(it.etapaId) : '';
+        return `<tr>
         <td>${esc(f.nome)}</td><td>${esc(funcaoEfetivaNoDia(f, iso)||'—')}</td>
-        <td>${esc((reg.equipe||{})[f.id]||'—')}</td>
-      </tr>`).join('')}</tbody>
+        <td>${esc(it.texto||'—')}${etapa?` <i>(${esc(etapa)})</i>`:''}</td>
+      </tr>`;}).join('')}</tbody>
     </table>` : '<p class="dnote">Ninguém alocado nesta obra neste dia.</p>'}
     <div class="assinatura"><div>Responsável pelo diário</div><div>${esc(reg.responsavel||'')}</div></div>
     ${docFoot()}
