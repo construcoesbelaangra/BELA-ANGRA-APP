@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.10.1';
+const VERSAO = '1.11.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -954,6 +954,10 @@ function defaultDB(){
        pessoas, quando}. Foto da estimativa feita ANTES da sexta, para comparar com o
        que foi pago de verdade. Ver `previsaoDaSexta` (05_diarista.js). */
     previsoesPagamento: [],
+    /* Diário de Obras (30/09/2026): {id, obraId, data, clima, parado, motivoParada,
+       atividades, ocorrencias, equipe:{funcionarioId: 'texto do que fez'}, responsavel}.
+       Um registro por obra+dia. Ver `fonte/16_diario.js`. */
+    diarioObras: [],
     holerites: [],
     epiEntradas: [],
     epiSaidas: [],
@@ -1093,6 +1097,7 @@ function migrate(db){
   db.adiantamentos = db.adiantamentos || [];
   db.pagamentos    = db.pagamentos    || [];   /* marca de pago no fechamento */
   db.previsoesPagamento = db.previsoesPagamento || [];
+  db.diarioObras = db.diarioObras || [];
   db.diasUteisMes  = db.diasUteisMes  || {};
   /* financeiro — coleções novas em 30/08/2026. Banco antigo não tem nenhuma
      delas, e o app precisa abrir igual com ou sem financeiro cadastrado. */
@@ -1919,6 +1924,7 @@ const PAGES = [
 
   {id:'funcionarios', secao:'RH',         label:'Funcionários',              icon:'pessoa',   sub:'Cadastro completo (ficha de admissão)'},
   {id:'obras',        secao:'RH',         label:'Obras',                     icon:'obra',     sub:'Cadastro de obras e equipe alocada'},
+  {id:'diario',       secao:'RH',         label:'Diário de Obras',           icon:'diario',   sub:'Clima, atividades e o que cada um fez no dia'},
   {id:'ponto',        secao:'RH',         label:'Ponto',                     icon:'calendario',sub:'Presença e faltas — fichados e diaristas'},
   {id:'fechamento',   secao:'RH',         label:'Fechamento / Pagamento',    icon:'confere',  sub:'Fechamento semanal e quinzenal (sextas-feiras)'},
   {id:'adiantamentos',secao:'RH',         label:'Vales / Adiantamentos',     icon:'dinheiro', sub:'Vales de diaristas descontados no fechamento'},
@@ -1944,6 +1950,7 @@ const ICONES = {
   painel:    '<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 8h6V4h-6z"/>',
   pessoa:    '<circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',
   obra:      '<path d="M4 20V9l8-5 8 5v11"/><path d="M10 20v-5h4v5"/>',
+  diario:    '<path d="M12 6.6c-1.9-1.4-4.4-1.9-7.3-1.4v13.4c2.9-.5 5.4 0 7.3 1.4 1.9-1.4 4.4-1.9 7.3-1.4V5.2c-2.9-.5-5.4 0-7.3 1.4Z"/><path d="M12 6.6v13.4"/>',
   calendario:'<rect x="3.5" y="5" width="17" height="15" rx="2.2"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>',
   relogio:   '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.6V12l3 1.8"/>',
   confere:   '<circle cx="12" cy="12" r="8.2"/><path d="m8.4 12.2 2.5 2.5 4.7-4.9"/>',
@@ -2038,6 +2045,7 @@ function render(){
   document.getElementById('pageSub').textContent = page.sub;
   const renderers = {
     dashboard: renderDashboard, funcionarios: renderFuncionarios, obras: renderObras,
+    diario: renderDiario,
     ponto: renderPonto, fechamento: renderFechamento,
     adiantamentos: renderAdiantamentos, vales: renderVales, holerite: renderHolerite,
     estoque: renderEstoque, custos: renderCustos,
@@ -8862,6 +8870,7 @@ const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','p
   'empresas','contas','categorias','lancamentos','recorrentes',
   'feriados',
   'previsoesPagamento',   /* foto da previsão das sextas (25/09/2026) */
+  'diarioObras',          /* Diário de Obras (30/09/2026) */
   /* Medição HH (04/09/2026) — mesmo motivo: sem entrar aqui, uma medição
      aprovada num PC (e o lançamento que ela criou) não aparece no outro. */
   'medicoesHH',
@@ -12652,6 +12661,252 @@ function printMedicaoEmpreitada(id){
     ${docFoot()}
   </div>`;
   doPrint(html, nomeArquivoSeguro(`Medicao Empreitada ${m.numero} - ${obraNome(m.obraId)}`));
+}
+/* =========================================================
+   DIÁRIO DE OBRAS (30/09/2026)
+
+   Pedido do Maycon: um relatório do dia — como estava a obra e o que cada
+   funcionário fez — igual ao Relatório Diário de Obra (RDO) que ele já
+   preenchia em papel/planilha. Uma tela, um registro por OBRA + DIA.
+
+   Reaproveita quem já está na obra naquele dia (mesma lógica de `equipeDoDia`,
+   `04b_ponto_dia.js`, mas independente do estado global do Ponto) e o status
+   do ponto (`statusDoDia`) só para MOSTRAR contexto — o diário não lança nem
+   corrige presença, é outra coisa: registra o que foi feito.
+   ========================================================= */
+
+let diaObraSel = '';
+let diaDataSel = null;
+
+function initDiario(){
+  if(!diaDataSel) diaDataSel = todayISO();
+  if(!diaObraSel && DB.obras.length) diaObraSel = DB.obras[0].id;
+}
+
+const CLIMA_LABEL = {sol:'☀️ Sol', nublado:'⛅ Nublado', chuva:'🌧️ Chuva', chuva_forte:'⛈️ Chuva forte'};
+
+function registroDiario(obraId, iso){
+  return DB.diarioObras.find(d=>d.obraId===obraId && d.data===iso);
+}
+
+/* Equipe do dia, independente do estado global do Ponto (`pdiaObra`/`pdiaTipo`)
+   — o diário navega pela PRÓPRIA obra/data, não pela tela de Ponto. Mesmo
+   critério de sempre: fichado pela obra do DIA (`obraDoFuncionarioEm`, respeita
+   transferência e o 🏗️ do dia), diarista pela obra do cadastro (já carrega a
+   própria obra por dia em `DB.pontoDiarista`, não precisa de histórico). */
+function equipeDiario(obraId, iso){
+  if(!obraId) return [];
+  const base = ativosNoPeriodo(iso, iso);
+  const filtrada = base.filter(f=>
+    vinculoEm(f, iso)==='fichado' ? obraDoFuncionarioEm(f, iso)===obraId : f.obraPadrao===obraId);
+  return ordenarFuncionarios(filtrada);
+}
+
+/* Badge de contexto (não editável aqui) — o que o Ponto já diz sobre o dia
+   desta pessoa, só para o Maycon lembrar quem faltou sem ter que trocar de tela. */
+function statusBadgeDiario(f, iso){
+  const s = statusDoDia(f, iso);
+  if(!s.status) return '<span class="badge badge-gray">Sem lançamento</span>';
+  if(s.status==='falta') return `<span class="badge badge-red">Falta</span>`;
+  const cor = s.status==='trabalhado' ? 'badge-green' : (s.status.indexOf('falta')===0 ? 'badge-red' : 'badge-blue');
+  return `<span class="badge ${cor}">${esc(STATUS_LABEL[s.status]||s.status)}${s.auto?' *':''}</span>`;
+}
+
+function renderDiario(){
+  initDiario();
+  const c = document.getElementById('content');
+
+  if(!DB.obras.length){
+    c.innerHTML = `<div class="card"><div class="empty">
+      Cadastre uma obra antes de começar o diário. <a href="#" onclick="goTo('obras'); return false;">Ir para Obras</a>.
+    </div></div>`;
+    return;
+  }
+
+  const iso = diaDataSel;
+  const hoje = todayISO();
+  const reg = registroDiario(diaObraSel, iso) || {};
+  const equipe = equipeDiario(diaObraSel, iso);
+  const feriadoHoje = feriadoDoDia(iso);
+
+  const historico = DB.diarioObras
+    .filter(d=>d.obraId===diaObraSel)
+    .sort((a,b)=>b.data.localeCompare(a.data))
+    .slice(0, 12);
+
+  c.innerHTML = `
+    <div class="card">
+      <div class="grid grid-4" style="align-items:end;">
+        <div class="field" style="margin:0;"><label>Obra</label>
+          <select onchange="diaObraSel=this.value; renderDiario();">
+            ${DB.obras.map(o=>`<option value="${o.id}" ${diaObraSel===o.id?'selected':''}>${esc(o.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="margin:0;"><label>Dia</label>
+          <input type="date" value="${iso}" onchange="diaDataSel=this.value; renderDiario();">
+        </div>
+        <div class="field" style="margin:0;"><label>Navegar</label>
+          <div style="display:flex;gap:5px;">
+            <button class="btn btn-secondary btn-sm" onclick="diaDataSel=addDays(diaDataSel,-1); renderDiario();">◀ dia</button>
+            <button class="btn btn-secondary btn-sm" onclick="diaDataSel='${hoje}'; renderDiario();">Hoje</button>
+            <button class="btn btn-secondary btn-sm" onclick="diaDataSel=addDays(diaDataSel,1); renderDiario();">dia ▶</button>
+          </div>
+        </div>
+        <div class="field" style="margin:0;">
+          ${registroDiario(diaObraSel, iso)
+            ? '<span class="badge badge-green">Este dia já tem diário</span>'
+            : '<span class="badge badge-gray">Ainda sem diário neste dia</span>'}
+          ${feriadoHoje ? ` <span class="badge badge-blue">🎉 ${esc(feriadoHoje.nome)}</span>` : ''}
+        </div>
+      </div>
+
+      <div class="grid grid-3" style="margin-top:6px;">
+        <div class="field"><label>Clima</label>
+          <select id="dia_clima">
+            <option value="">— não informado —</option>
+            ${Object.keys(CLIMA_LABEL).map(k=>`<option value="${k}" ${reg.clima===k?'selected':''}>${CLIMA_LABEL[k]}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Trabalho paralisado hoje?</label>
+          <select id="dia_parado" onchange="toggleMotivoParada()">
+            <option value="nao" ${!reg.parado?'selected':''}>Não — obra em andamento normal</option>
+            <option value="sim" ${reg.parado?'selected':''}>Sim — paralisado</option>
+          </select>
+        </div>
+        <div class="field" id="wrap_motivoParada" style="${reg.parado?'':'display:none;'}"><label>Motivo da paralisação</label>
+          <input id="dia_motivoParada" value="${esc(reg.motivoParada||'')}" placeholder="ex.: chuva forte a manhã toda">
+        </div>
+      </div>
+
+      <div class="field"><label>Atividades do dia — o que foi feito</label>
+        <textarea id="dia_atividades" rows="3" placeholder="ex.: concretagem da laje do 1º pavimento; alvenaria na fachada norte...">${esc(reg.atividades||'')}</textarea>
+      </div>
+      <div class="field"><label>Ocorrências — visitas, entrega de material, problemas...</label>
+        <textarea id="dia_ocorrencias" rows="3" placeholder="ex.: visita do engenheiro às 10h; entrega de 5t de cimento...">${esc(reg.ocorrencias||'')}</textarea>
+      </div>
+
+      <h3 style="margin-top:16px;">Equipe do dia${equipe.length?` (${equipe.length})`:''}</h3>
+      ${equipe.length ? `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Funcionário</th><th>Cargo</th><th>Ponto</th><th>O que fez</th></tr></thead>
+          <tbody>${equipe.map(f=>`
+            <tr>
+              <td><b>${esc(f.nome)}</b></td>
+              <td>${esc(funcaoEfetivaNoDia(f, iso)||'—')}</td>
+              <td>${statusBadgeDiario(f, iso)}</td>
+              <td><input id="dia_at_${f.id}" style="width:100%;" value="${esc((reg.equipe||{})[f.id]||'')}" placeholder="ex.: forma de pilar"></td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>` : `<div class="empty">Ninguém alocado nesta obra neste dia.</div>`}
+
+      <div class="field" style="margin-top:12px;"><label>Responsável pelo preenchimento</label>
+        <input id="dia_responsavel" value="${esc(reg.responsavel||'')}" placeholder="quem está anotando o diário hoje" style="max-width:320px;">
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="salvarDiario()">Salvar diário</button>
+        <button class="btn btn-secondary" onclick="printDiario('${diaObraSel}','${iso}')">Imprimir este dia (PDF)</button>
+        ${registroDiario(diaObraSel, iso) ? `<button class="btn btn-secondary" onclick="excluirDiario('${diaObraSel}','${iso}')">Excluir este dia</button>` : ''}
+      </div>
+      <p class="help">O diário não mexe no Ponto — é só o registro do dia. Presença/falta continuam lançadas em <a href="#" onclick="goTo('ponto'); return false;">Ponto</a>.</p>
+    </div>
+
+    ${historico.length ? `
+    <div class="card">
+      <h3 style="margin:0 0 10px;">Últimos diários desta obra</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Dia</th><th>Clima</th><th>Situação</th><th>Atividades</th><th></th></tr></thead>
+          <tbody>${historico.map(d=>`
+            <tr${d.data===iso?' style="background:#f4faf6;"':''}>
+              <td style="white-space:nowrap;">${fmtDate(d.data)}</td>
+              <td>${d.clima?CLIMA_LABEL[d.clima]:'—'}</td>
+              <td>${d.parado?'<span class="badge badge-red">Paralisado</span>':'<span class="badge badge-green">Normal</span>'}</td>
+              <td style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(d.atividades||'')}</td>
+              <td><button class="btn btn-secondary btn-sm" onclick="diaDataSel='${d.data}'; renderDiario();">Abrir</button></td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>` : ''}
+  `;
+}
+
+function toggleMotivoParada(){
+  const parado = val('dia_parado') === 'sim';
+  document.getElementById('wrap_motivoParada').style.display = parado ? '' : 'none';
+}
+
+function salvarDiario(){
+  if(!diaObraSel){ alert('Escolha a obra.'); return; }
+  const iso = diaDataSel;
+  const equipe = equipeDiario(diaObraSel, iso);
+  const equipeAtividades = {};
+  equipe.forEach(f=>{
+    const t = val(`dia_at_${f.id}`).trim();
+    if(t) equipeAtividades[f.id] = t;
+  });
+  const existente = registroDiario(diaObraSel, iso);
+  const registro = Object.assign({id: existente ? existente.id : uid()}, {
+    obraId: diaObraSel, data: iso,
+    clima: val('dia_clima'),
+    parado: val('dia_parado') === 'sim',
+    motivoParada: val('dia_parado')==='sim' ? val('dia_motivoParada').trim() : '',
+    atividades: val('dia_atividades').trim(),
+    ocorrencias: val('dia_ocorrencias').trim(),
+    responsavel: val('dia_responsavel').trim(),
+    equipe: equipeAtividades
+  });
+  if(existente){
+    const idx = DB.diarioObras.findIndex(d=>d.id===existente.id);
+    DB.diarioObras[idx] = registro;
+  } else {
+    DB.diarioObras.push(registro);
+  }
+  saveDB(); renderDiario();
+  toast(`Diário de ${fmtDate(iso)} salvo.`);
+}
+
+function excluirDiario(obraId, iso){
+  const reg = registroDiario(obraId, iso);
+  if(!reg) return;
+  if(!confirm(`Excluir o diário de ${fmtDate(iso)}? Não dá para desfazer.`)) return;
+  DB.diarioObras = DB.diarioObras.filter(d=>d.id!==reg.id);
+  saveDB(); renderDiario();
+  toast('Diário excluído.');
+}
+
+/* ---- impressão: uma folha por dia, igual ao RDO de papel que ele já usava ---- */
+function printDiario(obraId, iso){
+  const reg = registroDiario(obraId, iso);
+  if(!reg){ toast('Salve o diário antes de imprimir.'); return; }
+  const equipe = equipeDiario(obraId, iso);
+  const feriadoHoje = feriadoDoDia(iso);
+  const html = `
+  <div class="doc">
+    ${docHead('Diário de Obra', `${esc(obraNome(obraId))} — ${fmtDate(iso)} (${DOW_FULL[dowOf(iso)]})`)}
+    <table class="dtab">
+      <tbody>
+        <tr><td style="width:33%;"><b>Clima</b></td><td>${reg.clima?CLIMA_LABEL[reg.clima]:'—'}</td></tr>
+        <tr><td><b>Situação do dia</b></td><td>${reg.parado
+          ? `Paralisado${reg.motivoParada?` — ${esc(reg.motivoParada)}`:''}`
+          : 'Em andamento normal'}${feriadoHoje?` · Feriado: ${esc(feriadoHoje.nome)}`:''}</td></tr>
+      </tbody>
+    </table>
+    ${reg.atividades ? `<p class="dnote"><b>Atividades do dia:</b><br>${esc(reg.atividades).replace(/\n/g,'<br>')}</p>` : ''}
+    ${reg.ocorrencias ? `<p class="dnote"><b>Ocorrências:</b><br>${esc(reg.ocorrencias).replace(/\n/g,'<br>')}</p>` : ''}
+    ${equipe.length ? `
+    <table class="dtab">
+      <thead><tr><th>Funcionário</th><th>Cargo</th><th>O que fez</th></tr></thead>
+      <tbody>${equipe.map(f=>`<tr>
+        <td>${esc(f.nome)}</td><td>${esc(funcaoEfetivaNoDia(f, iso)||'—')}</td>
+        <td>${esc((reg.equipe||{})[f.id]||'—')}</td>
+      </tr>`).join('')}</tbody>
+    </table>` : '<p class="dnote">Ninguém alocado nesta obra neste dia.</p>'}
+    <div class="assinatura"><div>Responsável pelo diário</div><div>${esc(reg.responsavel||'')}</div></div>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, `Diario de Obra - ${obraNome(obraId)} - ${fmtDate(iso)}`);
 }
 /* =========================================================
    AJUSTES DE TELA PEQUENA
