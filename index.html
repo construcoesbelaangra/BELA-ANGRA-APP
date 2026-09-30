@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.13.0';
+const VERSAO = '1.14.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1954,6 +1954,7 @@ const PAGES = [
   {id:'caixa',        secao:'Financeiro', label:'Caixa e Contas',            icon:'cofre',    sub:'Saldo de cada conta, por empresa e consolidado'},
   {id:'lancamentos',  secao:'Financeiro', label:'A Pagar / A Receber',       icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
   {id:'fluxo',        secao:'Financeiro', label:'Fluxo de Caixa',            icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
+  {id:'provisoes',    secao:'Financeiro', label:'Provisões Trabalhistas',    icon:'provisao', sub:'13º, férias e multa do FGTS acumulados, mês a mês'},
   {id:'medicaoHH',    secao:'Financeiro', label:'Medição Homem-Hora',        icon:'regua',    sub:'Gera a medição a partir do ponto e vira conta a receber'},
   {id:'medicaoEmpreitada', secao:'Financeiro', label:'Medição de Empreitada', icon:'empreitada', sub:'Previsto x realizado por etapa (aço/forma/concreto), saldo e extras'},
 
@@ -1969,6 +1970,7 @@ const ICONES = {
   pessoa:    '<circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',
   obra:      '<path d="M4 20V9l8-5 8 5v11"/><path d="M10 20v-5h4v5"/>',
   diario:    '<path d="M12 6.6c-1.9-1.4-4.4-1.9-7.3-1.4v13.4c2.9-.5 5.4 0 7.3 1.4 1.9-1.4 4.4-1.9 7.3-1.4V5.2c-2.9-.5-5.4 0-7.3 1.4Z"/><path d="M12 6.6v13.4"/>',
+  provisao:  '<path d="M12 3.5 5 6v6c0 5 3 8.5 7 9.5 4-1 7-4.5 7-9.5V6Z"/><path d="m9 12 2 2 4-4"/>',
   calendario:'<rect x="3.5" y="5" width="17" height="15" rx="2.2"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>',
   relogio:   '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.6V12l3 1.8"/>',
   confere:   '<circle cx="12" cy="12" r="8.2"/><path d="m8.4 12.2 2.5 2.5 4.7-4.9"/>',
@@ -2067,7 +2069,8 @@ function render(){
     ponto: renderPonto, fechamento: renderFechamento,
     adiantamentos: renderAdiantamentos, vales: renderVales, holerite: renderHolerite,
     estoque: renderEstoque, custos: renderCustos,
-    caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, medicaoHH: renderMedicaoHH,
+    caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, provisoes: renderProvisoes,
+    medicaoHH: renderMedicaoHH,
     medicaoEmpreitada: renderMedicaoEmpreitada,
     sync: renderSync, config: renderConfig
   };
@@ -13155,6 +13158,186 @@ function printDiario(obraId, iso){
     ${docFoot()}
   </div>`;
   doPrint(html, `Diario de Obra - ${obraNome(obraId)} - ${fmtDate(iso)}`);
+}
+/* =========================================================
+   PROVISÕES TRABALHISTAS (30/09/2026)
+
+   Pedido do Maycon: a caixinha onde ele guarda dinheiro pra férias, 13º e multa
+   do FGTS — ele queria saber quanto já deveria ter guardado, mês a mês, desde
+   a data em que cada fichado foi FICHADO (não a admissão como diarista, se
+   teve — a mesma "Fichado desde" já usada na folha, `admissaoFolha`), pra
+   fazer uma aplicação nova sempre no valor certo.
+
+   Usa os MESMOS percentuais já configurados em Configurações → Encargos
+   (13º, férias+1/3, multa do FGTS) — os mesmos que o Demonstrativo de Encargos
+   usa pra UM mês (`calcEncargos`, `06b_holerite.js`); aqui é a soma de TODOS
+   os meses, desde `admissaoFolha(f)` até o mês escolhido.
+
+   Só entra fichado (`temEncargos`) — diarista não gera encargo social, mesmo
+   quem a contabilidade trata como fichado no papel (João Martins, Jeferson
+   Martins Caetano — ver "Cadastro duplicado") continua de fora, pelo mesmo
+   motivo que já vale no Demonstrativo de Encargos: pra fim de CUSTO REAL,
+   eles são diaristas.
+
+   Duas aproximações, avisadas na própria tela:
+   - Usa os percentuais de HOJE pra todos os meses passados — não guarda
+     histórico de alíquota (se mudar em Configurações, o acumulado inteiro
+     recalcula com a nova, não fica um valor "congelado" mês a mês).
+   - Não inclui aviso prévio nem rescisão em geral — não existe alíquota
+     padrão configurada pra isso no sistema ainda.
+   ========================================================= */
+
+/* soma dos percentuais de provisão ATIVOS em Configurações → Encargos */
+function percentualProvisao(){
+  const at = DB.config.encargosAtivos;
+  const cfg = DB.config;
+  let p = 0;
+  if(at.decimo13)  p += Number(cfg.provisao13Percent)||0;
+  if(at.ferias)    p += Number(cfg.provisaoFeriasPercent)||0;
+  if(at.multaFgts) p += Number(cfg.multaFgtsPercent)||0;
+  return p;
+}
+
+/* provisão de UM mês, pelo salário que valia NAQUELE mês */
+function provisaoDoMes(f, ym){
+  const pct = percentualProvisao();
+  if(!pct) return 0;
+  const base = salarioHistoricoEm(f, ultimoDiaMes(ym));
+  return Math.round(base * pct / 100 * 100) / 100;
+}
+
+/* lista de meses (YYYY-MM) desde que foi fichado até o mês de referência */
+function mesesDeProvisao(f, ymFim){
+  const ini = admissaoFolha(f).slice(0,7);
+  const out = [];
+  let ym = ini;
+  while(ym <= ymFim){ out.push(ym); ym = mesMais(ym, 1); }
+  return out;
+}
+function provisaoAcumulada(f, ymFim){
+  return Math.round(mesesDeProvisao(f, ymFim).reduce((s,ym)=>s+provisaoDoMes(f,ym), 0) * 100) / 100;
+}
+
+let provMes = null;
+function initProvisoes(){ if(!provMes) provMes = currentYM(); }
+function fichadosParaProvisao(){
+  return ativos().filter(f=>temEncargos(f)).sort(cmpFuncionarios);
+}
+
+function renderProvisoes(){
+  initProvisoes();
+  const c = document.getElementById('content');
+  const lista = fichadosParaProvisao();
+  const pct = percentualProvisao();
+
+  const linhas = lista.map(f=>({
+    f,
+    acumulado: provisaoAcumulada(f, provMes),
+    doMes: provisaoDoMes(f, provMes),
+    salario: salarioHistoricoEm(f, ultimoDiaMes(provMes))
+  }));
+  const totAcumulado = Math.round(linhas.reduce((s,l)=>s+l.acumulado,0)*100)/100;
+  const totMes = Math.round(linhas.reduce((s,l)=>s+l.doMes,0)*100)/100;
+
+  const inicioGlobal = lista.reduce((min,f)=>{
+    const ini = admissaoFolha(f).slice(0,7);
+    return (!min || ini < min) ? ini : min;
+  }, null) || provMes;
+  const serie = [];
+  let acumSerie = 0;
+  for(let ym=inicioGlobal; ym<=provMes; ym=mesMais(ym,1)){
+    const doMesTodos = Math.round(lista.reduce((s,f)=>
+      ym >= admissaoFolha(f).slice(0,7) ? s+provisaoDoMes(f,ym) : s, 0) * 100) / 100;
+    acumSerie = Math.round((acumSerie + doMesTodos) * 100) / 100;
+    serie.push({ym, valor: doMesTodos, acumulado: acumSerie});
+  }
+
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Provisões Trabalhistas</h2>
+      <p class="help">
+        Quanto você já deveria ter guardado, mês a mês, pra cobrir <b>13º salário</b>,
+        <b>férias + 1/3</b> e a <b>multa de 40% do FGTS</b> de cada fichado — desde a data em
+        que cada um foi fichado (a mesma <b>"Fichado desde"</b> usada na folha). Usa os
+        percentuais de <a href="#" onclick="goTo('config'); return false;">Configurações →
+        Encargos</a> — hoje somam <b>${fmtNum(pct,2)}%</b> do salário.
+      </p>
+      <div class="field" style="max-width:200px;"><label>Calcular até o mês</label>
+        <input type="month" value="${provMes}" onchange="provMes=this.value; renderProvisoes();">
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="v">${lista.length}</div><div class="l">Fichados na conta</div></div>
+        <div class="kpi"><div class="v" style="color:var(--azul-esc);">${fmtMoney(totAcumulado)}</div><div class="l">Total a guardar até ${monthLabel(provMes)}</div></div>
+        <div class="kpi"><div class="v" style="color:var(--verde);">${fmtMoney(totMes)}</div><div class="l">Valor deste mês (aplicação)</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Por funcionário</h3>
+      <div class="table-wrap">
+        ${linhas.length ? `<table>
+          <thead><tr><th>Funcionário</th><th>Fichado desde</th><th class="num">Salário</th>
+            <th class="num">Acumulado até ${monthLabel(provMes)}</th><th class="num">Valor deste mês</th></tr></thead>
+          <tbody>${linhas.map(l=>`<tr>
+            <td><b>${esc(l.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(l.f.funcao||'')}</span></td>
+            <td>${fmtDate(admissaoFolha(l.f))}</td>
+            <td class="num">${fmtMoney(l.salario)}</td>
+            <td class="num"><b>${fmtMoney(l.acumulado)}</b></td>
+            <td class="num">${fmtMoney(l.doMes)}</td>
+          </tr>`).join('')}</tbody>
+          <tfoot><tr><th colspan="3" style="text-align:right;">Total</th><th class="num">${fmtMoney(totAcumulado)}</th><th class="num">${fmtMoney(totMes)}</th></tr></tfoot>
+        </table>` : '<div class="empty">Nenhum fichado ativo.</div>'}
+      </div>
+      ${linhas.length ? `<button class="btn btn-secondary" style="margin-top:10px;" onclick="printProvisoes()">Imprimir (PDF)</button>` : ''}
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Valor por mês (todos os fichados juntos)</h3>
+      <p class="help">O quanto deveria ter entrado na aplicação a cada mês, e o acumulado — pra conferir o histórico.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Mês</th><th class="num">Provisão do mês</th><th class="num">Acumulado</th></tr></thead>
+          <tbody>${serie.map(s=>`<tr${s.ym===provMes?' style="background:#f4faf6;"':''}><td>${monthLabel(s.ym)}</td><td class="num">${fmtMoney(s.valor)}</td><td class="num">${fmtMoney(s.acumulado)}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="help">
+        <b>O que NÃO entra nesta conta:</b> aviso prévio e rescisão em geral não têm uma
+        alíquota padrão configurada ainda — se você quiser incluir, me diga a porcentagem
+        que combinou. Diarista não entra (não gera encargo social), mesmo quem a
+        contabilidade trata como fichado no papel (João Martins, Jeferson Martins Caetano).<br>
+        <b>Aproximação:</b> o cálculo usa os percentuais de HOJE para todos os meses
+        passados — se a alíquota mudar em Configurações, o acumulado inteiro recalcula
+        com a nova, não guarda um valor "congelado" de cada mês.
+      </p>
+    </div>
+  `;
+}
+
+function printProvisoes(){
+  const lista = fichadosParaProvisao();
+  const linhas = lista.map(f=>({
+    f, acumulado: provisaoAcumulada(f, provMes), doMes: provisaoDoMes(f, provMes)
+  }));
+  const totAcumulado = linhas.reduce((s,l)=>s+l.acumulado,0);
+  const totMes = linhas.reduce((s,l)=>s+l.doMes,0);
+  const html = `
+  <div class="doc">
+    ${docHead('Provisões Trabalhistas', `13º, férias + 1/3 e multa do FGTS — acumulado até ${monthLabel(provMes)}`)}
+    <table class="dtab">
+      <thead><tr><th>Funcionário</th><th>Fichado desde</th><th class="num">Acumulado</th><th class="num">Valor do mês</th></tr></thead>
+      <tbody>${linhas.map(l=>`<tr>
+        <td>${esc(l.f.nome)}</td><td>${fmtDate(admissaoFolha(l.f))}</td>
+        <td class="num">${fmtMoney(l.acumulado)}</td><td class="num">${fmtMoney(l.doMes)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="2"><b>TOTAL</b></td><td class="num"><b>${fmtMoney(totAcumulado)}</b></td><td class="num"><b>${fmtMoney(totMes)}</b></td></tr></tfoot>
+    </table>
+    <p class="dnote">Não inclui aviso prévio nem rescisão em geral (sem alíquota configurada). Diarista não entra, mesmo quem a contabilidade trata como fichado no papel.</p>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, `Provisoes Trabalhistas - ${monthLabel(provMes)}`);
 }
 /* =========================================================
    AJUSTES DE TELA PEQUENA
