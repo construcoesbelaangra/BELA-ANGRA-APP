@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.14.2';
+const VERSAO = '1.15.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -13260,6 +13260,24 @@ function fichadosParaProvisao(){
   return ativos().filter(f=>temEncargos(f)).sort(cmpFuncionarios);
 }
 
+/* agrupa as linhas já calculadas por OBRA do mês de referência (histórica,
+   `obraDoFuncionarioEm` — mesmo critério do Holerite/folha contábil, não a
+   obra de hoje) — pedido do Maycon pra saber o custo de provisão por obra,
+   não só por funcionário. */
+function provisoesPorObra(linhas, ymFim){
+  const porObra = {};
+  linhas.forEach(l=>{
+    const obraId = obraDoFuncionarioEm(l.f, ultimoDiaMes(ymFim)) || '';
+    if(!porObra[obraId]) porObra[obraId] = {obraId, acumulado:0, doMes:0, qtd:0};
+    porObra[obraId].acumulado += l.acumulado;
+    porObra[obraId].doMes += l.doMes;
+    porObra[obraId].qtd++;
+  });
+  return Object.values(porObra)
+    .map(o=>({...o, acumulado: Math.round(o.acumulado*100)/100, doMes: Math.round(o.doMes*100)/100}))
+    .sort((a,b)=> (a.obraId?obraNome(a.obraId):'~').localeCompare(b.obraId?obraNome(b.obraId):'~'));
+}
+
 function toggleProvisaoAvisoPrevio(){
   DB.config.provisaoAvisoPrevioAtivo = !DB.config.provisaoAvisoPrevioAtivo;
   saveDB(); renderProvisoes();
@@ -13284,6 +13302,7 @@ function renderProvisoes(){
   });
   const totAcumulado = Math.round(linhas.reduce((s,l)=>s+l.acumulado,0)*100)/100;
   const totMes = Math.round(linhas.reduce((s,l)=>s+l.doMes,0)*100)/100;
+  const porObraLinhas = provisoesPorObra(linhas, provMes);
 
   const inicioGlobal = lista.reduce((min,f)=>{
     const ini = admissaoFolha(f).slice(0,7);
@@ -13354,6 +13373,24 @@ function renderProvisoes(){
         </table>` : '<div class="empty">Nenhum fichado ativo.</div>'}
       </div>
       ${linhas.length ? `<button class="btn btn-secondary" style="margin-top:10px;" onclick="printProvisoes()">Imprimir (PDF)</button>` : ''}
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Por obra</h3>
+      <p class="help">Mesmos valores da tabela acima, agrupados pela obra em que cada fichado estava
+        no mês de referência (respeita transferência/histórico, não só a obra de hoje).</p>
+      <div class="table-wrap">
+        ${porObraLinhas.length ? `<table>
+          <thead><tr><th>Obra</th><th class="num">Fichados</th><th class="num">Acumulado até ${monthLabel(provMes)}</th><th class="num">Valor deste mês</th></tr></thead>
+          <tbody>${porObraLinhas.map(o=>`<tr>
+            <td>${o.obraId ? esc(obraNome(o.obraId)) : '<span style="color:#9aa0ab;">Sem obra</span>'}</td>
+            <td class="num">${o.qtd}</td>
+            <td class="num">${fmtMoney(o.acumulado)}</td>
+            <td class="num">${fmtMoney(o.doMes)}</td>
+          </tr>`).join('')}</tbody>
+          <tfoot><tr><th style="text-align:right;">Total</th><th class="num">${linhas.length}</th><th class="num">${fmtMoney(totAcumulado)}</th><th class="num">${fmtMoney(totMes)}</th></tr></tfoot>
+        </table>` : '<div class="empty">Nenhum fichado ativo.</div>'}
+      </div>
     </div>
 
     <div class="card">
