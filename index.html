@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.12.1';
+const VERSAO = '1.13.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1108,6 +1108,13 @@ function migrate(db){
     Object.keys(d.equipe).forEach(fid=>{
       if(typeof d.equipe[fid] === 'string') d.equipe[fid] = {texto: d.equipe[fid], etapaId:''};
     });
+  });
+  /* Solicitação × entrega de EPI (30/09/2026) — saída gravada antes de existir esse
+     controle já ERA uma entrega de verdade (não existia o passo de "pedido" ainda);
+     vira `status:'entregue'` com `dataEntrega = data`, sem mudar nada pra quem já
+     tinha isso lançado. Ver `07_estoque_custos.js`. */
+  (db.epiSaidas||[]).forEach(s=>{
+    if(!s.status){ s.status = 'entregue'; s.dataEntrega = s.data; }
   });
   db.diasUteisMes  = db.diasUteisMes  || {};
   /* financeiro — coleções novas em 30/08/2026. Banco antigo não tem nenhuma
@@ -7736,8 +7743,11 @@ function brutoDiaristaNoMes(f, mes){
   const periodo = {inicio:`${mes}-01`, fim:`${mes}-${String(nd).padStart(2,'0')}`};
   return calcDiarista(f, periodo).bruto;
 }
+/* Só a entrega JÁ CONFIRMADA pesa no custo do mês — uma solicitação ainda não
+   entregue não custou nada pra empresa ainda (ver "Solicitação × entrega" em
+   `07_estoque_custos.js`). O mês é o da ENTREGA, não o do pedido. */
 function epiDoMes(funcId, mes){
-  const itens = DB.epiSaidas.filter(s=>s.funcionarioId===funcId && (s.data||'').slice(0,7)===mes);
+  const itens = DB.epiSaidas.filter(s=>s.funcionarioId===funcId && s.status==='entregue' && (s.dataEntrega||s.data||'').slice(0,7)===mes);
   return {itens, total: itens.reduce((s,i)=>s+Number(i.quantidade)*Number(i.valorUnit),0)};
 }
 
@@ -7873,8 +7883,19 @@ function printEncargos(){
 }
 /* =========================================================
    ESTOQUE DE EPI / UNIFORMES
+
+   Solicitação × entrega (30/09/2026): pedido do Maycon — não dar saída direto do
+   estoque na hora que alguém pede. Primeiro fica como PEDIDO (`status:'solicitado'`);
+   só quando ele realmente entrega é que vira saída de verdade
+   (`confirmarEntregaEpi`, `status:'entregue'`) — aí sim sai do estoque, pesa no
+   custo médio e emite a cautela. Mesma coleção `DB.epiSaidas` de sempre (evita
+   coleção nova em `SYNC_COLECOES`), só ganhou o campo `status` e `dataEntrega`
+   (a data que sai na cautela — a do pedido, `data`, é só controle interno).
+   Registro antigo (de antes deste campo existir) já nasce `entregue`, com
+   `dataEntrega = data` — ver `migrate()`, `02_core.js`.
    ========================================================= */
-/* custo médio ponderado e saldo por item, a partir das entradas/saídas */
+/* custo médio ponderado e saldo por item, a partir das entradas e das saídas JÁ
+   ENTREGUES — pedido ainda `solicitado` não saiu do estoque, não pode contar. */
 function itensEstoque(){
   const mapa = {};
   DB.epiEntradas.forEach(e=>{
@@ -7885,6 +7906,7 @@ function itensEstoque(){
     mapa[k].valorEntrada+= (Number(e.quantidade)||0)*(Number(e.valorUnit)||0);
   });
   DB.epiSaidas.forEach(s=>{
+    if(s.status !== 'entregue') return;
     const k = (s.itemNome||'').trim();
     if(!k) return;
     if(!mapa[k]) mapa[k] = {item:k, qtdEntrada:0, valorEntrada:0, qtdSaida:0, valorSaida:0};
@@ -7909,15 +7931,17 @@ function saldoItem(nome){
 function renderEstoque(){
   const c = document.getElementById('content');
   const itens = itensEstoque();
+  const entregues   = DB.epiSaidas.filter(s=>s.status==='entregue');
+  const pendentes   = DB.epiSaidas.filter(s=>s.status!=='entregue');
   const totalCompras = DB.epiEntradas.reduce((s,e)=>s+Number(e.quantidade)*Number(e.valorUnit),0);
-  const totalSaidas  = DB.epiSaidas.reduce((s,e)=>s+Number(e.quantidade)*Number(e.valorUnit),0);
+  const totalSaidas  = entregues.reduce((s,e)=>s+Number(e.quantidade)*Number(e.valorUnit),0);
 
   c.innerHTML = `
     <div class="kpis">
       <div class="kpi"><div class="v">${itens.length}</div><div class="l">Itens diferentes</div></div>
       <div class="kpi"><div class="v">${fmtMoney(totalCompras)}</div><div class="l">Total comprado</div></div>
       <div class="kpi"><div class="v">${fmtMoney(totalSaidas)}</div><div class="l">Total entregue</div></div>
-      <div class="kpi"><div class="v">${fmtMoney(totalCompras-totalSaidas)}</div><div class="l">Saldo em valor</div></div>
+      <div class="kpi"><div class="v" style="color:${pendentes.length?'var(--amarelo)':'inherit'};">${pendentes.length}</div><div class="l">Solicitações a entregar</div></div>
     </div>
 
     <div class="card">
@@ -7951,15 +7975,25 @@ function renderEstoque(){
         </div>
       </div>
       <div class="card">
-        <div class="section-title"><h2 style="margin:0;">Saídas (entrega ao funcionário)</h2><button class="btn btn-primary btn-sm" onclick="openEpiSaidaModal()">+ Saída</button></div>
+        <div class="section-title"><h2 style="margin:0;">Solicitações e entregas</h2><button class="btn btn-primary btn-sm" onclick="openEpiSolicitacaoModal()">+ Solicitação</button></div>
+        <p class="help" style="margin-top:0;">Quando alguém pede um EPI, registre a <b>solicitação</b> — ainda não sai do estoque.
+          Só quando você <b>confirmar a entrega</b> é que o item sai de verdade e a cautela é emitida.</p>
         <div class="table-wrap">
-          ${DB.epiSaidas.length ? `<table><thead><tr><th>Data</th><th>Item</th><th>Funcionário</th><th>Obra</th><th class="num">Qtd</th><th class="num">Total</th><th></th></tr></thead>
-          <tbody>${DB.epiSaidas.slice().sort((a,b)=>(b.data||'').localeCompare(a.data||'')).map(s=>`
-            <tr><td>${fmtDate(s.data)}</td><td>${esc(s.itemNome)}</td><td>${esc(funcNome(s.funcionarioId))}</td><td>${esc(obraNome(s.obraId))}</td>
-            <td class="num">${s.quantidade}</td><td class="num">${fmtMoney(s.quantidade*s.valorUnit)}</td>
-            <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="printCautela('${s.id}')">Cautela</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteEpiSaida('${s.id}')">Excluir</button></td></tr>
-          `).join('')}</tbody></table>` : `<div class="empty">Nenhuma saída registrada.</div>`}
+          ${DB.epiSaidas.length ? `<table><thead><tr><th>Data</th><th>Item</th><th>Funcionário</th><th>Obra</th><th class="num">Qtd</th><th>Status</th><th></th></tr></thead>
+          <tbody>${DB.epiSaidas.slice().sort((a,b)=>(b.data||'').localeCompare(a.data||'')).map(s=>{
+            const pendente = s.status !== 'entregue';
+            return `<tr${pendente?' style="background:#fdf3e2;"':''}>
+            <td>${fmtDate(s.data)}${!pendente && s.dataEntrega && s.dataEntrega!==s.data?`<br><span style="font-size:11px;color:#9aa0ab;">entregue ${fmtDate(s.dataEntrega)}</span>`:''}</td>
+            <td>${esc(s.itemNome)}</td><td>${esc(funcNome(s.funcionarioId))}</td><td>${esc(obraNome(s.obraId))}</td>
+            <td class="num">${s.quantidade}</td>
+            <td>${pendente ? '<span class="badge badge-yellow">Solicitado</span>' : '<span class="badge badge-green">Entregue</span>'}</td>
+            <td style="white-space:nowrap;">
+              ${pendente
+                ? `<button class="btn btn-primary btn-sm" onclick="abrirConfirmarEntregaModal('${s.id}')">Confirmar entrega</button>`
+                : `<button class="btn btn-secondary btn-sm" onclick="printCautela('${s.id}')">Cautela</button>`}
+              <button class="btn btn-danger btn-sm" onclick="deleteEpiSaida('${s.id}')">Excluir</button>
+            </td></tr>`;
+          }).join('')}</tbody></table>` : `<div class="empty">Nenhuma solicitação registrada.</div>`}
         </div>
       </div>
     </div>
@@ -7998,45 +8032,40 @@ function deleteEpiEntrada(id){
   DB.epiEntradas = DB.epiEntradas.filter(e=>e.id!==id); saveDB(); renderEstoque();
 }
 
-function openEpiSaidaModal(){
+function openEpiSolicitacaoModal(){
   const itens = itensEstoque();
-  if(!itens.length){ alert('Registre uma entrada de material antes de dar saída.'); return; }
+  if(!itens.length){ alert('Registre uma entrada de material antes de solicitar saída.'); return; }
   const itemOpts = itens.map(i=>`<option value="${esc(i.item)}">${esc(i.item)} — saldo ${i.saldoQtd} un. · ${fmtMoney(i.custoMedio)}/un.</option>`).join('');
   const funcOpts = ativos().sort(cmpFuncionarios).map(f=>`<option value="${f.id}" data-obra="${f.obraPadrao||''}">${esc(f.nome)}</option>`).join('');
   const obraOpts = DB.obras.map(o=>`<option value="${o.id}">${esc(o.nome)}</option>`).join('');
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
-    <h2>Nova saída de EPI / uniforme</h2>
+    <h2>Nova solicitação de EPI / uniforme</h2>
+    <p class="help" style="margin-top:0;">Isto ainda NÃO tira o item do estoque — é só o pedido. O item some do
+      almoxarifado quando você confirmar a entrega.</p>
     <div class="grid grid-2">
-      <div class="field"><label>Data</label><input type="date" id="s_data" value="${todayISO()}"></div>
+      <div class="field"><label>Data do pedido</label><input type="date" id="s_data" value="${todayISO()}"></div>
       <div class="field"><label>Item</label><select id="s_item" onchange="onSaidaItemChange()">${itemOpts}</select></div>
     </div>
-    <div class="grid grid-3">
-      <div class="field"><label>Quantidade</label><input type="number" step="1" id="s_qtd" value="1" oninput="onSaidaItemChange()"></div>
-      <div class="field"><label>Valor unitário (preenchido pela entrada)</label><input type="number" step="0.01" id="s_valor" disabled></div>
-      <div class="field"><label>Valor total da entrega</label><input id="s_total" disabled></div>
-    </div>
     <div class="grid grid-2">
-      <div class="field"><label>Funcionário que recebeu</label><select id="s_func" onchange="onSaidaFuncChange()"><option value="">—</option>${funcOpts}</select></div>
-      <div class="field"><label>Obra de destino</label><select id="s_obra"><option value="">—</option>${obraOpts}</select></div>
+      <div class="field"><label>Quantidade</label><input type="number" step="1" id="s_qtd" value="1" oninput="onSaidaItemChange()"></div>
+      <div class="field"><label>Funcionário que pediu</label><select id="s_func" onchange="onSaidaFuncChange()"><option value="">—</option>${funcOpts}</select></div>
     </div>
+    <div class="field"><label>Obra de destino</label><select id="s_obra"><option value="">—</option>${obraOpts}</select></div>
     <p class="help" id="s_aviso"></p>
-    <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveEpiSaida()">Salvar e emitir cautela</button></div>
+    <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveEpiSolicitacao()">Salvar solicitação</button></div>
   `);
   onSaidaItemChange();
 }
 function onSaidaItemChange(){
   const nome = val('s_item');
-  const custo = custoMedioItem(nome);
   const qtd = numVal('s_qtd');
   const saldo = saldoItem(nome);
-  document.getElementById('s_valor').value = custo ? custo.toFixed(2) : '';
-  document.getElementById('s_total').value = fmtMoney(custo*qtd);
   const aviso = document.getElementById('s_aviso');
   if(qtd > saldo){
-    aviso.innerHTML = `<span style="color:var(--vermelho);font-weight:600;">Atenção: o saldo de "${esc(nome)}" é de ${saldo} un. — a saída deixará o estoque negativo.</span>`;
+    aviso.innerHTML = `<span style="color:var(--vermelho);font-weight:600;">Atenção: o saldo de "${esc(nome)}" hoje é de ${saldo} un. — pode não ter quando for entregar.</span>`;
   } else {
-    aviso.textContent = `Valor unitário vem do custo médio das entradas deste item. Saldo após a saída: ${saldo-qtd} un.`;
+    aviso.textContent = `Saldo hoje de "${nome}": ${saldo} un. O custo entra na conta só quando a entrega for confirmada.`;
   }
 }
 function onSaidaFuncChange(){
@@ -8044,24 +8073,58 @@ function onSaidaFuncChange(){
   const obra = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].getAttribute('data-obra') : '';
   if(obra) document.getElementById('s_obra').value = obra;
 }
-function saveEpiSaida(){
+function saveEpiSolicitacao(){
   const item = val('s_item').trim();
   if(!item){ alert('Escolha o item.'); return; }
   const qtd = numVal('s_qtd');
   if(qtd<=0){ alert('Informe a quantidade.'); return; }
-  const saldo = saldoItem(item);
-  if(qtd > saldo && !confirm(`O saldo de "${item}" é de ${saldo} un. Registrar mesmo assim (estoque ficará negativo)?`)) return;
-  const nova = {
-    id: uid(), data: val('s_data'), itemNome: item,
-    quantidade: qtd, valorUnit: custoMedioItem(item),
-    funcionarioId: val('s_func'), obraId: val('s_obra')
-  };
-  DB.epiSaidas.push(nova);
-  saveDB(); closeModal(); renderEstoque(); toast('Saída registrada.');
-  printCautela(nova.id);
+  DB.epiSaidas.push({
+    id: uid(), data: val('s_data'), itemNome: item, quantidade: qtd,
+    funcionarioId: val('s_func'), obraId: val('s_obra'),
+    status: 'solicitado', dataEntrega: '', valorUnit: 0
+  });
+  saveDB(); closeModal(); renderEstoque(); toast('Solicitação registrada — confirme a entrega quando entregar de verdade.');
 }
+
+/* ---- confirmar a entrega: só AQUI o item sai do estoque de verdade ---- */
+function abrirConfirmarEntregaModal(id){
+  const s = DB.epiSaidas.find(x=>x.id===id);
+  if(!s) return;
+  const saldo = saldoItem(s.itemNome);
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Confirmar entrega</h2>
+    <table class="dtab" style="margin-bottom:12px;">
+      <tbody>
+        <tr><td style="width:30%;"><b>Item</b></td><td>${esc(s.itemNome)} — ${s.quantidade} un.</td></tr>
+        <tr><td><b>Funcionário</b></td><td>${esc(funcNome(s.funcionarioId))}</td></tr>
+        <tr><td><b>Pedido em</b></td><td>${fmtDate(s.data)}</td></tr>
+      </tbody>
+    </table>
+    <div class="field"><label>Data da entrega</label><input type="date" id="ce_data" value="${todayISO()}"></div>
+    <p class="help">${s.quantidade > saldo
+      ? `<span style="color:var(--vermelho);font-weight:600;">Atenção: o saldo de "${esc(s.itemNome)}" hoje é de ${saldo} un. — confirmar deixará o estoque negativo.</span>`
+      : `Saldo hoje: ${saldo} un. Depois da entrega: ${saldo-s.quantidade} un. O valor usado é o custo médio de hoje.`}</p>
+    <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarEntregaEpi('${id}')">Confirmar entrega e emitir cautela</button></div>
+  `);
+}
+function confirmarEntregaEpi(id){
+  const s = DB.epiSaidas.find(x=>x.id===id);
+  if(!s) return;
+  const saldo = saldoItem(s.itemNome);
+  if(s.quantidade > saldo && !confirm(`O saldo de "${s.itemNome}" é de ${saldo} un. Confirmar mesmo assim (estoque ficará negativo)?`)) return;
+  s.dataEntrega = val('ce_data') || todayISO();
+  s.valorUnit = custoMedioItem(s.itemNome);
+  s.status = 'entregue';
+  saveDB(); closeModal(); renderEstoque(); toast('Entrega confirmada — saiu do estoque.');
+  printCautela(id);
+}
+
 function deleteEpiSaida(id){
-  if(!confirm('Excluir esta saída?')) return;
+  const s = DB.epiSaidas.find(x=>x.id===id);
+  const msg = s && s.status==='entregue' ? 'Excluir esta entrega já confirmada? O item volta para o estoque.' : 'Excluir esta solicitação?';
+  if(!confirm(msg)) return;
   DB.epiSaidas = DB.epiSaidas.filter(e=>e.id!==id); saveDB(); renderEstoque();
 }
 function printCautela(id){
@@ -8069,7 +8132,7 @@ function printCautela(id){
   const f = func(s.funcionarioId);
   doPrint(`
   <div class="doc">
-    ${docHead('Cautela de Entrega de EPI / Uniforme', '', `Emitida em<br><b>${fmtDate(s.data)}</b>`)}
+    ${docHead('Cautela de Entrega de EPI / Uniforme', '', `Emitida em<br><b>${fmtDate(s.dataEntrega||s.data)}</b>`)}
     <table class="dtab">
       <tbody>
         <tr><td style="width:24%"><b>Funcionário</b></td><td>${esc(funcNome(s.funcionarioId))}</td>
