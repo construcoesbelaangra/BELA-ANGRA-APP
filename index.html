@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.14.1';
+const VERSAO = '1.14.2';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -13227,25 +13227,31 @@ function provisaoAcumulada(f, ymFim){
   return Math.round(mesesDeProvisao(f, ymFim).reduce((s,ym)=>s+provisaoDoMes(f,ym), 0) * 100) / 100;
 }
 
-/* ---- aviso prévio: valor cheio, uma vez só, depois dos 90 dias de experiência ---- */
+/* ---- aviso prévio: valor cheio (1 salário), não é acúmulo mês a mês ----
+   É uma FOTO, não uma soma: "se eu tivesse que demitir HOJE, precisaria de
+   mais ou menos 1 salário de aviso" — por isso usa o salário ATUAL (do mês
+   de referência), não o salário de quando completou os 90 dias. Achado
+   testando com dados reais: o Hugo foi promovido depois de virar elegível, e
+   travar no salário antigo mostrava R$2.100 quando ele já ganha R$2.968. */
 function avisoPrevioElegivelEm(f, iso){
   const inicio = admissaoFolha(f);
   if(!inicio) return false;
   return iso >= addDays(inicio, 90);
 }
-/* só "pulsa" (entra o valor) no mês em que ele CRUZA os 90 dias — nos meses
-   seguintes não soma de novo (ele já está incluído no acumulado desde então) */
+/* o "acumulado" da pessoa é sempre a FOTO de hoje (0 ou 1 salário atual) —
+   não soma mês a mês. */
+function avisoPrevioAcumulado(f, ymFim){
+  if(!DB.config.provisaoAvisoPrevioAtivo) return 0;
+  return avisoPrevioElegivelEm(f, ultimoDiaMes(ymFim)) ? salarioHistoricoEm(f, ultimoDiaMes(ymFim)) : 0;
+}
+/* a "contribuição do mês" (pra somar na série mensal, ver `renderProvisoes`)
+   é a DIFERENÇA entre a foto deste mês e a do mês anterior — dá 0 na maioria
+   dos meses, um salário cheio no mês em que vira elegível, e só a DIFERENÇA se
+   o salário mudar depois (promoção/reajuste) enquanto já é elegível — nunca
+   soma o valor inteiro de novo. */
 function avisoPrevioDoMes(f, ym){
   if(!DB.config.provisaoAvisoPrevioAtivo) return 0;
-  const fimMes = ultimoDiaMes(ym);
-  const fimAnterior = ultimoDiaMes(mesAnteriorDe(ym));
-  if(avisoPrevioElegivelEm(f, fimMes) && !avisoPrevioElegivelEm(f, fimAnterior)){
-    return salarioHistoricoEm(f, fimMes);
-  }
-  return 0;
-}
-function avisoPrevioAcumulado(f, ymFim){
-  return Math.round(mesesDeProvisao(f, ymFim).reduce((s,ym)=>s+avisoPrevioDoMes(f,ym), 0) * 100) / 100;
+  return Math.round((avisoPrevioAcumulado(f, ym) - avisoPrevioAcumulado(f, mesAnteriorDe(ym))) * 100) / 100;
 }
 
 let provMes = null;
@@ -13306,10 +13312,12 @@ function renderProvisoes(){
         — hoje somam <b>${fmtNum(pct,2)}%</b> do salário, mês a mês.
       </p>
       <p class="help">
-        <b>Aviso prévio</b> é diferente: não é mensal — entra o valor de <b>1 salário</b>,
-        de uma vez só, assim que o funcionário passa dos <b>90 dias corridos</b> de
-        fichado (fim do contrato de experiência). O valor real só se sabe na hora da
-        demissão (depende do motivo) — isto aqui é só a reserva estimada.
+        <b>Aviso prévio</b> é diferente: não acumula mês a mês, é uma FOTO — vale <b>1
+        salário atual</b> pra quem já passou dos <b>90 dias corridos</b> de fichado (fim
+        do contrato de experiência), e <b>0</b> pra quem ainda está em experiência.
+        Acompanha promoção e reajuste sozinho (usa sempre o salário de HOJE de quem já é
+        elegível). O valor real só se sabe na hora da demissão (depende do motivo) —
+        isto aqui é só a reserva estimada.
         <label class="check" style="margin-left:6px;">
           <input type="checkbox" ${avisoAtivo?'checked':''} onchange="toggleProvisaoAvisoPrevio()"> incluir na conta
         </label>
