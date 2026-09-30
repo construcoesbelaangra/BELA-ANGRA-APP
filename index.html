@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.16.0';
+const VERSAO = '1.17.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1971,6 +1971,7 @@ const PAGES = [
   {id:'medicaoHH',    secao:'Financeiro', label:'Medição Homem-Hora',        icon:'regua',    sub:'Gera a medição a partir do ponto e vira conta a receber'},
   {id:'medicaoEmpreitada', secao:'Financeiro', label:'Medição de Empreitada', icon:'empreitada', sub:'Previsto x realizado por etapa (aço/forma/concreto), saldo e extras'},
   {id:'rateioGuias', secao:'Financeiro', label:'Rateio de Guias',          icon:'rateio',   sub:'Custo real de FGTS/INSS/Simples por funcionário e por obra'},
+  {id:'lucroSocio',  secao:'Financeiro', label:'Lucro por Obra (Sócio)',   icon:'lucro',    sub:'Receita - custo - encargos, dividido com o sócio'},
 
   {id:'sync',         secao:'Sistema',    label:'Sincronizar (Drive)',       icon:'nuvem',    sub:'Juntar os dados entre os computadores'},
   {id:'config',       secao:'Sistema',    label:'Configurações',             icon:'engrenagem',sub:'Empresa, encargos e parâmetros de cálculo'}
@@ -2002,6 +2003,7 @@ const ICONES = {
   regua:     '<rect x="3" y="9" width="18" height="6" rx="1.2"/><path d="M7 9v3M11 9v3M15 9v3M19 9v2.5"/>',
   empreitada:'<path d="M3 8h7v5H3zM11 8h10v5H11zM3 15h5v5H3zM9 15h8v5H9zM18 15h3v5h-3z"/>',
   rateio:    '<circle cx="12" cy="12" r="8.4"/><path d="M12 3.6v16.8M4 8.5h16M4 15.5h16"/>',
+  lucro:     '<path d="M4 20h16"/><path d="M6.5 20V13M12 20V5.5M17.5 20v-9"/><circle cx="12" cy="5.5" r="1.8"/>',
   seta:      '<path d="M9 5l7 7-7 7"/>'
 };
 function icone(nome){
@@ -2088,6 +2090,7 @@ function render(){
     medicaoHH: renderMedicaoHH,
     medicaoEmpreitada: renderMedicaoEmpreitada,
     rateioGuias: renderRateioGuias,
+    lucroSocio: renderLucroSocio,
     sync: renderSync, config: renderConfig
   };
   document.getElementById('content').innerHTML = '';
@@ -3569,22 +3572,50 @@ function printEquipeObra(obraId){
 }
 
 function openObraModal(id){
-  const o = id ? DB.obras.find(x=>x.id===id) : {id: uid(), nome:''};
+  const o = id ? DB.obras.find(x=>x.id===id) : {id: uid(), nome:'', socioParticipacao:false, socioNome:'', socioPercentualLucro:50};
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
     <h2>${id?'Editar':'Nova'} obra</h2>
     <div class="field"><label>Nome da obra</label><input id="o_nome" value="${esc(o.nome)}"></div>
+    <div class="field"><label class="check">
+      <input type="checkbox" id="o_socioParticipacao" ${o.socioParticipacao?'checked':''} onchange="trocaSocioObra(this.checked)">
+      Sócio tem participação no lucro desta obra
+    </label></div>
+    <div class="grid grid-2" id="o_blocoSocio" style="display:${o.socioParticipacao?'grid':'none'};">
+      <div class="field"><label>Nome do sócio</label>
+        <input id="o_socioNome" list="o_socios" value="${esc(o.socioNome||'')}" placeholder="quem divide o lucro desta obra">
+        <datalist id="o_socios">${sociosJaUsados().map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
+      </div>
+      <div class="field"><label>% do lucro que é do sócio</label>
+        <input type="number" id="o_socioPercentual" value="${o.socioPercentualLucro||50}" min="0" max="100" step="1"></div>
+    </div>
+    <p class="help" id="o_helpSocio" style="display:${o.socioParticipacao?'block':'none'};margin-bottom:0;">
+      Vale pra tela <a href="#" onclick="closeModal(); goTo('lucroSocio'); return false;">Lucro por Obra (Sócio)</a> —
+      só entram aqui as obras marcadas.
+    </p>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveObra('${o.id}')">Salvar</button>
     </div>
   `);
 }
+function trocaSocioObra(ligado){
+  const bloco = document.getElementById('o_blocoSocio');
+  const help = document.getElementById('o_helpSocio');
+  if(bloco) bloco.style.display = ligado ? 'grid' : 'none';
+  if(help) help.style.display = ligado ? 'block' : 'none';
+}
 function saveObra(id){
   const nome = val('o_nome').trim();
   if(!nome){ alert('Informe o nome da obra.'); return; }
+  const dados = {
+    nome,
+    socioParticipacao: !!document.getElementById('o_socioParticipacao').checked,
+    socioNome: val('o_socioNome').trim(),
+    socioPercentualLucro: Math.min(100, Math.max(0, Number(val('o_socioPercentual'))||50))
+  };
   const idx = DB.obras.findIndex(x=>x.id===id);
-  if(idx>=0) DB.obras[idx].nome = nome; else DB.obras.push({id, nome});
+  if(idx>=0) Object.assign(DB.obras[idx], dados); else DB.obras.push(Object.assign({id}, dados));
   saveDB(); closeModal(); renderObras(); toast('Obra salva.');
 }
 function deleteObra(id){
@@ -13700,6 +13731,156 @@ function printRateioGuias(){
     ${docFoot()}
   </div>`;
   doPrint(html, `Rateio de Guias - ${monthLabel(guiasMes)}`);
+}
+/* =========================================================
+   LUCRO POR OBRA (PARTICIPAÇÃO DO SÓCIO) — 30/09/2026
+
+   Pedido do Maycon: ele fechou um acordo de participação no lucro com o
+   sócio só para ALGUMAS obras (hoje: Gustavo Adolpho — Homem-Hora e
+   Empreitada; Neymar/Rogério/Ratava NÃO entram, são só dele). Precisa de
+   Receita − Custo − Impostos = Lucro, dividido conforme o percentual
+   acertado (hoje 50/50) — pra decidir o pró-labore de cada um. Confirmado
+   com o Maycon (`AskUserQuestion`, 30/09/2026): é mês a mês; o "Custo"
+   inclui TUDO que já está lançado com a obra (material, equipamento,
+   salário líquido pago — via as pontes de pagamento que já gravam `obraId`)
+   MAIS o rateio de FGTS/INSS Patronal que a tela de Rateio de Guias calcula
+   (ver `18_rateio_guias.js`); e o resultado é a PARTE DE CADA UM NO LUCRO —
+   um número informativo/de acerto, não uma rubrica fixa de pró-labore.
+
+   Só entram obras marcadas com `o.socioParticipacao` (campo novo,
+   `04_obras_ponto.js` → `openObraModal`/`saveObra`) — nome do sócio e o
+   percentual (`o.socioPercentualLucro`, padrão 50) ficam no cadastro da
+   própria obra, pra dar pra ter mais de uma obra com acordos diferentes no
+   futuro, sem precisar tocar em código.
+
+   MÊS DE REFERÊNCIA: usa competência (`l.vencimento`, igual ao regime
+   "competência" já existente em Fluxo de Caixa — `valorNoMes(l, ym,
+   'competencia')`), não a data da baixa. Mesma lógica usada por
+   `resumoRateioGuias()` pro FGTS/INSS — por isso os dois batem no mesmo
+   mês. Simples Nacional NÃO é somado de novo aqui a partir do rateio de
+   guias: ele já tem `obraId` preenchido no próprio lançamento (é assim que
+   o Maycon lança — "é da obra do Gustavo"), então já entra pela soma geral
+   de despesas da obra. Somar de novo pelo rateio duplicaria o valor.
+   ========================================================= */
+
+function obrasComSocio(){
+  return DB.obras.filter(o=>o.socioParticipacao);
+}
+
+/* receita e despesa diretas da obra (tudo que já foi lançado com esse
+   `obraId` — material, equipamento, mão de obra líquida paga pelas pontes
+   de Fechamento/Vale/Fichados, e a própria guia de Simples Nacional, se
+   lançada com a obra), pelo mês de COMPETÊNCIA (vencimento) */
+function receitaCustoObraMesCompetencia(obraId, mes){
+  let rec = 0, des = 0;
+  DB.lancamentos.forEach(l=>{
+    if(l.obraId !== obraId) return;
+    if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+    const v = valorNoMes(l, mes, 'competencia');
+    if(!v) return;
+    if(l.tipo === 'receita') rec += v; else des += v;
+  });
+  return {rec: Math.round(rec*100)/100, des: Math.round(des*100)/100};
+}
+
+/* fatia de FGTS + INSS Patronal (rateados por salário) atribuída a esta
+   obra no mês — vem do MESMO cálculo da tela Rateio de Guias
+   (`resumoRateioGuias`, `18_rateio_guias.js`). NUNCA soma o `simples` dali
+   — ver nota no cabeçalho do arquivo sobre duplicidade. */
+function custoEncargosObraMes(obraId, mes){
+  const porObra = resumoRateioGuias(mes).porObra.find(o=>o.obraId===obraId);
+  if(!porObra) return 0;
+  return Math.round((porObra.fgts + porObra.inss)*100)/100;
+}
+
+function lucroObraMes(obraId, mes){
+  const o = DB.obras.find(x=>x.id===obraId);
+  const {rec, des} = receitaCustoObraMesCompetencia(obraId, mes);
+  const encargos = custoEncargosObraMes(obraId, mes);
+  const custoTotal = Math.round((des + encargos)*100)/100;
+  const lucro = Math.round((rec - custoTotal)*100)/100;
+  const pctSocio = o ? Math.min(100, Math.max(0, Number(o.socioPercentualLucro)||50)) : 50;
+  const parteSocio = Math.round(lucro * pctSocio / 100 * 100)/100;
+  const parteDele = Math.round((lucro - parteSocio)*100)/100;
+  return {obraId, mes, rec, desDireta: des, encargos, custoTotal, lucro, pctSocio, parteSocio, parteDele};
+}
+
+let lucroObraId = '';
+let lucroMes = null;
+function initLucroSocio(){
+  if(!lucroMes) lucroMes = currentYM();
+  if(!lucroObraId){
+    const lista = obrasComSocio();
+    if(lista.length) lucroObraId = lista[0].id;
+  }
+}
+
+function renderLucroSocio(){
+  initLucroSocio();
+  const c = document.getElementById('content');
+  const lista = obrasComSocio();
+
+  if(!lista.length){
+    c.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Lucro por Obra (Sócio)</h2>
+      <p class="help">Nenhuma obra está marcada com participação de sócio ainda. Abra
+        <a href="#" onclick="goTo('obras'); return false;">Obras</a>, edite a obra e marque
+        "Sócio tem participação no lucro desta obra".</p>
+    </div>`;
+    return;
+  }
+  if(!lista.some(o=>o.id===lucroObraId)) lucroObraId = lista[0].id;
+  const o = DB.obras.find(x=>x.id===lucroObraId);
+  const r = lucroObraMes(lucroObraId, lucroMes);
+
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Lucro por Obra (Sócio)</h2>
+      <p class="help">
+        <b>Receita − Custo − Encargos = Lucro</b>, dividido pelo percentual acertado com o
+        sócio nesta obra. Custo = tudo que já está lançado com esta obra (material,
+        equipamento, salário/diária líquida paga) + o rateio de FGTS/INSS Patronal da tela
+        <a href="#" onclick="goTo('rateioGuias'); return false;">Rateio de Guias</a>. Mês de
+        <b>competência</b> (vencimento do lançamento), não da baixa. É a parte de cada um NO
+        LUCRO — um número pra acerto/referência, não é a folha de pró-labore em si.
+      </p>
+      <div class="grid grid-2" style="max-width:480px;">
+        <div class="field"><label>Obra</label>
+          <select onchange="lucroObraId=this.value; renderLucroSocio();">
+            ${lista.map(x=>`<option value="${x.id}" ${x.id===lucroObraId?'selected':''}>${esc(x.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Mês</label>
+          <input type="month" value="${lucroMes}" onchange="lucroMes=this.value; renderLucroSocio();">
+        </div>
+      </div>
+      <p class="help" style="margin-bottom:0;">Sócio: <b>${esc(o.socioNome||'(nome não preenchido)')}</b> —
+        <b>${fmtNum(r.pctSocio,0)}%</b> do lucro desta obra
+        (<a href="#" onclick="goTo('obras'); return false;">editar na obra</a>).</p>
+    </div>
+
+    <div class="card">
+      <div class="kpis">
+        <div class="kpi"><div class="v">${fmtMoney(r.rec)}</div><div class="l">Receita (${monthLabel(lucroMes)})</div></div>
+        <div class="kpi"><div class="v">${fmtMoney(r.desDireta)}</div><div class="l">Custo já lançado na obra</div></div>
+        <div class="kpi"><div class="v">${fmtMoney(r.encargos)}</div><div class="l">+ FGTS/INSS rateado</div></div>
+        <div class="kpi"><div class="v" style="color:${r.lucro<0?'var(--vermelho)':'var(--verde)'};">${fmtMoney(r.lucro)}</div><div class="l">Lucro do mês</div></div>
+      </div>
+      <div class="kpis" style="margin-top:6px;">
+        <div class="kpi"><div class="v" style="color:var(--azul-esc);">${fmtMoney(r.parteDele)}</div><div class="l">Sua parte (${fmtNum(100-r.pctSocio,0)}%)</div></div>
+        <div class="kpi"><div class="v" style="color:var(--azul-esc);">${fmtMoney(r.parteSocio)}</div><div class="l">Parte de ${esc(o.socioNome||'sócio')} (${fmtNum(r.pctSocio,0)}%)</div></div>
+      </div>
+      <p class="help">
+        <b>O que pode estar faltando:</b> EPI, Provisões (13º/férias/multa) e Simples Nacional
+        SÓ entram se você tiver lançado o custo/guia correspondente com a Obra deste contrato
+        marcada — confira em <a href="#" onclick="goTo('lancamentos'); return false;">A Pagar / A Receber</a>
+        se falta algo. FGTS/INSS Patronal só entram se a guia do mês já tiver sido lançada com
+        "Rateio de guia" marcado e com baixa — confira em
+        <a href="#" onclick="goTo('rateioGuias'); return false;">Rateio de Guias</a>.
+      </p>
+    </div>
+  `;
 }
 /* =========================================================
    AJUSTES DE TELA PEQUENA
