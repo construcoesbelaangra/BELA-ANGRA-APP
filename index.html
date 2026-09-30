@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.12.0';
+const VERSAO = '1.12.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1039,6 +1039,9 @@ function defaultDB(){
         multaFgts:true, decimo13:true, ferias:true, epi:true,
         valeTransporte:true, valeAlimentacao:true
       },
+      // última obra escolhida no Diário de Obras (30/09/2026) — reabrir sempre nela, não
+      // na primeira obra da lista (ver `initDiario`, 16_diario.js)
+      diarioObraPadrao: '',
       // fechamento de diaristas
       quinzenalAncora: '',         // uma sexta-feira de referência (YYYY-MM-DD)
       valorVRPadrao: 31,          // vale-refeição por dia trabalhado
@@ -12818,9 +12821,19 @@ function printMedicaoEmpreitada(id){
 let diaObraSel = '';
 let diaDataSel = null;
 
+/* Achado real (30/09/2026): o Maycon lançou o diário da "Obra - Gustavo Adolpho", sincronizou,
+   apertou F5 — e a tela abriu sozinha na PRIMEIRA obra da lista ("Obra - Rogério Ferneda"), sem
+   diário nenhum naquele dia. Pareceu que o lançamento tinha sumido; os dados continuavam intactos
+   no arquivo, só a tela tinha aberto na obra errada (`diaObraSel` é variável de página, reseta a
+   cada F5). Corrigido: a obra escolhida agora é lembrada em `DB.config.diarioObraPadrao` — reabre
+   sempre na ÚLTIMA obra usada, não na primeira da lista. */
 function initDiario(){
   if(!diaDataSel) diaDataSel = todayISO();
-  if(!diaObraSel && DB.obras.length) diaObraSel = DB.obras[0].id;
+  if(!diaObraSel){
+    const padrao = DB.config.diarioObraPadrao;
+    diaObraSel = (padrao && DB.obras.some(o=>o.id===padrao)) ? padrao
+      : (DB.obras.length ? DB.obras[0].id : '');
+  }
 }
 
 const CLIMA_LABEL = {sol:'☀️ Sol', nublado:'⛅ Nublado', chuva:'🌧️ Chuva', chuva_forte:'⛈️ Chuva forte'};
@@ -12894,7 +12907,7 @@ function renderDiario(){
     <div class="card">
       <div class="grid grid-4" style="align-items:end;">
         <div class="field" style="margin:0;"><label>Obra</label>
-          <select onchange="diaObraSel=this.value; renderDiario();">
+          <select onchange="diaObraSel=this.value; DB.config.diarioObraPadrao=this.value; saveDB(); renderDiario();">
             ${DB.obras.map(o=>`<option value="${o.id}" ${diaObraSel===o.id?'selected':''}>${esc(o.nome)}</option>`).join('')}
           </select>
         </div>
