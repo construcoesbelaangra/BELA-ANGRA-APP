@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.15.0';
+const VERSAO = '1.16.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1915,6 +1915,16 @@ function diasUteisDoFuncionarioNoMes(f, ym){
    operação em "Fluxo de Caixa" (`blocoPorOperacao`, 13_fluxo.js) — sem
    precisar de um segundo dicionário de rótulos para manter igual ao primeiro. */
 const SERVICO_LABEL = {homem_hora:'Homem-Hora', empreitada:'Empreitada'};
+/* Rateio de guia (30/09/2026) — o Maycon já lança a guia real (FGTS/INSS
+   patronal/Simples Nacional) em A Pagar, com o valor que a contabilidade
+   manda calculado; ele não quer que o app INVENTE o valor da guia, só que
+   descubra o custo por funcionário/obra a partir do que ele de fato lançou e
+   pagou. `l.tipoGuia` (opcional, em `DB.lancamentos`) marca qual lançamento é
+   uma guia e COMO ratear (ver `18_rateio_guias.js`): FGTS e INSS patronal são
+   rateados proporcional ao salário de cada fichado; Simples Nacional não é
+   rateado entre funcionários (é imposto sobre faturamento, não sobre folha) —
+   vai inteiro para a obra que o próprio lançamento já indica (`l.obraId`). */
+const TIPO_GUIA_LABEL = {fgts:'FGTS', inss_patronal:'INSS Patronal', simples:'Simples Nacional (Empreitada)'};
 const PERIODICIDADE_LABEL = {semanal:'Semanal', quinzenal:'Quinzenal'};
 const REGIME_LABEL = {hora:'hora', dia:'dia', mes:'mês'};
 /* Status do registro do fichado junto à contabilidade (17/09/2026) — pedido do Maycon:
@@ -1960,6 +1970,7 @@ const PAGES = [
   {id:'provisoes',    secao:'Financeiro', label:'Provisões Trabalhistas',    icon:'provisao', sub:'13º, férias e multa do FGTS acumulados, mês a mês'},
   {id:'medicaoHH',    secao:'Financeiro', label:'Medição Homem-Hora',        icon:'regua',    sub:'Gera a medição a partir do ponto e vira conta a receber'},
   {id:'medicaoEmpreitada', secao:'Financeiro', label:'Medição de Empreitada', icon:'empreitada', sub:'Previsto x realizado por etapa (aço/forma/concreto), saldo e extras'},
+  {id:'rateioGuias', secao:'Financeiro', label:'Rateio de Guias',          icon:'rateio',   sub:'Custo real de FGTS/INSS/Simples por funcionário e por obra'},
 
   {id:'sync',         secao:'Sistema',    label:'Sincronizar (Drive)',       icon:'nuvem',    sub:'Juntar os dados entre os computadores'},
   {id:'config',       secao:'Sistema',    label:'Configurações',             icon:'engrenagem',sub:'Empresa, encargos e parâmetros de cálculo'}
@@ -1990,6 +2001,7 @@ const ICONES = {
   fluxo:     '<path d="M4 20h16"/><path d="M4.5 16.2 9 10.4l3.6 3 5.9-7.2"/><path d="M18.5 6.2h-3.4M18.5 6.2v3.4"/>',
   regua:     '<rect x="3" y="9" width="18" height="6" rx="1.2"/><path d="M7 9v3M11 9v3M15 9v3M19 9v2.5"/>',
   empreitada:'<path d="M3 8h7v5H3zM11 8h10v5H11zM3 15h5v5H3zM9 15h8v5H9zM18 15h3v5h-3z"/>',
+  rateio:    '<circle cx="12" cy="12" r="8.4"/><path d="M12 3.6v16.8M4 8.5h16M4 15.5h16"/>',
   seta:      '<path d="M9 5l7 7-7 7"/>'
 };
 function icone(nome){
@@ -2075,6 +2087,7 @@ function render(){
     caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, provisoes: renderProvisoes,
     medicaoHH: renderMedicaoHH,
     medicaoEmpreitada: renderMedicaoEmpreitada,
+    rateioGuias: renderRateioGuias,
     sync: renderSync, config: renderConfig
   };
   document.getElementById('content').innerHTML = '';
@@ -10652,6 +10665,13 @@ function openLancModal(id, tipoPadrao){
             `<option value="${k}" ${l&&l.tipoServico===k?'selected':''}>${SERVICO_LABEL[k]}</option>`).join('')}
         </select>
       </div>
+      <div class="field"><label>Rateio de guia (opcional)</label>
+        <select id="l_tipoGuia" onchange="trocaTipoGuiaLanc(this.value)">
+          <option value="">— não é guia —</option>
+          ${Object.keys(TIPO_GUIA_LABEL).map(k=>
+            `<option value="${k}" ${l&&l.tipoGuia===k?'selected':''}>${TIPO_GUIA_LABEL[k]}</option>`).join('')}
+        </select>
+      </div>
       <div class="field"><label>Conta prevista</label>
         <select id="l_conta">
           <option value="">— escolha na baixa —</option>
@@ -10679,6 +10699,14 @@ function openLancModal(id, tipoPadrao){
         </div>
       </div>
     </div>
+
+    <p class="help" id="l_helpGuia" style="display:${l&&l.tipoGuia?'block':'none'};">
+      Marcado como <b id="l_helpGuiaTexto">${l&&l.tipoGuia?esc(TIPO_GUIA_LABEL[l.tipoGuia]):''}</b> —
+      quando este lançamento tiver baixa, a tela
+      <a href="#" onclick="closeModal(); goTo('rateioGuias'); return false;">Rateio de Guias</a>
+      usa o valor REAL pago aqui (não inventa nenhum) pra descobrir quanto isso custou de cada
+      funcionário e de cada obra.
+    </p>
 
     <div class="grid grid-2">
       <div class="field"><label>Pago na conta de (opcional)</label>
@@ -10711,6 +10739,13 @@ function trocaTipoLanc(tipo){
   sel.innerHTML = '<option value="">— sem categoria —</option>'
     + cats.map(ct=>`<option value="${ct.id}">${esc(ct.nome)}</option>`).join('');
 }
+function trocaTipoGuiaLanc(tipoGuia){
+  const p = document.getElementById('l_helpGuia');
+  const t = document.getElementById('l_helpGuiaTexto');
+  if(!p || !t) return;
+  p.style.display = tipoGuia ? 'block' : 'none';
+  t.textContent = tipoGuia ? TIPO_GUIA_LABEL[tipoGuia] : '';
+}
 function trocaNaturezaLanc(nat){
   const bloco = document.getElementById('l_blocoParticular');
   if(bloco) bloco.style.display = (nat === 'particular') ? 'block' : 'none';
@@ -10735,7 +10770,7 @@ function saveLanc(id, irParaBaixa){
   const dados = {
     tipo: val('l_tipo'), empresaId: emp, vencimento: venc, valor,
     descricao: desc, categoriaId: val('l_categoria'), obraId: val('l_obra'),
-    tipoServico: val('l_tipoServico'), contaId: val('l_conta'), natureza,
+    tipoServico: val('l_tipoServico'), tipoGuia: val('l_tipoGuia'), contaId: val('l_conta'), natureza,
     socio: natureza === 'particular' ? val('l_socio').trim() : '',
     pagoNaContaDe: val('l_pagoNaContaDe').trim(), obs: val('l_obs').trim()
   };
@@ -10791,6 +10826,7 @@ function openLancDetalhe(id){
              <tr><th>Conta prevista</th><td>${esc(l.contaId?contaNome(l.contaId):'— escolhida na baixa —')}</td></tr>`}
         <tr><th>Obra</th><td>${l.obraId?esc(obraNome(l.obraId)):'—'}</td></tr>
         ${l.tipo!=='transferencia'?`<tr><th>Operação</th><td>${l.tipoServico?esc(SERVICO_LABEL[l.tipoServico]):'— não classificado —'}</td></tr>`:''}
+        ${l.tipoGuia?`<tr><th>Rateio de guia</th><td>${esc(TIPO_GUIA_LABEL[l.tipoGuia])} <a href="#" onclick="closeModal(); goTo('rateioGuias'); return false;">ver rateio</a></td></tr>`:''}
         <tr><th>Natureza</th><td>${NATUREZA_LABEL[l.natureza]||'Operação'}${
             l.natureza==='particular'?' <span class="help" style="display:inline;">(fica fora do resultado)</span>':''}${
             l.socio?` · ${esc(l.socio)}`:''}</td></tr>
@@ -13444,6 +13480,226 @@ function printProvisoes(){
     ${docFoot()}
   </div>`;
   doPrint(html, `Provisoes Trabalhistas - ${monthLabel(provMes)}`);
+}
+/* =========================================================
+   RATEIO DE GUIAS POR FUNCIONÁRIO E POR OBRA (30/09/2026)
+
+   Pedido do Maycon: ele já lança a guia real (FGTS, INSS Patronal, Simples
+   Nacional) em A Pagar, com o valor que a CONTABILIDADE manda calculado —
+   o app NÃO inventa nem estima esse valor. O que faltava era descobrir,
+   a partir do valor REAL que ele de fato pagou (a baixa, não o previsto),
+   quanto disso corresponde a cada funcionário e a cada obra — pra ele
+   conseguir apurar o lucro de uma obra específica com mais precisão (o caso
+   real: participação do sócio no lucro da obra do Gustavo Adolpho, que
+   precisa do custo de mão de obra completo, incluindo encargos, não só o
+   salário líquido).
+
+   Como cada guia é ratada (ver `l.tipoGuia`, marcado no próprio lançamento
+   em `12_lancamentos.js`):
+   - FGTS e INSS Patronal: são encargo sobre a FOLHA — ratados PROPORCIONAL
+     AO SALÁRIO de cada fichado ativo no mês de competência (o vencimento do
+     lançamento), pelo salário que valia NAQUELE mês (`salarioHistoricoEm`).
+     Diarista não entra (não gera encargo social, mesma regra de sempre).
+   - Simples Nacional: NÃO é rateado entre funcionários — é imposto sobre
+     FATURAMENTO, não sobre folha. Vai inteiro para a obra que o próprio
+     lançamento já indica (`l.obraId`), sem cálculo nenhum.
+
+   Só entra guia com pelo menos uma BAIXA (dinheiro que já saiu de verdade —
+   mesmo raciocínio de sempre, "o saldo anda pela baixa"; um lançamento só
+   lançado, sem baixa, ainda não é custo realizado).
+   ========================================================= */
+
+/* fichados (mesma regra de sempre, `temEncargos`) que estavam ativos no mês
+   de competência da guia — usa `ativosNoMes`, não `ativos()`, porque uma
+   guia de um mês passado precisa contar quem estava lá NAQUELE mês, mesmo
+   que tenha sido demitido depois. */
+function fichadosParaRateioGuia(mes){
+  return ativosNoMes(mes).filter(f=>temEncargos(f)).sort(cmpFuncionarios);
+}
+
+/* rateia `valorTotal` entre os fichados do mês, proporcional ao salário de
+   cada um NAQUELE mês. O último da lista absorve o resto do arredondamento,
+   pra soma das cotas bater exatamente com o valor total (mesmo truque já
+   usado noutros lugares do app que dividem um valor em partes). */
+function ratearGuiaPorSalario(valorTotal, mes){
+  const lista = fichadosParaRateioGuia(mes);
+  const pesos = lista.map(f=>salarioHistoricoEm(f, ultimoDiaMes(mes)));
+  const totalPeso = pesos.reduce((s,v)=>s+v,0);
+  if(!valorTotal || !totalPeso || !lista.length) return [];
+  let somaParcial = 0;
+  return lista.map((f,i)=>{
+    let cota;
+    if(i === lista.length-1){
+      cota = Math.round((valorTotal - somaParcial)*100)/100;
+    }else{
+      cota = Math.round(valorTotal * pesos[i] / totalPeso * 100)/100;
+      somaParcial = Math.round((somaParcial+cota)*100)/100;
+    }
+    return {f, salario: pesos[i], cota};
+  });
+}
+
+/* guias lançadas com competência (vencimento) NO mês, que já tiveram
+   alguma baixa — é sobre isso que o rateio funciona, nunca o previsto */
+function guiasPagasDoMes(mes){
+  return DB.lancamentos.filter(l => l.tipoGuia && (l.vencimento||'').slice(0,7)===mes && valorBaixado(l)>0);
+}
+
+function resumoRateioGuias(mes){
+  const lancs = guiasPagasDoMes(mes);
+  const fgtsTotal    = Math.round(lancs.filter(l=>l.tipoGuia==='fgts').reduce((s,l)=>s+valorBaixado(l),0)*100)/100;
+  const inssTotal     = Math.round(lancs.filter(l=>l.tipoGuia==='inss_patronal').reduce((s,l)=>s+valorBaixado(l),0)*100)/100;
+  const simplesLancs  = lancs.filter(l=>l.tipoGuia==='simples');
+  const simplesTotal  = Math.round(simplesLancs.reduce((s,l)=>s+valorBaixado(l),0)*100)/100;
+
+  const rateioFgts = ratearGuiaPorSalario(fgtsTotal, mes);
+  const rateioInss = ratearGuiaPorSalario(inssTotal, mes);
+
+  const porFunc = {};
+  rateioFgts.forEach(r=>{
+    porFunc[r.f.id] = porFunc[r.f.id] || {f:r.f, salario:r.salario, fgts:0, inss:0};
+    porFunc[r.f.id].fgts = r.cota;
+  });
+  rateioInss.forEach(r=>{
+    porFunc[r.f.id] = porFunc[r.f.id] || {f:r.f, salario:r.salario, fgts:0, inss:0};
+    porFunc[r.f.id].inss = r.cota;
+  });
+  const linhas = Object.values(porFunc)
+    .map(x=>({...x, total: Math.round((x.fgts+x.inss)*100)/100}))
+    .sort((a,b)=>cmpFuncionarios(a.f,b.f));
+
+  const porObra = {};
+  const linhaObra = obraId => (porObra[obraId] = porObra[obraId] || {obraId, fgts:0, inss:0, simples:0});
+  linhas.forEach(l=>{
+    const obraId = obraDoFuncionarioEm(l.f, ultimoDiaMes(mes)) || '';
+    const o = linhaObra(obraId);
+    o.fgts += l.fgts; o.inss += l.inss;
+  });
+  simplesLancs.forEach(l=>{
+    const o = linhaObra(l.obraId || '');
+    o.simples += valorBaixado(l);
+  });
+  const porObraArr = Object.values(porObra)
+    .map(o=>({
+      ...o,
+      fgts: Math.round(o.fgts*100)/100, inss: Math.round(o.inss*100)/100, simples: Math.round(o.simples*100)/100,
+      total: Math.round((o.fgts+o.inss+o.simples)*100)/100
+    }))
+    .sort((a,b)=> (a.obraId?obraNome(a.obraId):'~').localeCompare(b.obraId?obraNome(b.obraId):'~', 'pt-BR'));
+
+  const totalGeral = Math.round((fgtsTotal+inssTotal+simplesTotal)*100)/100;
+  return {mes, lancs, fgtsTotal, inssTotal, simplesTotal, totalGeral, linhas, porObra: porObraArr};
+}
+
+let guiasMes = null;
+function initRateioGuias(){ if(!guiasMes) guiasMes = currentYM(); }
+
+function renderRateioGuias(){
+  initRateioGuias();
+  const c = document.getElementById('content');
+  const r = resumoRateioGuias(guiasMes);
+  const semNenhumaGuia = !r.lancs.length;
+
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Rateio de Guias por Funcionário e por Obra</h2>
+      <p class="help">
+        O app <b>não estima</b> o valor de FGTS/INSS/Simples Nacional — usa o valor REAL que
+        você lançou e pagou em <a href="#" onclick="goTo('lancamentos'); return false;">A Pagar / A Receber</a>,
+        marcando o campo <b>"Rateio de guia"</b> no lançamento. FGTS e INSS Patronal são
+        rateados proporcional ao <b>salário</b> de cada fichado daquele mês; Simples Nacional
+        não é rateado (é imposto sobre faturamento) — vai inteiro pra obra que o próprio
+        lançamento indicar. Só conta guia com <b>baixa</b> (dinheiro que já saiu de verdade).
+      </p>
+      <div class="field" style="max-width:200px;"><label>Mês de competência</label>
+        <input type="month" value="${guiasMes}" onchange="guiasMes=this.value; renderRateioGuias();">
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="v">${fmtMoney(r.fgtsTotal)}</div><div class="l">FGTS pago no mês</div></div>
+        <div class="kpi"><div class="v">${fmtMoney(r.inssTotal)}</div><div class="l">INSS Patronal pago no mês</div></div>
+        <div class="kpi"><div class="v">${fmtMoney(r.simplesTotal)}</div><div class="l">Simples Nacional pago no mês</div></div>
+        <div class="kpi"><div class="v" style="color:var(--azul-esc);">${fmtMoney(r.totalGeral)}</div><div class="l">Total de guias no mês</div></div>
+      </div>
+      ${semNenhumaGuia ? `<p class="help" style="padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
+        Nenhuma guia lançada e paga com competência em ${monthLabel(guiasMes)}. Lance em
+        <a href="#" onclick="goTo('lancamentos'); return false;">A Pagar / A Receber</a>, marcando
+        "Rateio de guia" e dando baixa — depois volte aqui.</p>` : ''}
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Por funcionário</h3>
+      <div class="table-wrap">
+        ${r.linhas.length ? `<table>
+          <thead><tr><th>Funcionário</th><th>Obra (no mês)</th><th class="num">Salário</th>
+            <th class="num">FGTS</th><th class="num">INSS Patronal</th><th class="num">Total</th></tr></thead>
+          <tbody>${r.linhas.map(l=>`<tr>
+            <td>${esc(l.f.nome)}</td>
+            <td>${esc(obraNome(obraDoFuncionarioEm(l.f, ultimoDiaMes(guiasMes))))}</td>
+            <td class="num">${fmtMoney(l.salario)}</td>
+            <td class="num">${fmtMoney(l.fgts)}</td>
+            <td class="num">${fmtMoney(l.inss)}</td>
+            <td class="num"><b>${fmtMoney(l.total)}</b></td>
+          </tr>`).join('')}</tbody>
+          <tfoot><tr><th colspan="2" style="text-align:right;">Total</th>
+            <th class="num">—</th>
+            <th class="num">${fmtMoney(r.fgtsTotal)}</th>
+            <th class="num">${fmtMoney(r.inssTotal)}</th>
+            <th class="num">${fmtMoney(Math.round((r.fgtsTotal+r.inssTotal)*100)/100)}</th></tr></tfoot>
+        </table>` : '<div class="empty">Sem FGTS/INSS Patronal pago neste mês.</div>'}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Por obra</h3>
+      <p class="help">FGTS/INSS rateados (pela obra de cada fichado no mês) + Simples Nacional direto (pela obra do próprio lançamento).</p>
+      <div class="table-wrap">
+        ${r.porObra.length ? `<table>
+          <thead><tr><th>Obra</th><th class="num">FGTS</th><th class="num">INSS Patronal</th><th class="num">Simples Nacional</th><th class="num">Total</th></tr></thead>
+          <tbody>${r.porObra.map(o=>`<tr>
+            <td>${o.obraId ? esc(obraNome(o.obraId)) : '<span style="color:#9aa0ab;">Sem obra</span>'}</td>
+            <td class="num">${fmtMoney(o.fgts)}</td>
+            <td class="num">${fmtMoney(o.inss)}</td>
+            <td class="num">${fmtMoney(o.simples)}</td>
+            <td class="num"><b>${fmtMoney(o.total)}</b></td>
+          </tr>`).join('')}</tbody>
+          <tfoot><tr><th style="text-align:right;">Total</th>
+            <th class="num">${fmtMoney(r.fgtsTotal)}</th>
+            <th class="num">${fmtMoney(r.inssTotal)}</th>
+            <th class="num">${fmtMoney(r.simplesTotal)}</th>
+            <th class="num">${fmtMoney(r.totalGeral)}</th></tr></tfoot>
+        </table>` : '<div class="empty">Nada pra mostrar neste mês.</div>'}
+      </div>
+      ${r.lancs.length ? `<button class="btn btn-secondary" style="margin-top:10px;" onclick="printRateioGuias()">Imprimir (PDF)</button>` : ''}
+    </div>
+  `;
+}
+
+function printRateioGuias(){
+  const r = resumoRateioGuias(guiasMes);
+  const html = `
+  <div class="doc">
+    ${docHead('Rateio de Guias por Funcionário e Obra', `Competência: ${monthLabel(guiasMes)} — FGTS/INSS rateados pelo salário, Simples Nacional direto por obra`)}
+    <table class="dtab">
+      <thead><tr><th>Funcionário</th><th>Obra</th><th class="num">FGTS</th><th class="num">INSS Patronal</th><th class="num">Total</th></tr></thead>
+      <tbody>${r.linhas.map(l=>`<tr>
+        <td>${esc(l.f.nome)}</td><td>${esc(obraNome(obraDoFuncionarioEm(l.f, ultimoDiaMes(guiasMes))))}</td>
+        <td class="num">${fmtMoney(l.fgts)}</td><td class="num">${fmtMoney(l.inss)}</td><td class="num">${fmtMoney(l.total)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="2"><b>TOTAL FGTS + INSS</b></td><td class="num"><b>${fmtMoney(r.fgtsTotal)}</b></td><td class="num"><b>${fmtMoney(r.inssTotal)}</b></td><td class="num"><b>${fmtMoney(Math.round((r.fgtsTotal+r.inssTotal)*100)/100)}</b></td></tr></tfoot>
+    </table>
+    <h3 style="margin-top:18px;">Por obra</h3>
+    <table class="dtab">
+      <thead><tr><th>Obra</th><th class="num">FGTS</th><th class="num">INSS Patronal</th><th class="num">Simples Nacional</th><th class="num">Total</th></tr></thead>
+      <tbody>${r.porObra.map(o=>`<tr>
+        <td>${o.obraId?esc(obraNome(o.obraId)):'Sem obra'}</td>
+        <td class="num">${fmtMoney(o.fgts)}</td><td class="num">${fmtMoney(o.inss)}</td><td class="num">${fmtMoney(o.simples)}</td><td class="num">${fmtMoney(o.total)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td><b>TOTAL GERAL</b></td><td class="num"><b>${fmtMoney(r.fgtsTotal)}</b></td><td class="num"><b>${fmtMoney(r.inssTotal)}</b></td><td class="num"><b>${fmtMoney(r.simplesTotal)}</b></td><td class="num"><b>${fmtMoney(r.totalGeral)}</b></td></tr></tfoot>
+    </table>
+    <p class="dnote">Valores REAIS pagos (baixa), não estimados. FGTS/INSS rateados proporcional ao salário de cada fichado no mês de competência; Simples Nacional atribuído direto à obra do lançamento.</p>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, `Rateio de Guias - ${monthLabel(guiasMes)}`);
 }
 /* =========================================================
    AJUSTES DE TELA PEQUENA
