@@ -671,8 +671,11 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 .fcont th.c, .fcont td.c{text-align:center;}
 /* dia que pertence ao mês vizinho, ou pessoa fora do vínculo: não conta */
 .fcont .fora{background:#eceef2;color:#7a808c;font-size:7.5px;}
-/* cabeçalho do dia de feriado: nome do feriado no lugar do dia da semana */
+/* cabeçalho do dia de feriado: sigla "FER" no lugar do dia da semana (nome
+   completo vira a legenda .ffer logo abaixo da tabela, pra não forçar a
+   coluna a ficar mais larga que as outras — ver comentário em cabDow) */
 .fcont .fcab{background:#f0e9fb;color:#5b2a86;}
+.ffer{margin:2px 0 10px;font-size:8.5px;color:#5b2a86;}
 .flegenda{margin:8px 0 12px;font-size:9px;color:#333;background:#f2f4f9;
           border:1px solid #d5dae6;border-radius:4px;padding:5px 8px;}
 .flegenda b{color:#111;}
@@ -829,7 +832,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.17.1';
+const VERSAO = '1.18.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -3729,6 +3732,37 @@ function abasPonto(tipo){
   </div>`;
 }
 
+/* Card "Para a contabilidade" — pedido do Maycon (01/10/2026): até então só
+   aparecia em "Ver o mês"; ele queria o mesmo atalho em "Lançar o dia", sem
+   trocar de aba só para gerar o PDF do mês. Os dois documentos (`04c_folha_
+   contabil.js`) sempre leem `pmMes`/`pmAno`/`pmObraFiltro` — nunca um
+   parâmetro — então os botões sincronizam essas três globais antes de
+   chamar o print, a partir do mês/ano/obra que fazem sentido NA TELA que
+   pediu o card (o seletor de "Ver o mês", ou o dia aberto em "Lançar o dia"). */
+function cardFolhaContabil(mes, ano, obraFiltro){
+  return `
+    <!-- Documento da EQUIPE INTEIRA, separado dos botões de dentro do calendário
+         (que são de um funcionário só). É o PDF que vai para a contabilidade
+         todo mês, e não depende de escolher ninguém na lista. -->
+    <div class="card" style="margin-bottom:14px;">
+      <div class="section-title" style="margin-bottom:6px;">
+        <h2 style="margin:0;font-size:15px;">Para a contabilidade — ${MESES[mes-1]}/${ano}</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary"
+            onclick="pmMes=${mes};pmAno=${ano};pmObraFiltro='${obraFiltro||''}';printFolhaContabilidade();">Folha de ponto (dia a dia)</button>
+          <button class="btn btn-secondary"
+            onclick="pmMes=${mes};pmAno=${ano};pmObraFiltro='${obraFiltro||''}';printResumoMensal();">Resumo do mês (números)</button>
+        </div>
+      </div>
+      <p class="help" style="margin:0;">
+        Os dois cobrem a equipe fichada inteira de ${MESES[mes-1]}/${ano}${obraFiltro?`, só na obra <b>${esc(obraNome(obraFiltro))}</b>`:''}.
+        A <b>folha de ponto</b> é o dia a dia em blocos de segunda a sexta, no formato das planilhas que você
+        mandava à mão. O <b>resumo</b> é o mês fechado em números — dias trabalhados, faltas, admissões e
+        demissões do mês, e o aviso de dia sem lançamento.
+      </p>
+    </div>`;
+}
+
 function renderPontoMensal(){
   if(pontoAba === 'dia'){ pdiaTipo = 'fichado'; renderPontoDia(); return; }
   const c = document.getElementById('content');
@@ -3749,26 +3783,7 @@ function renderPontoMensal(){
   c.innerHTML = `
     ${abasPonto('fichado')}
     ${faixaPendencias('fichado')}
-
-    <!-- Documento da EQUIPE INTEIRA, separado dos botões de dentro do calendário
-         (que são de um funcionário só). É o PDF que vai para a contabilidade
-         todo mês, e não depende de escolher ninguém na lista. -->
-    <div class="card" style="margin-bottom:14px;">
-      <div class="section-title" style="margin-bottom:6px;">
-        <h2 style="margin:0;font-size:15px;">Para a contabilidade — ${MESES[pmMes-1]}/${pmAno}</h2>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="printFolhaContabilidade()">Folha de ponto (dia a dia)</button>
-          <button class="btn btn-secondary" onclick="printResumoMensal()">Resumo do mês (números)</button>
-        </div>
-      </div>
-      <p class="help" style="margin:0;">
-        Os dois cobrem a equipe fichada inteira e usam o <b>mês, o ano e a obra</b> escolhidos
-        aqui embaixo. A <b>folha de ponto</b> é o dia a dia em blocos de segunda a sexta, no
-        formato das planilhas que você mandava à mão. O <b>resumo</b> é o mês fechado em
-        números — dias trabalhados, faltas, admissões e demissões do mês, e o aviso de dia
-        sem lançamento.
-      </p>
-    </div>
+    ${cardFolhaContabil(pmMes, pmAno, pmObraFiltro)}
 
     <div class="card">
       <div class="grid grid-3" style="align-items:end;">
@@ -4240,9 +4255,19 @@ function renderPontoDia(){
      lista é daquela obra. Ela só aparece com o filtro em "todas". */
   const mostrarObra = !pdiaObra;
 
+  /* 01/10/2026: o card "Para a contabilidade" (antes só em "Ver o mês") passou a
+     aparecer aqui também, pedido do Maycon — sem precisar trocar de aba só pra
+     gerar o PDF do mês. Só pra Fichados (não faz sentido em Diaristas/Todos); o
+     mês/ano vêm do DIA aberto (pdiaData), não de pmMes/pmAno (que são de "Ver o
+     mês" — podem estar num mês diferente do que ele está lançando agora). */
+  const cardContabil = pdiaTipo==='fichado'
+    ? cardFolhaContabil(parseInt(pdiaData.slice(5,7),10), parseInt(pdiaData.slice(0,4),10), pdiaObra)
+    : '';
+
   c.innerHTML = `
     ${abasPonto(pdiaTipo)}
     ${faixaPendencias(pdiaTipo)}
+    ${cardContabil}
     <div class="card">
       <div class="grid grid-4" style="align-items:end;">
         <div class="field" style="margin:0;"><label>Dia</label>
@@ -4631,13 +4656,22 @@ function printFolhaContabilidade(){
        E ficaria sempre vazia e só roubava largura do nome. */
     const cabData = dias.map(iso =>
       `<th class="c${iso.slice(0,7)!==ym?' fora':''}">${fmtDate(iso).slice(0,5)}</th>`).join('');
-    /* dia de feriado escreve o NOME do feriado no lugar do dia da semana —
-       igual a planilha manual escrevia "QUI - Feriado" no cabeçalho. */
+    /* dia de feriado: cabeçalho escreve só "FER" (mesma sigla curta de 3
+       letras usada pro mês vizinho, AGO/OUT) — o NOME completo do feriado
+       já saiu daqui, pois um nome comprido ("INDEPENDÊNCIA DO BRASIL")
+       forçava essa coluna a ficar muito mais larga que as outras e
+       desalinhava a tabela inteira (`table-layout:auto` não reparte largura
+       igual entre colunas, ele alarga a coluna do conteúdo mais comprido às
+       custas das vizinhas). O nome completo não se perde: sai como legenda
+       logo abaixo da tabela desta semana, só quando ela tem feriado. */
     const cabDow = dias.map(iso => {
       const doMes = iso.slice(0,7) === ym;
       const fer = doMes && feriadoDoDia(iso);
-      return `<th class="c${!doMes?' fora':''}${fer?' fcab':''}">${fer ? esc(fer.nome) : DOW_FULL[dowOf(iso)]}</th>`;
+      return `<th class="c${!doMes?' fora':''}${fer?' fcab':''}" title="${fer?esc(fer.nome):''}">${fer ? 'FER' : DOW_FULL[dowOf(iso)]}</th>`;
     }).join('');
+    const feriadosDaSemana = dias
+      .filter(iso => iso.slice(0,7) === ym && feriadoDoDia(iso))
+      .map(iso => `${fmtDate(iso)} — ${esc(feriadoDoDia(iso).nome)}`);
 
     const linhas = equipe.map((f, i) => {
       let total = 0;
@@ -4675,7 +4709,8 @@ function printFolhaContabilidade(){
         <tr>${cabDow}</tr>
       </thead>
       <tbody>${linhas}</tbody>
-    </table>`;
+    </table>${feriadosDaSemana.length ? `
+    <p class="ffer">🎉 ${feriadosDaSemana.join(' · ')}</p>` : ''}`;
   });   /* fica como LISTA de blocos: quem junta é o agrupamento por página */
 
   const obraTxt = pmObraFiltro ? obraNome(pmObraFiltro) : 'Todas as obras';
@@ -4687,7 +4722,7 @@ function printFolhaContabilidade(){
       <b>LIC</b> licença &nbsp;·&nbsp;
       <b>FC</b> folga compensada &nbsp;·&nbsp;
       <b>X</b> fora do vínculo &nbsp;·&nbsp;
-      dia com <b>nome de feriado</b> no cabeçalho: só marca "1" quem trabalhou
+      <b>FER</b> feriado (nome completo na legenda abaixo da semana): só marca "1" quem trabalhou
     </div>`;
 
   /* agrupa os blocos em páginas e desenha o cabeçalho em cada uma */
@@ -4706,7 +4741,10 @@ function printFolhaContabilidade(){
         ${docFoot()}` : ''}
     </div>`).join('');
 
-  doPrint(`<div class="doc">${corpo}</div>`);
+  const nomeArq = String(mes).padStart(2,'0') + '. FOLHA DE PONTO - '
+    + MESES[mes-1].toUpperCase() + ' ' + ano
+    + (pmObraFiltro ? ' - ' + obraTxt : '');
+  doPrint(`<div class="doc">${corpo}</div>`, nomeArq);
 }
 
 /* =========================================================
@@ -4867,7 +4905,10 @@ function printResumoMensal(){
     </div>`;
   }).join('');
 
-  doPrint(`<div class="doc">${corpo}</div>`);
+  const nomeArq = String(mes).padStart(2,'0') + '. RESUMO MENSAL DE FREQUENCIA - '
+    + MESES[mes-1].toUpperCase() + ' ' + ano
+    + (pmObraFiltro ? ' - ' + obraTxt : '');
+  doPrint(`<div class="doc">${corpo}</div>`, nomeArq);
 }
 /* =========================================================
    PONTO DIARISTAS — calendário por funcionário (igual ao dos fichados)
