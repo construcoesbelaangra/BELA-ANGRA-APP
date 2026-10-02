@@ -832,7 +832,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.18.0';
+const VERSAO = '1.18.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -10955,7 +10955,7 @@ function openBaixaModal(id){
     </p>
     <div class="grid grid-3">
       <div class="field"><label>Data em que o dinheiro andou *</label>
-        <input type="date" id="b_data" value="${todayISO()}"></div>
+        <input type="date" id="b_data" value="${l.vencimento || todayISO()}"></div>
       <div class="field"><label>Valor (R$) *</label>
         <input type="number" step="0.01" id="b_valor" value="${resta}"></div>
       ${ehTransf
