@@ -832,7 +832,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.18.1';
+const VERSAO = '1.19.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -10926,7 +10926,10 @@ function openLancDetalhe(id){
           <td>${fmtDate(b.data)}</td>
           <td>${esc(contaNome(l.tipo==='transferencia' ? l.contaId : contaDaBaixa(l,b)))}</td>
           <td class="num">${fmtMoney(b.valor)}</td>
-          <td><button class="btn btn-danger btn-sm" onclick="estornarBaixa('${l.id}','${b.id}')">Estornar</button></td>
+          <td style="white-space:nowrap;">
+            <button class="btn btn-secondary btn-sm" onclick="openEditarBaixaModal('${l.id}','${b.id}')">Editar</button>
+            <button class="btn btn-danger btn-sm" onclick="estornarBaixa('${l.id}','${b.id}')">Estornar</button>
+          </td>
         </tr>`).join('')}</tbody></table>`
       : '<div class="empty">Nenhuma baixa ainda — o dinheiro não andou.</div>'}
     </div>
@@ -11000,6 +11003,64 @@ function confirmarBaixa(id){
   l.baixas.push({id: uid(), data, valor, contaId});
   saveDB(); closeModal(); render();
   toast(statusLanc(l)==='quitado' ? 'Quitado.' : 'Baixa parcial registrada — resta ' + fmtMoney(saldoAberto(l)) + '.');
+}
+
+/* Corrige uma baixa JÁ DADA (data, valor, conta) sem precisar estornar e refazer.
+   Pedido do Maycon (02/10/2026): baixou com a data errada (vencimento digitado 28/10
+   em vez de 28/09), corrigiu o vencimento, mas a baixa continuou em outubro e o
+   lançamento seguia aparecendo como "ainda vai ser pago". */
+function openEditarBaixaModal(lancId, baixaId){
+  const l = DB.lancamentos.find(x=>x.id===lancId);
+  const b = l && (l.baixas||[]).find(x=>x.id===baixaId);
+  if(!b) return;
+  const ehTransf = l.tipo === 'transferencia';
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>Editar baixa</h2>
+    <p class="help" style="margin-top:0;"><b>${esc(l.descricao||'')}</b> · previsto ${fmtMoney(l.valor)}</p>
+    <div class="grid grid-3">
+      <div class="field"><label>Data em que o dinheiro andou *</label>
+        <input type="date" id="eb_data" value="${b.data||''}"></div>
+      <div class="field"><label>Valor (R$) *</label>
+        <input type="number" step="0.01" id="eb_valor" value="${b.valor}"></div>
+      ${ehTransf
+        ? `<div class="field"><label>Contas</label>
+             <input value="${esc(contaNome(l.contaId))} → ${esc(contaNome(l.contaDestinoId))}" disabled></div>`
+        : `<div class="field"><label>Entrou / saiu de qual conta *</label>
+             <select id="eb_conta">
+               <option value="">— escolha —</option>
+               ${DB.contas.map(ct=>`<option value="${ct.id}" ${contaDaBaixa(l,b)===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('')}
+             </select>
+           </div>`}
+    </div>
+    <p class="help">Mexer aqui muda o saldo da conta e o quanto falta pagar — é a baixa que move o dinheiro.</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal(); openLancDetalhe('${lancId}')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEdicaoBaixa('${lancId}','${baixaId}')">Salvar</button>
+    </div>
+  `);
+}
+
+function salvarEdicaoBaixa(lancId, baixaId){
+  const l = DB.lancamentos.find(x=>x.id===lancId);
+  const b = l && (l.baixas||[]).find(x=>x.id===baixaId);
+  if(!b) return;
+  const data  = val('eb_data');
+  const valor = numVal('eb_valor');
+  const ehTransf = l.tipo === 'transferencia';
+  const contaId  = ehTransf ? b.contaId : val('eb_conta');
+  if(!data){ toast('Informe a data.'); return; }
+  if(valor <= 0){ toast('O valor precisa ser maior que zero.'); return; }
+  if(!ehTransf && !contaId){ toast('Escolha a conta.'); return; }
+  const outras = valorBaixado(l) - (Number(b.valor)||0);
+  if(outras + valor > (Number(l.valor)||0) + 0.005){
+    if(!confirm('Com este valor o lançamento fica pago a MAIS que o previsto (' + fmtMoney(l.valor) + ').\n\nConfirma mesmo assim?')) return;
+  }
+  b.data = data; b.valor = valor;
+  if(!ehTransf) b.contaId = contaId;
+  saveDB(); closeModal(); render();
+  openLancDetalhe(lancId);
+  toast('Baixa corrigida.');
 }
 
 function estornarBaixa(lancId, baixaId){
