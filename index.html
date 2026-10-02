@@ -829,7 +829,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.17.0';
+const VERSAO = '1.17.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2917,6 +2917,15 @@ function openFuncModal(id){
           quem não está "efetivado" aparece com aviso na lista de Funcionários.
         </p>
       </div>
+      <div id="wrap_foraDaFolhaContabil" style="${f.tipo==='fichado'?'':'display:none;'}">
+        <label class="check"><input type="checkbox" id="f_foraDaFolhaContabil" ${f.foraDaFolhaContabil?'checked':''}>
+          Não incluir na folha de ponto mensal da contabilidade (ela nunca recebeu o cadastro desta pessoa)</label>
+        <p class="help" style="margin-top:-6px;">
+          Use isto para quem foi fichado de verdade no app (pra efeito de pagamento), mas a ficha dele nunca chegou
+          a ser mandada pra contabilidade — por exemplo, alguém dispensado logo no início do contrato de experiência.
+          Sem isto, a folha mensal (e o resumo de frequência) listariam alguém que a contabilidade nem sabe que existe.
+        </p>
+      </div>
       <div id="wrap_folhaContabil" style="${f.tipo==='diarista'?'':'display:none;'}">
         <label class="check"><input type="checkbox" id="f_apareceNaFolhaContabil" ${f.apareceNaFolhaContabil?'checked':''}>
           Incluir na folha de ponto mensal da contabilidade, mesmo sendo diarista</label>
@@ -3110,6 +3119,7 @@ function toggleFuncTipo(){
   document.getElementById('wrap_periodicidade').style.display = diarista ? '' : 'none';
   document.getElementById('wrap_periodicidadeComissao').style.display = diarista ? 'none' : '';
   document.getElementById('wrap_folhaContabil').style.display = diarista ? '' : 'none';
+  document.getElementById('wrap_foraDaFolhaContabil').style.display = diarista ? 'none' : '';
   /* o registro também vale pro diarista que já está marcado como
      apareceNaFolhaContabil (João Martins/Jeferson Martins Caetano, ver
      elegivelStatusRegistro em 02_core.js) — não esconder o campo dele à toa
@@ -3252,6 +3262,7 @@ function saveFunc(id){
     /* quem tem data de saída fica inativo por definição — é o que tira ele do ponto */
     status: dDem ? 'inativo' : val('f_status'),
     apareceNaFolhaContabil: checked('f_apareceNaFolhaContabil'),
+    foraDaFolhaContabil: checked('f_foraDaFolhaContabil'),
     holeriteDiarista: checked('f_holeriteDiarista'),
     statusRegistro: val('f_statusRegistro') || 'nao_enviado',
     obraPadrao: val('f_obraPadrao'),
@@ -4603,7 +4614,7 @@ function printFolhaContabilidade(){
      filtro de obra da tela. `ativosNoMes` é o que mantém na folha quem foi
      demitido no meio do mês — senão não haveria como pagar o acerto dele. */
   const equipe = ordenarFuncionarios(
-    filtraObra(ativosNoMes(ym).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ym), ultimoDiaMes(ym)) || f.apareceNaFolhaContabil), pmObraFiltro));
+    filtraObra(ativosNoMes(ym).filter(f=>!f.foraDaFolhaContabil && (vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ym), ultimoDiaMes(ym)) || f.apareceNaFolhaContabil)), pmObraFiltro));
 
   if(!equipe.length){
     alert('Nenhum fichado com vínculo ativo neste mês'
@@ -4750,7 +4761,7 @@ function printResumoMensal(){
   const ini = primeiroDiaMes(ym), fim = ultimoDiaMes(ym);
 
   const equipe = ordenarFuncionarios(
-    filtraObra(ativosNoMes(ym).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ym), ultimoDiaMes(ym)) || f.apareceNaFolhaContabil), pmObraFiltro));
+    filtraObra(ativosNoMes(ym).filter(f=>!f.foraDaFolhaContabil && (vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ym), ultimoDiaMes(ym)) || f.apareceNaFolhaContabil)), pmObraFiltro));
 
   if(!equipe.length){
     alert('Nenhum fichado com vínculo ativo neste mês'
