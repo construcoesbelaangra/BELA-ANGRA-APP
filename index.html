@@ -842,7 +842,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.21.0';
+const VERSAO = '1.21.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1973,13 +1973,14 @@ const PAGES = [
   {id:'funcionarios', secao:'RH',         label:'Funcionários',              icon:'pessoa',   sub:'Cadastro completo (ficha de admissão)'},
   {id:'diario',       secao:'RH',         label:'Diário de Obras',           icon:'diario',   sub:'Clima, atividades e o que cada um fez no dia'},
   {id:'ponto',        secao:'RH',         label:'Ponto',                     icon:'calendario',sub:'Presença e faltas — fichados e diaristas'},
-  {id:'fechamento',   secao:'RH',         label:'Fechamento / Pagamento',    icon:'confere',  sub:'Fechamento semanal e quinzenal (sextas-feiras)'},
-  {id:'holerite',     secao:'RH',         label:'Holerite',                  icon:'documento',sub:'Recibo de pagamento e demonstrativo de encargos'},
+  {id:'fechFichados', secao:'RH',         label:'Líquido dos Fichados',      icon:'confere',  sub:'Dia 20 e 5º dia útil — líquido informado pela contabilidade'},
+  {id:'holerite',    secao:'RH',         label:'Holerite',                  icon:'documento',sub:'Recibo de pagamento e demonstrativo de encargos'},
   {id:'estoque',      secao:'RH',         label:'Estoque de EPI / Uniformes',icon:'caixa',    sub:'Entradas, saídas e cautelas'},
 
   {id:'caixa',        secao:'Financeiro', label:'Caixa e Contas',            icon:'cofre',    sub:'Saldo de cada conta, por empresa e consolidado'},
   {id:'lancamentos',  secao:'Financeiro', label:'A Pagar / A Receber',       icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
   {id:'fluxo',        secao:'Financeiro', label:'Fluxo de Caixa',            icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
+  {id:'fechamento',   secao:'Financeiro', label:'Fechamento / Pagamento',    icon:'confere',  sub:'Fechamento semanal e quinzenal (sextas-feiras) e dos fichados'},
   {id:'adiantamentos',secao:'Financeiro', label:'Vales / Adiantamentos',     icon:'dinheiro', sub:'Vales de diaristas descontados no fechamento'},
   {id:'vales',        secao:'Financeiro', label:'Vales VT / VR (Fichados)',  icon:'ticket',   sub:'Adiantamento de transporte e alimentação'},
   {id:'obras',        secao:'Financeiro', label:'Obras',                     icon:'obra',     sub:'Cadastro de obras, equipe alocada e custo estimado'},
@@ -2116,7 +2117,7 @@ function render(){
   const renderers = {
     dashboard: renderDashboard, funcionarios: renderFuncionarios, obras: renderObras,
     diario: renderDiario,
-    ponto: renderPonto, fechamento: renderFechamento,
+    ponto: renderPonto, fechamento: renderFechamento, fechFichados: renderLiquidoFichadosRH,
     adiantamentos: renderAdiantamentos, vales: renderVales, holerite: renderHolerite,
     estoque: renderEstoque, custos: renderCustos,
     caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, provisoes: renderProvisoes,
@@ -6378,9 +6379,11 @@ function calcFichado(f, mes){
 
 function setLiquidoContabilidade(funcId, mes, valor){
   const reg = getFechFichado(funcId, mes);
-  if(reg.saldoPago){ toast('O saldo deste mês já está marcado como pago — desmarque para editar.'); renderFechamento(); return; }
+  if(reg.saldoPago){ toast('O saldo deste mês já está marcado como pago — desmarque para editar.'); render(); return; }
   reg.liquidoContabilidade = valor==='' ? '' : (parseFloat(valor)||0);
-  saveDB(); renderFechamento();
+  /* `render()` e não `renderFechamento()`: este campo também existe na tela crua do RH
+     (`renderLiquidoFichadosRH`), e cada uma tem que redesenhar a si mesma */
+  saveDB(); render();
 }
 
 /* ---------------------------------------------------------
@@ -6633,6 +6636,79 @@ function renderFechamentoFichados(){
         O adiantamento sai sempre no <b>dia 20</b> e o saldo no <b>5º dia útil do mês seguinte</b> —
         aqui "dia útil" conta sábado também, só domingo e feriado ficam de fora.
         O percentual do adiantamento fica em Configurações.
+      </p>
+    </div>
+  `;
+}
+
+/* ---------------------------------------------------------
+   VERSÃO CRUA PARA O RH (05/10/2026)
+
+   Pedido do Maycon: a auxiliar é quem recebe o holerite da contabilidade e preenche o
+   "Líquido do mês", então ela precisa dessa tela — mas SEM o resto do Fechamento: sem
+   totais embaixo, sem "Folha líquida do mês", sem de-onde-sai-o-pagamento, sem as caixinhas
+   de pago (que criam lançamento no financeiro) e sem relatórios/recibos em PDF. A tela
+   COMPLETA continua em Financeiro → Fechamento / Pagamento → aba Fichados. As duas leem e
+   gravam o MESMO registro (`DB.fechFichados`), então o que ela digita aparece lá na hora. */
+function renderLiquidoFichadosRH(){
+  const c = document.getElementById('content');
+  if(!fcMesFichados) fcMesFichados = currentYM();
+  const mes = fcMesFichados;
+  const fichados = ativosNoMes(mes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(mes), ultimoDiaMes(mes)))
+    .sort(cmpFuncionarios);
+  const rows = fichados.map(f=>calcFichado(f, mes));
+  const pct = rows.length ? rows[0].pctAdiant : (Number(DB.config.adiantamentoPercent)||40);
+  const semLiquido = rows.filter(r=>r.liquido===null).length;
+
+  c.innerHTML = `
+    <div class="card">
+      <div class="grid grid-3" style="align-items:start;">
+        <div class="field" style="margin:0;"><label>Mês de referência</label>
+          <input type="month" value="${mes}" onchange="fcMesFichados=this.value; render();">
+        </div>
+        <div class="kpi"><div class="v" style="font-size:15px;">${fmtDate(`${mes}-20`)}</div>
+          <div class="l">Adiantamento de ${pct}% — dia 20</div></div>
+        <div class="kpi"><div class="v" style="font-size:15px;">${fmtDate(quintoDiaUtil(mesMais(mes,1)))}</div>
+          <div class="l">Saldo — 5º dia útil de ${monthLabel(mesMais(mes,1))}</div></div>
+      </div>
+
+      ${semLiquido ? `<p class="help" style="margin:10px 0 0;padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
+        <b>${semLiquido}</b> funcionário(s) ainda sem o <b>líquido informado pela contabilidade</b> em ${monthLabel(mes)} —
+        preencha na coluna abaixo (é o valor que vem no holerite que ela manda).
+      </p>` : ''}
+
+      <div class="table-wrap" style="margin-top:14px;">
+        ${rows.length ? `
+        <table>
+          <thead><tr>
+            <th>Funcionário</th><th class="num">Salário</th>
+            <th class="num">Adiantamento (${pct}%)</th>
+            <th class="num" style="min-width:130px;">Líquido do mês<br><span style="font-weight:400;text-transform:none;font-size:10px;">informado pela contabilidade</span></th>
+            <th class="num">Saldo a pagar</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r=>{
+              const dis = r.reg.saldoPago ? 'disabled title="Saldo já pago — o financeiro precisa desmarcar para editar"' : '';
+              return `<tr>
+              <td><b>${esc(r.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(r.f.funcao||'')}</span></td>
+              <td class="num">${fmtMoney(r.salario)}</td>
+              <td class="num" style="color:var(--azul-esc);font-weight:700;">${r.temDireitoAdiantamento?fmtMoney(r.adiantamento):'—'}
+                ${!r.temDireitoAdiantamento?'<br><span style="font-size:10px;color:#9aa0ab;">admitido após o dia 20</span>'
+                  :(r.admitidoNesteMes?`<br><span style="font-size:10px;color:#9aa0ab;">proporcional a ${r.diasProporcionais}/${r.nd} dias</span>`:'')}</td>
+              <td class="num">
+                <input type="number" step="0.01" style="min-width:90px;text-align:right;" value="${r.liquido===null?'':r.liquido}"
+                  placeholder="0,00" ${dis} onwheel="this.blur()"
+                  onchange="setLiquidoContabilidade('${r.f.id}','${mes}',this.value)">
+              </td>
+              <td class="num" style="font-weight:800;color:${r.saldo===null?'#9aa0ab':(r.saldo<0?'var(--vermelho)':'var(--verde)')};">
+                ${r.saldo===null?'—':fmtMoney(r.saldo)}</td>
+            </tr>`;}).join('')}
+          </tbody>
+        </table>` : '<div class="empty">Nenhum funcionário fichado ativo.</div>'}
+      </div>
+      <p class="help">
+        Aqui só se preenche o <b>líquido do mês</b> que a contabilidade manda no holerite. O pagamento
+        (marcar como pago, recibos e relatórios) é feito pelo financeiro.
       </p>
     </div>
   `;
