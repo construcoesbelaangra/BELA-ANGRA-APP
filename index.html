@@ -81,6 +81,12 @@ body{margin:0;font-family:var(--font);background:var(--cinza-bg);color:var(--chu
 /* item de dentro de uma pasta: recuo extra, para ficar claro que pertence a ela */
 .navbtn.sub{padding-left:34px;}
 #sidebar .foot{padding:12px 16px;font-size:10.5px;color:#8b909a;border-top:1px solid #40444c;}
+/* usuário logado no celular/iPad (20_usuarios.js) */
+.navuser{margin:14px 14px 4px;padding:10px 12px;border-top:1px solid #40444c;font-size:11.5px;line-height:1.5;color:#c9ccd3;}
+.navuser span{color:#8b909a;}
+.navuser a{color:#9db4f0;}
+/* sem permissão pra excluir: some todo botão de excluir/estornar/demitir (UI, não segurança) */
+body.sem-excluir .btn-danger{display:none !important;}
 
 #main{flex:1;min-width:0;display:flex;flex-direction:column;}
 #topbar{
@@ -836,7 +842,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.20.3';
+const VERSAO = '1.21.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -939,6 +945,9 @@ function defaultDB(){
        `CATEGORIAS_SUGERIDAS`) — o salário de cada um é sempre digitado pelo
        usuário, nunca um valor de partida no código (é dado da empresa). */
     cargos: [],
+    /* Usuários e acessos (05/10/2026) — nasce VAZIO: e-mail e nome são dado da
+       empresa. Enquanto estiver vazio, todo mundo tem acesso total (ver 20_usuarios.js). */
+    usuarios: [],
     diasUteisMes: {},     // 'YYYY-MM' -> nº de dias trabalhados usado no vale daquele mês
     pontoMensal: {},      // `${funcId}_${YYYY-MM}` -> {dias:{'YYYY-MM-DD':status}, excecaoDia:{'YYYY-MM-DD':{obraId,funcao,comissao}}}
     pontoDiarista: [],    // {id, funcionarioId, obraId, data, status, quentinha, funcao, comissao}
@@ -1136,6 +1145,7 @@ function migrate(db){
   db.recorrentes   = db.recorrentes   || [];
   db.feriados      = db.feriados      || [];
   db.cargos        = db.cargos        || [];
+  db.usuarios      = db.usuarios      || [];
   (db.lancamentos).forEach(l=>{ l.baixas = l.baixas || []; });
   db._meta = Object.assign({tombstones:{}, mapaTs:{}, objetoTs:{}, ultimaSync:null, ultimaEdicao:null, arquivoNome:''}, db._meta||{});
   Object.keys(db.pontoMensal||{}).forEach(k=>{
@@ -1981,6 +1991,7 @@ const PAGES = [
   {id:'lucroSocio',  secao:'Financeiro', label:'Lucro por Obra (Sócio)',   icon:'lucro',    sub:'Receita - custo - encargos, dividido com o sócio'},
 
   {id:'sync',         secao:'Sistema',    label:'Sincronizar (Drive)',       icon:'nuvem',    sub:'Juntar os dados entre os computadores'},
+  {id:'usuarios',     secao:'Sistema',    label:'Usuários e Acessos',        icon:'pessoa',   sub:'Quem entra no sistema e o que cada um pode ver'},
   {id:'config',       secao:'Sistema',    label:'Configurações',             icon:'engrenagem',sub:'Empresa, encargos e parâmetros de cálculo'}
 ];
 
@@ -2057,11 +2068,14 @@ function buildNav(){
   };
 
   PAGES.forEach(p=>{
+    /* tela que este usuário não pode ver nem aparece no menu (20_usuarios.js) */
+    if(typeof paginaPermitida === 'function' && !paginaPermitida(p.id)) return;
     if(!p.secao){ html += botaoPagina(p); return; }   // Dashboard: fora de pasta
     if(p.secao !== secaoAtual){ fechaSecaoAberta(); secaoAtual = p.secao; paginasDaSecao = []; }
     paginasDaSecao.push(p);
   });
   fechaSecaoAberta();
+  if(typeof blocoUsuarioNav === 'function') html += blocoUsuarioNav();
 
   document.getElementById('navMenu').innerHTML = html;
 }
@@ -2073,6 +2087,10 @@ const PAGINA_PONTO_ANTIGA = {pontoMensal:'fichado', pontoDiarista:'diarista'};
 
 function goTo(id){
   if(PAGINA_PONTO_ANTIGA[id]){ pontoTipo = PAGINA_PONTO_ANTIGA[id]; id = 'ponto'; }
+  if(typeof paginaPermitida === 'function' && !paginaPermitida(id) && estadoAcesso() === 'ok'){
+    toast('Você não tem acesso a essa tela.');
+    id = paginaInicial();
+  }
   currentPage = id;
   /* abre a pasta de quem para onde se navegou, senão o item ficaria ativo
      dentro de uma pasta fechada — invisível na hora de saber onde se está */
@@ -2082,8 +2100,16 @@ function goTo(id){
 }
 
 function render(){
+  /* sem login/e-mail liberado não abre tela nenhuma; tela não permitida cai na inicial */
+  const bloqueado = (typeof aplicarGuardas === 'function') ? aplicarGuardas() : false;
   buildNav();
   pintarMarca();   /* logo e nome da empresa vêm dos dados, não do HTML */
+  if(bloqueado){
+    document.getElementById('pageTitle').textContent = 'Entrar';
+    document.getElementById('pageSub').textContent = 'Identifique-se para abrir o sistema';
+    document.getElementById('content').innerHTML = telaAcesso();
+    return;
+  }
   const page = PAGES.find(p=>p.id===currentPage);
   document.getElementById('pageTitle').textContent = page.label;
   document.getElementById('pageSub').textContent = page.sub;
@@ -2098,6 +2124,7 @@ function render(){
     medicaoEmpreitada: renderMedicaoEmpreitada,
     rateioGuias: renderRateioGuias,
     lucroSocio: renderLucroSocio,
+    usuarios: renderUsuarios,
     sync: renderSync, config: renderConfig
   };
   document.getElementById('content').innerHTML = '';
@@ -9060,7 +9087,10 @@ const SYNC_COLECOES = ['funcionarios','obras','pontoDiarista','adiantamentos','p
   'contratosEmpreitada','medicoesEmpreitada',
   /* Cadastro de cargos/funções (10/09/2026) — mesmo motivo: cadastrado num PC,
      precisa aparecer no menu suspenso da ficha no outro também. */
-  'cargos'];
+  'cargos',
+  /* Usuários e acessos (05/10/2026) — a lista precisa chegar nos aparelhos
+     (iPad da auxiliar) pra eles saberem quem pode ver o quê. */
+  'usuarios'];
 /* mapas de dia: {chave: {dias:{iso:status}, ts:{iso:hora}}} */
 const SYNC_MAPAS_DIA = ['pontoMensal'];
 /* mapas simples: {chave: valor} com hora paralela em _meta */
@@ -9105,7 +9135,7 @@ let _foto = null;
 
 function semCarimbo(o){
   const c = {};
-  Object.keys(o||{}).forEach(k=>{ if(k!=='_ts' && k!=='_dev') c[k]=o[k]; });
+  Object.keys(o||{}).forEach(k=>{ if(k!=='_ts' && k!=='_dev' && k!=='_por') c[k]=o[k]; });
   return JSON.stringify(c);
 }
 function tirarFoto(db){
@@ -9137,6 +9167,8 @@ function carimbarAlteracoes(){
   const dev = dispositivo().id;
   const m = meta();
   let mudou = false;
+  /* quem fez a alteração (usuário logado, 20_usuarios.js) — vazio se não há login */
+  const por = (typeof quemAltera === 'function') ? quemAltera() : '';
 
   if(!_foto){ _foto = tirarFoto(DB); return false; }
 
@@ -9148,7 +9180,7 @@ function carimbarAlteracoes(){
       vistos[r.id] = true;
       const atual = semCarimbo(r);
       if(antes[r.id] === undefined || antes[r.id] !== atual){
-        r._ts = agora; r._dev = dev; mudou = true;
+        r._ts = agora; r._dev = dev; if(por) r._por = por; mudou = true;
       }
     });
     Object.keys(antes).forEach(id=>{
@@ -9193,7 +9225,7 @@ function carimbarAlteracoes(){
     }
   });
 
-  if(mudou) m.ultimaEdicao = {dev, nome: nomeDispositivo(), quando: agora};
+  if(mudou) m.ultimaEdicao = {dev, nome: nomeDispositivo(), quando: agora, por};
   return mudou;
 }
 
@@ -9784,7 +9816,7 @@ function renderSync(){
 
   const ultima = m.ultimaSync ? new Date(m.ultimaSync).toLocaleString('pt-BR') : 'nunca';
   const edicao = m.ultimaEdicao
-    ? `${esc(m.ultimaEdicao.nome||'—')} em ${new Date(m.ultimaEdicao.quando).toLocaleString('pt-BR')}`
+    ? `${esc(m.ultimaEdicao.nome||'—')}${m.ultimaEdicao.por?' ('+esc(m.ultimaEdicao.por)+')':''} em ${new Date(m.ultimaEdicao.quando).toLocaleString('pt-BR')}`
     : '—';
 
   c.innerHTML = `
@@ -14157,6 +14189,268 @@ function renderLucroSocio(){
   `;
 }
 /* =========================================================
+   USUÁRIOS E ACESSOS (05/10/2026)
+
+   Pedido do Maycon: a auxiliar passou a usar o app (no iPad) e ele precisa que cada
+   pessoa veja só o que é dela — a auxiliar com o RH, ele com tudo.
+
+   COMO FUNCIONA (e o que NÃO é)
+   - A identidade vem do LOGIN DO GOOGLE (só no celular/iPad, build do GitHub Pages —
+     `09b_drive.js` preenche `window.loginGoogleGancho` e guarda o e-mail em
+     `localStorage`, por aparelho). O app nunca vê a senha do Google, só o e-mail.
+   - `DB.usuarios` = [{id, nome, email, perfil:'admin'|'auxiliar', telas:[idsDeTela],
+     podeExcluir}], sincronizada como qualquer coleção. Administrador vê tudo; o
+     auxiliar vê só as telas marcadas (padrão: o grupo RH) e não vê Usuários/Configurações.
+   - ENQUANTO NÃO HOUVER NENHUM USUÁRIO CADASTRADO, TODO MUNDO TEM ACESSO TOTAL e nenhum
+     login é exigido — é o que impede de se trancar para fora antes de configurar.
+   - O PC (arquivo local, sem Google) é sempre administrador: não há como logar no Google
+     fora do GitHub Pages. Quem usa o PC é o Maycon.
+   - ISTO É ESCONDER TELA, NÃO É SEGURANÇA DE VERDADE: os dados inteiros continuam no
+     aparelho e no arquivo do Drive. Serve pra evitar mexer sem querer no que não é da
+     pessoa, não pra impedir alguém decidido. Segurança real exige servidor com login
+     (ver CLAUDE.md, "Firebase foi avaliado e descartado").
+   - "Pode excluir" = false esconde TODO botão `.btn-danger` (excluir, estornar, demitir…)
+     por CSS (`body.sem-excluir`), em vez de mexer em cada função de exclusão.
+   ========================================================= */
+
+const IDENT_KEY = 'belaAngraIdentidade';
+const TELAS_SO_ADMIN = ['usuarios', 'config'];
+const TELAS_SEMPRE = ['sync'];   /* precisa abrir pra reconectar o Drive / entrar */
+
+function identidade(){
+  try{
+    const o = JSON.parse(localStorage.getItem(IDENT_KEY) || 'null');
+    return (o && o.email) ? o : null;
+  }catch(e){ return null; }
+}
+function definirIdentidade(o){
+  try{
+    if(o) localStorage.setItem(IDENT_KEY, JSON.stringify(o));
+    else localStorage.removeItem(IDENT_KEY);
+  }catch(e){}
+  try{ render(); }catch(e){}
+}
+/* nome (ou e-mail) de quem está mexendo, pra carimbar em cada alteração (`_por`) */
+function quemAltera(){
+  const id = identidade();
+  if(!id) return '';
+  const u = usuarioDaIdentidade();
+  return (u && u.nome) || id.nome || id.email;
+}
+
+/* só exige login onde ele existe (celular/iPad) e depois do primeiro usuário cadastrado */
+function exigeLogin(){
+  return !!window.loginGoogleGancho && (DB.usuarios || []).length > 0;
+}
+function usuarioDaIdentidade(){
+  const id = identidade();
+  if(!id) return null;
+  const e = String(id.email).toLowerCase();
+  return (DB.usuarios || []).find(u => String(u.email || '').toLowerCase() === e) || null;
+}
+/* 'ok' | 'precisaLogin' | 'naoCadastrado' */
+function estadoAcesso(){
+  if(!exigeLogin()) return 'ok';
+  if(!identidade()) return 'precisaLogin';
+  return usuarioDaIdentidade() ? 'ok' : 'naoCadastrado';
+}
+function usuarioAtual(){
+  if(!exigeLogin()) return {admin:true, nome:'', email:'', podeExcluir:true, telas:null, semLogin:true};
+  const u = usuarioDaIdentidade();
+  if(!u) return {admin:false, nome:'', email:'', podeExcluir:false, telas:[]};
+  const admin = u.perfil === 'admin';
+  return {admin, nome:u.nome || u.email, email:u.email, podeExcluir: admin || !!u.podeExcluir, telas: u.telas || []};
+}
+function ehAdmin(){ return usuarioAtual().admin; }
+function podeExcluir(){ return usuarioAtual().podeExcluir; }
+
+function paginaPermitida(id){
+  if(typeof PAGINA_PONTO_ANTIGA !== 'undefined' && PAGINA_PONTO_ANTIGA[id]) id = 'ponto';
+  if(estadoAcesso() !== 'ok') return false;
+  const u = usuarioAtual();
+  if(u.admin) return true;
+  if(TELAS_SO_ADMIN.indexOf(id) >= 0) return false;
+  if(TELAS_SEMPRE.indexOf(id) >= 0) return true;
+  return (u.telas || []).indexOf(id) >= 0;
+}
+function paginaInicial(){
+  const ordem = ['dashboard', 'ponto'].concat(PAGES.map(p => p.id));
+  return ordem.find(paginaPermitida) || 'sync';
+}
+
+/* chamada no começo de todo render(): devolve true se o acesso está BLOQUEADO
+   (sem login / e-mail não liberado) e garante que a tela atual é permitida */
+function aplicarGuardas(){
+  const estado = estadoAcesso();
+  document.body.classList.toggle('sem-excluir', estado === 'ok' && !podeExcluir());
+  if(estado !== 'ok') return true;
+  if(!paginaPermitida(currentPage)) currentPage = paginaInicial();
+  return false;
+}
+
+function telaAcesso(){
+  const id = identidade();
+  const naoCad = estadoAcesso() === 'naoCadastrado';
+  return `
+  <div class="card" style="max-width:520px;margin:40px auto;text-align:center;">
+    <h2 style="margin-top:0;">${naoCad ? 'Este e-mail não está liberado' : 'Entre com sua conta Google'}</h2>
+    <p class="help">${naoCad
+      ? `Você entrou como <b>${esc(id.email)}</b>, mas esse e-mail não está cadastrado no sistema. Peça ao administrador para liberar, ou entre com outra conta.`
+      : 'Para abrir o sistema, entre com a conta Google que o administrador cadastrou para você. É só uma vez neste aparelho — depois ele lembra.'}</p>
+    <button class="btn btn-primary" style="font-size:14px;padding:11px 20px;" onclick="entrarComGoogle(${naoCad})">${naoCad ? 'Entrar com outra conta' : 'Entrar com Google'}</button>
+    <p class="help" style="margin-top:12px;">Precisa de internet só nesta primeira entrada.</p>
+  </div>`;
+}
+/* precisa ser chamada direto de um clique (o Safari exige um toque pro login) */
+async function entrarComGoogle(trocar){
+  const g = window.loginGoogleGancho;
+  if(!g){ return; }
+  try{ await g.entrar(!!trocar); }
+  catch(e){ alert('Não consegui entrar: ' + (e && e.message ? e.message : e)); }
+  try{ render(); }catch(e){}
+}
+function trocarUsuario(){ entrarComGoogle(true); }
+
+function blocoUsuarioNav(){
+  const id = identidade();
+  if(!id || !window.loginGoogleGancho || !(DB.usuarios || []).length) return '';
+  const u = usuarioAtual();
+  return `<div class="navuser">${esc(u.nome || id.email)}<br><span>${u.admin ? 'Administrador' : 'Auxiliar'}</span>
+    · <a href="#" onclick="trocarUsuario(); return false;">trocar</a></div>`;
+}
+
+/* ---------------- tela de cadastro (só administrador) ---------------- */
+function telasCadastraveis(){
+  return PAGES.filter(p => TELAS_SO_ADMIN.indexOf(p.id) < 0 && TELAS_SEMPRE.indexOf(p.id) < 0);
+}
+function telasPadraoAuxiliar(){
+  return telasCadastraveis().filter(p => p.secao === 'RH').map(p => p.id);
+}
+function adminsRestantes(excetoId){
+  return (DB.usuarios || []).filter(u => u.perfil === 'admin' && u.id !== excetoId).length;
+}
+
+function renderUsuarios(){
+  const c = document.getElementById('content');
+  if(!ehAdmin()){
+    c.innerHTML = '<div class="card"><p class="help">Só o administrador abre esta tela.</p></div>';
+    return;
+  }
+  const lista = (DB.usuarios || []).slice().sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
+  const id = identidade();
+  c.innerHTML = `
+    <div class="card">
+      <div class="section-title">
+        <h2 style="margin:0;">Usuários e acessos</h2>
+        <button class="btn btn-primary" onclick="openUsuarioModal()">+ Novo usuário</button>
+      </div>
+      <p class="help">
+        ${lista.length ? '' : '<b>Ninguém cadastrado ainda — por isso todos os aparelhos têm acesso total e nenhum login é pedido.</b> Cadastre <b>primeiro você</b>, como administrador, com o e-mail da sua conta Google. '}
+        No <b>celular/iPad</b> a pessoa entra com a conta Google (uma vez por aparelho) e o sistema mostra só as telas liberadas aqui.
+        No <b>computador</b> (arquivo local) você é sempre administrador — não há login do Google lá.
+      </p>
+      <p class="help" style="padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
+        <b>Isto esconde telas, não é segurança de verdade:</b> os dados continuam inteiros no aparelho e no arquivo do Drive.
+        Serve para ninguém mexer sem querer no que não é da sua função.
+      </p>
+      <div class="table-wrap">
+        ${lista.length ? `<table>
+          <thead><tr><th>Nome</th><th>E-mail (conta Google)</th><th>Perfil</th><th>Telas</th><th>Exclui?</th><th></th></tr></thead>
+          <tbody>${lista.map(u => `<tr>
+            <td><b>${esc(u.nome)}</b>${id && String(id.email).toLowerCase() === String(u.email).toLowerCase() ? ' <span class="badge badge-blue">você</span>' : ''}</td>
+            <td>${esc(u.email)}</td>
+            <td>${u.perfil === 'admin' ? '<span class="badge badge-green">Administrador</span>' : '<span class="badge badge-gray">Auxiliar</span>'}</td>
+            <td>${u.perfil === 'admin' ? 'todas' : (u.telas || []).length + ' tela(s)'}</td>
+            <td>${u.perfil === 'admin' || u.podeExcluir ? 'sim' : 'não'}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn btn-secondary btn-sm" onclick="openUsuarioModal('${u.id}')">Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="excluirUsuario('${u.id}')">Excluir</button>
+            </td></tr>`).join('')}</tbody></table>` : '<div class="empty">Nenhum usuário cadastrado.</div>'}
+      </div>
+    </div>`;
+}
+
+function openUsuarioModal(id){
+  const u = id ? (DB.usuarios || []).find(x => x.id === id) : null;
+  const perfil = u ? u.perfil : ((DB.usuarios || []).length ? 'auxiliar' : 'admin');
+  const marcadas = u && u.perfil !== 'admin' ? (u.telas || []) : telasPadraoAuxiliar();
+  const grupos = {};
+  telasCadastraveis().forEach(p => { (grupos[p.secao || 'Geral'] = grupos[p.secao || 'Geral'] || []).push(p); });
+  const gId = identidade();
+  const emailSugerido = u ? u.email : ((DB.usuarios || []).length || !gId ? '' : gId.email);
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>${u ? 'Editar usuário' : 'Novo usuário'}</h2>
+    <div class="grid grid-2">
+      <div class="field"><label>Nome *</label><input id="u_nome" value="${u ? esc(u.nome) : ''}"></div>
+      <div class="field"><label>E-mail da conta Google *</label><input id="u_email" type="email" value="${esc(emailSugerido)}" placeholder="pessoa@gmail.com"></div>
+    </div>
+    <div class="field" style="max-width:260px;"><label>Perfil</label>
+      <select id="u_perfil" onchange="trocaPerfilUsuario(this.value)">
+        <option value="admin" ${perfil === 'admin' ? 'selected' : ''}>Administrador (vê tudo)</option>
+        <option value="auxiliar" ${perfil === 'auxiliar' ? 'selected' : ''}>Auxiliar (só as telas marcadas)</option>
+      </select></div>
+    <div id="u_blocoAux" style="display:${perfil === 'admin' ? 'none' : 'block'};">
+      <label class="check"><input type="checkbox" id="u_excluir" ${u && u.podeExcluir ? 'checked' : ''}> Pode excluir / estornar / demitir</label>
+      <p class="help" style="margin:8px 0 4px;"><b>Telas que esta pessoa pode abrir</b> (Sincronizar sempre abre; Usuários e Configurações são só do administrador):</p>
+      ${Object.keys(grupos).map(g => `
+        <div style="margin:6px 0;"><b style="font-size:12px;color:var(--chumbo-claro);">${esc(g)}</b>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 12px;">
+            ${grupos[g].map(p => `<label class="check" style="margin:0;"><input type="checkbox" id="u_tela_${p.id}" ${marcadas.indexOf(p.id) >= 0 ? 'checked' : ''}> ${esc(p.label)}</label>`).join('')}
+          </div></div>`).join('')}
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarUsuario('${id || ''}')">Salvar</button>
+    </div>
+  `, true);
+}
+function trocaPerfilUsuario(perfil){
+  const b = document.getElementById('u_blocoAux');
+  if(b) b.style.display = perfil === 'admin' ? 'none' : 'block';
+}
+
+function salvarUsuario(id){
+  const nome = val('u_nome').trim();
+  const email = val('u_email').trim().toLowerCase();
+  const perfil = val('u_perfil');
+  const lista = DB.usuarios = DB.usuarios || [];
+  if(!nome){ toast('Informe o nome.'); return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast('Esse e-mail não parece válido.'); return; }
+  if(lista.some(u => u.id !== id && String(u.email).toLowerCase() === email)){ toast('Já existe um usuário com esse e-mail.'); return; }
+  const antigo = id ? lista.find(u => u.id === id) : null;
+  if(!lista.length && perfil !== 'admin'){ toast('O primeiro usuário precisa ser o administrador (você).'); return; }
+  if(antigo && antigo.perfil === 'admin' && perfil !== 'admin' && adminsRestantes(id) === 0){
+    toast('Precisa existir pelo menos um administrador.'); return;
+  }
+  /* primeiro cadastro no celular: avisa se o e-mail digitado não é o de quem está logado */
+  const gId = identidade();
+  if(!lista.length && window.loginGoogleGancho && gId && String(gId.email).toLowerCase() !== email){
+    if(!confirm('Você está logado como ' + gId.email + ', mas está cadastrando ' + email + ' como administrador.\n\nNeste aparelho você perderia o acesso. Continuar mesmo assim?')) return;
+  }
+  const telas = telasCadastraveis().map(p => p.id).filter(pid => {
+    const el = document.getElementById('u_tela_' + pid); return el && el.checked;
+  });
+  const exEl = document.getElementById('u_excluir');
+  const reg = {
+    id: id || uid(), nome, email, perfil,
+    telas: perfil === 'admin' ? [] : telas,
+    podeExcluir: perfil === 'admin' ? true : !!(exEl && exEl.checked)
+  };
+  if(antigo) Object.assign(antigo, reg); else lista.push(reg);
+  saveDB(); closeModal(); render();
+  toast('Usuário salvo.');
+}
+
+function excluirUsuario(id){
+  const u = (DB.usuarios || []).find(x => x.id === id);
+  if(!u) return;
+  if(u.perfil === 'admin' && adminsRestantes(id) === 0){ toast('Precisa existir pelo menos um administrador.'); return; }
+  if(!confirm('Excluir o acesso de ' + u.nome + ' (' + u.email + ')?')) return;
+  DB.usuarios = DB.usuarios.filter(x => x.id !== id);
+  saveDB(); render(); toast('Usuário removido.');
+}
+/* =========================================================
    AJUSTES DE TELA PEQUENA
    Entra nos DOIS builds: o computador não é afetado, porque tudo aqui só
    liga abaixo de 760px de largura.
@@ -14390,7 +14684,10 @@ window.addEventListener('resize', function(){
 
   /* drive.file é o menor escopo que resolve: o app só enxerga o arquivo que ele
      mesmo criou. Não dá para listar, ler nem apagar mais nada do Drive. */
-  const ESCOPO = 'https://www.googleapis.com/auth/drive.file';
+  /* + openid/email/profile (05/10/2026): são os escopos BÁSICOS do Google (não sensíveis,
+     não precisam de verificação) e servem só pra saber QUEM entrou — o e-mail decide
+     o perfil em 20_usuarios.js. O app continua sem ver a senha da conta. */
+  const ESCOPO = 'https://www.googleapis.com/auth/drive.file openid email profile';
 
   const NOME_ARQUIVO = 'bela-angra-dados.json';
   const API    = 'https://www.googleapis.com/drive/v3';
@@ -14497,7 +14794,27 @@ window.addEventListener('resize', function(){
      PRECISA sair de um toque do usuário — senão o iOS bloqueia como popup.
      Por isso nunca chamamos isto sozinho, só a partir de um botão.
      --------------------------------------------------------- */
-  function pedirToken(forcarConsentimento){
+  /* Quem entrou: pergunta ao Google o e-mail/nome da conta do token. Só mexe na tela
+     (definirIdentidade → render) se a pessoa MUDOU — renovação de hora em hora com a
+     mesma conta não pode redesenhar a tela no meio do trabalho. */
+  let identPromessa = Promise.resolve(false);
+  async function registrarIdentidade(){
+    try{
+      if(!token) return false;
+      const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo',
+                            {headers: {Authorization: 'Bearer ' + token}});
+      if(!r.ok) return false;
+      const j = await r.json();
+      if(!j || !j.email) return false;
+      const email = String(j.email).toLowerCase();
+      const atual = identidade();
+      if(atual && String(atual.email).toLowerCase() === email) return true;
+      definirIdentidade({email: email, nome: j.name || email});
+      return true;
+    }catch(e){ return false; }
+  }
+
+  function pedirToken(forcarConsentimento, promptEspecifico){
     return new Promise(function(ok, falha){
       if(!driveDisponivel()){
         falha(new Error('A biblioteca do Google ainda não carregou. '
@@ -14520,10 +14837,11 @@ window.addEventListener('resize', function(){
         /* desconta 60s de folga para não estourar no meio de uma gravação */
         tokenAte = Date.now() + ((Number(resp.expires_in) || 3600) - 60) * 1000;
         salvarTokenSessao();
+        identPromessa = registrarIdentidade();
         ok(token);
       };
       try{
-        tokenClient.requestAccessToken({prompt: forcarConsentimento ? 'consent' : ''});
+        tokenClient.requestAccessToken({prompt: promptEspecifico || (forcarConsentimento ? 'consent' : '')});
       }catch(e){ falha(e); }
     });
   }
@@ -14743,6 +15061,18 @@ window.addEventListener('resize', function(){
     }
   }
   window.autoSyncDriveGancho = { usa: driveJaUsado, rodar: rodarSilencioso };
+
+  /* Login do Google pra identificar o usuário (20_usuarios.js). `entrar` precisa ser
+     chamado direto de um clique (Safari). Existir este gancho é o que faz o app
+     EXIGIR login quando houver usuários cadastrados — o PC não tem. */
+  window.loginGoogleGancho = {
+    entrar: async function(trocar){
+      await pedirToken(false, trocar ? 'select_account' : '');
+      await identPromessa;
+    }
+  };
+  /* aparelho que já tem um acesso válido mas ainda não sabe quem é */
+  setTimeout(function(){ if(tokenValido() && !identidade()) registrarIdentidade(); }, 1500);
 
   let pedindoPorToque = false, ultimaTentativaToque = 0;
   function renovarPorToque(){
