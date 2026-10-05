@@ -836,7 +836,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.20.0';
+const VERSAO = '1.20.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -9814,7 +9814,7 @@ function renderSync(){
         Ligada, o sistema envia e recebe sozinho: uns segundos depois de cada alteração, ao abrir,
         ao voltar pra janela e a cada 2 minutos. Não precisa mais lembrar de clicar em Sincronizar.
         ${autoSyncTransporte()==='drive'
-          ? '<br><b>No celular/iPad</b> o Google só deixa renovar o acesso com um toque, e ele vale cerca de 1 hora. Quando vence, o próximo clique que você der no trabalho normal (salvar uma ficha, marcar presença ou falta, confirmar uma entrega de EPI…) faz o que você pediu e, em seguida, renova o acesso sozinho — abre e fecha uma janelinha do Google. Se aparecer o aviso vermelho, é só tocar no botão.'
+          ? '<br><b>No celular/iPad</b> o Google só deixa renovar o acesso com um toque, e ele vale cerca de 1 hora. Por isso, perto de vencer, o próximo clique que você der em <b>qualquer coisa do trabalho</b> (salvar uma ficha, marcar presença ou falta, confirmar uma entrega de EPI, dar baixa…) faz o que você pediu e, em seguida, renova o acesso sozinho — o Google abre e fecha uma janelinha por um ou dois segundos. Não existe botão de sincronizar pra apertar. Se aparecer o aviso vermelho, é só tocar no botão dele.'
           : '<br>No computador, depois de reabrir o navegador ele às vezes pede 1 clique pra liberar o arquivo — o aviso vermelho no topo mostra quando isso acontece.'}
         Esta opção vale só para este aparelho.
       </p>
@@ -10016,11 +10016,15 @@ function atualizarIndicadorSync(){
     ladoHTML  = `<span class="pt"></span>Sincronizando…`;
   } else if(pendenteSync() && autoOn && autoSyncErro){
     estado = 'erro';
+    /* o botão do aviso vermelho diz o que faz (renovar/liberar), não "sincronizar" —
+       o dia a dia não passa por aqui, qualquer clique de trabalho já renova sozinho */
+    const rotulo = autoSyncErro === 'acesso' ? 'Renovar acesso'
+                 : autoSyncErro === 'permissao' ? 'Liberar arquivo' : 'Tentar de novo';
     faixaHTML = `<span class="pt"></span>
-      <span>A sincronização automática parou: ${esc(motivoParada)}${m.ultimaEdicao?' · última edição '+desdeQuando(m.ultimaEdicao.quando):''}</span>
-      <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">⟳ Sincronizar agora</button>`;
-    ladoHTML = `<span class="pt"></span>Automática parada<br>${esc(motivoParada)}
-      <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">⟳ Sincronizar</button>`;
+      <span>Não consegui enviar sozinho: ${esc(motivoParada)}${m.ultimaEdicao?' · última edição '+desdeQuando(m.ultimaEdicao.quando):''}</span>
+      <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">${rotulo}</button>`;
+    ladoHTML = `<span class="pt"></span>Não enviou sozinho<br>${esc(motivoParada)}
+      <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">${rotulo}</button>`;
   } else if(pendenteSync() && autoOn && autoSyncTransporte() && !autoSyncErro && navigator.onLine !== false){
     estado = 'neutro';
     faixaHTML = `<span class="pt"></span><span>Enviando suas alterações ao Drive…</span>`;
@@ -14742,7 +14746,10 @@ window.addEventListener('resize', function(){
 
   let pedindoPorToque = false, ultimaTentativaToque = 0;
   function renovarPorToque(){
-    if(!autoSyncLigado() || !driveJaUsado() || tokenValido() || pedindoPorToque) return;
+    if(!autoSyncLigado() || !driveJaUsado() || pedindoPorToque) return;
+    /* renova ANTES de vencer (faltando < 10 min): o clique de trabalho certo aparece
+       com folga, e a rodada automática quase nunca bate num acesso já vencido */
+    if(tokenValido() && (tokenAte - Date.now()) > 10 * 60000) return;
     if(!driveDisponivel() || navigator.onLine === false) return;
     /* só incomoda se houver motivo: algo a enviar, ou faz tempo que não sincroniza */
     const m = meta();
@@ -14756,10 +14763,14 @@ window.addEventListener('resize', function(){
       autoSync('toque', true);
     }, function(){ pedindoPorToque = false; });
   }
-  /* `click` na fase de BOLHA (não captura): o onclick do próprio botão (salvar ficha,
-     marcar presença/falta, confirmar entrega de EPI…) roda PRIMEIRO e já grava o que
-     a pessoa fez; só então, no mesmo toque, pedimos o acesso. Assim o toque que ela
-     já ia dar vira o toque que o Safari exige — ela não faz nada a mais. */
+  /* `click` na fase de BOLHA (não captura), em QUALQUER elemento: o onclick do próprio
+     botão (salvar ficha, marcar presença/falta, confirmar entrega de EPI, dar baixa,
+     lançar vale… qualquer coisa que altere o app) roda PRIMEIRO e já grava o que a
+     pessoa fez; só então, no mesmo toque, pedimos o acesso. Assim o toque que ela já
+     ia dar vira o toque que o Safari exige — não existe botão "sincronizar" nem
+     passo a mais. O que NÃO dá pra esconder: o Google abre e fecha uma janelinha por
+     1 ou 2 segundos (é como o Google renova acesso sem servidor) — mais ou menos
+     uma vez por hora de uso. */
   document.addEventListener('click', renovarPorToque, false);
 
   async function desconectarDrive(){
