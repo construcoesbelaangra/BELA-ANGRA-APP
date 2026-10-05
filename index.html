@@ -80,6 +80,18 @@ body{margin:0;font-family:var(--font);background:var(--cinza-bg);color:var(--chu
 .navsec-toggle.aberta .ico{transform:rotate(90deg);}
 /* item de dentro de uma pasta: recuo extra, para ficar claro que pertence a ela */
 .navbtn.sub{padding-left:34px;}
+/* subpasta dentro de uma pasta (grupo do Financeiro: Caixa, Pagamentos, Medições…) */
+.navgrp-toggle{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  width:100%;background:none;border:none;text-align:left;cursor:pointer;
+  padding:9px 18px 9px 34px;font-size:12.5px;font-weight:600;color:#b4b9c2;
+}
+.navgrp-toggle:hover{color:#fff;background:#2f3339;}
+.navgrp-toggle.tem-ativa{color:#dfe2e8;}
+.navgrp-toggle .ico{width:12px;height:12px;opacity:.7;flex-shrink:0;transition:transform .15s ease;}
+.navgrp-toggle.aberta .ico{transform:rotate(90deg);}
+.navbtn.sub2{padding-left:52px;font-size:13px;}
+@media(max-width:760px){.navgrp-toggle{padding:12px 18px 12px 34px;font-size:14px;}.navbtn.sub2{padding-left:52px;}}
 #sidebar .foot{padding:12px 16px;font-size:10.5px;color:#8b909a;border-top:1px solid #40444c;}
 /* usuário logado no celular/iPad (20_usuarios.js) */
 .navuser{margin:14px 14px 4px;padding:10px 12px;border-top:1px solid #40444c;font-size:11.5px;line-height:1.5;color:#c9ccd3;}
@@ -842,7 +854,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.21.3';
+const VERSAO = '1.22.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1977,19 +1989,25 @@ const PAGES = [
   {id:'holerite',    secao:'RH',         label:'Holerite',                  icon:'documento',sub:'Recibo de pagamento e demonstrativo de encargos'},
   {id:'estoque',      secao:'RH',         label:'Estoque de EPI',            icon:'caixa',    sub:'EPI e uniformes — entradas, saídas e cautelas'},
 
-  {id:'caixa',        secao:'Financeiro', label:'Caixa e Contas',            icon:'cofre',    sub:'Saldo de cada conta, por empresa e consolidado'},
-  {id:'lancamentos',  secao:'Financeiro', label:'A Pagar / A Receber',       icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
-  {id:'fluxo',        secao:'Financeiro', label:'Fluxo de Caixa',            icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
-  {id:'fechamento',   secao:'Financeiro', label:'Fechamento',                icon:'confere',  sub:'Pagamento semanal e quinzenal (sextas-feiras) e dos fichados'},
-  {id:'adiantamentos',secao:'Financeiro', label:'Vales',                     icon:'dinheiro', sub:'Vales e adiantamentos descontados no fechamento'},
-  {id:'vales',        secao:'Financeiro', label:'Vales VT / VR',             icon:'ticket',   sub:'Fichados — adiantamento de transporte e alimentação'},
-  {id:'obras',        secao:'Financeiro', label:'Obras',                     icon:'obra',     sub:'Cadastro de obras, equipe alocada e custo estimado'},
-  {id:'custos',      secao:'Financeiro', label:'Custo Consolidado',         icon:'grafico',  sub:'Custo real por funcionário, obra e tipo de serviço'},
-  {id:'provisoes',    secao:'Financeiro', label:'Provisões Trabalhistas',    icon:'provisao', sub:'13º, férias e multa do FGTS acumulados, mês a mês'},
-  {id:'medicaoHH',    secao:'Financeiro', label:'Medição Homem-Hora',        icon:'regua',    sub:'Gera a medição a partir do ponto e vira conta a receber'},
-  {id:'medicaoEmpreitada', secao:'Financeiro', label:'Medição de Empreitada', icon:'empreitada', sub:'Previsto x realizado por etapa (aço/forma/concreto), saldo e extras'},
-  {id:'rateioGuias', secao:'Financeiro', label:'Rateio de Guias',          icon:'rateio',   sub:'Custo real de FGTS/INSS/Simples por funcionário e por obra'},
-  {id:'lucroSocio',  secao:'Financeiro', label:'Lucro por Obra (Sócio)',   icon:'lucro',    sub:'Receita - custo - encargos, dividido com o sócio'},
+  /* `grupo` = subpasta dentro da seção (só o Financeiro usa, desde 05/10/2026). As páginas
+     de um mesmo grupo têm que ficar JUNTAS e na ordem em que devem aparecer no menu. */
+  {id:'caixa',        secao:'Financeiro', grupo:'Caixa',       label:'Caixa e Contas',      icon:'cofre',    sub:'Saldo de cada conta, por empresa e consolidado'},
+  {id:'lancamentos',  secao:'Financeiro', grupo:'Caixa',       label:'A Pagar / A Receber', icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
+  {id:'fluxo',        secao:'Financeiro', grupo:'Caixa',       label:'Fluxo de Caixa',      icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
+
+  {id:'fechamento',   secao:'Financeiro', grupo:'Pagamentos',  label:'Fechamento',          icon:'confere',  sub:'Pagamento semanal e quinzenal (sextas-feiras) e dos fichados'},
+  {id:'vales',        secao:'Financeiro', grupo:'Pagamentos',  label:'Vales VT / VR',       icon:'ticket',   sub:'Fichados — adiantamento de transporte e alimentação'},
+  {id:'adiantamentos',secao:'Financeiro', grupo:'Pagamentos',  label:'Vales',               icon:'dinheiro', sub:'Vales e adiantamentos descontados no fechamento'},
+
+  {id:'medicaoHH',    secao:'Financeiro', grupo:'Medições',    label:'Medição Homem-Hora',  icon:'regua',    sub:'Gera a medição a partir do ponto e vira conta a receber'},
+  {id:'medicaoEmpreitada', secao:'Financeiro', grupo:'Medições', label:'Medição de Empreitada', icon:'empreitada', sub:'Previsto x realizado por etapa (aço/forma/concreto), saldo e extras'},
+
+  {id:'obras',        secao:'Financeiro', grupo:'Obras e Resultado', label:'Obras',         icon:'obra',     sub:'Cadastro de obras, equipe alocada e custo estimado'},
+  {id:'custos',       secao:'Financeiro', grupo:'Obras e Resultado', label:'Custo Consolidado', icon:'grafico', sub:'Custo real por funcionário, obra e tipo de serviço'},
+  {id:'lucroSocio',   secao:'Financeiro', grupo:'Obras e Resultado', label:'Lucro por Obra (Sócio)', icon:'lucro', sub:'Receita - custo - encargos, dividido com o sócio'},
+
+  {id:'provisoes',    secao:'Financeiro', grupo:'Encargos',    label:'Provisões Trabalhistas', icon:'provisao', sub:'13º, férias e multa do FGTS acumulados, mês a mês'},
+  {id:'rateioGuias',  secao:'Financeiro', grupo:'Encargos',    label:'Rateio de Guias',     icon:'rateio',   sub:'Custo real de FGTS/INSS/Simples por funcionário e por obra'},
 
   {id:'sync',         secao:'Sistema',    label:'Sincronizar (Drive)',       icon:'nuvem',    sub:'Juntar os dados entre os computadores'},
   {id:'usuarios',     secao:'Sistema',    label:'Usuários e Acessos',        icon:'pessoa',   sub:'Quem entra no sistema e o que cada um pode ver'},
@@ -2039,6 +2057,9 @@ let currentPage = 'dashboard';
    da página para onde se navegou, então ela nunca fica "escondida" depois de
    clicar num item dela. */
 let navSecaoAberta = '';
+/* Subpasta aberta dentro da pasta (campo `grupo` do PAGES — hoje só o Financeiro tem).
+   Também só uma por vez. */
+let navGrupoAberto = '';
 
 /* alterna uma pasta do menu sem mexer na página aberta — por isso chama só
    buildNav(), não render() (que trocaria o conteúdo principal à toa) */
@@ -2046,11 +2067,34 @@ function toggleNavSecao(nome){
   navSecaoAberta = (navSecaoAberta === nome) ? '' : nome;
   buildNav();
 }
+function toggleNavGrupo(nome){
+  navGrupoAberto = (navGrupoAberto === nome) ? '' : nome;
+  buildNav();
+}
 
 function buildNav(){
-  const botaoPagina = p => `<button class="navbtn ${p.secao?'sub':''} ${p.id===currentPage?'active':''}" onclick="goTo('${p.id}')">
+  const botaoPagina = (p, nivel2) => `<button class="navbtn ${p.secao?(nivel2?'sub2':'sub'):''} ${p.id===currentPage?'active':''}" onclick="goTo('${p.id}')">
       ${icone(p.icon)}<span class="rot">${p.label}</span>
     </button>`;
+  /* páginas de uma pasta: as sem `grupo` aparecem direto; as com `grupo` ficam dentro de
+     uma subpasta (as do mesmo grupo vêm juntas no PAGES) */
+  const htmlPaginasDaSecao = lista => {
+    let out = '', i = 0;
+    while(i < lista.length){
+      const p = lista[i];
+      if(!p.grupo){ out += botaoPagina(p, false); i++; continue; }
+      const doGrupo = [];
+      while(i < lista.length && lista[i].grupo === p.grupo){ doGrupo.push(lista[i]); i++; }
+      const aberto = p.grupo === navGrupoAberto;
+      const temAtiva = doGrupo.some(x => x.id === currentPage);
+      out += `<button class="navgrp-toggle ${aberto?'aberta':''} ${temAtiva?'tem-ativa':''}"
+          onclick="toggleNavGrupo('${esc(p.grupo)}')">
+        <span>${esc(p.grupo)}</span>${icone('seta')}
+      </button>`;
+      if(aberto) out += doGrupo.map(x => botaoPagina(x, true)).join('');
+    }
+    return out;
+  };
 
   let html = '';
   let secaoAtual = null;
@@ -2065,7 +2109,7 @@ function buildNav(){
         onclick="toggleNavSecao('${esc(secaoAtual)}')">
       <span class="navsec-nome">${esc(secaoAtual)}</span>${icone('seta')}
     </button>`;
-    if(aberta) html += paginasDaSecao.map(botaoPagina).join('');
+    if(aberta) html += htmlPaginasDaSecao(paginasDaSecao);
   };
 
   PAGES.forEach(p=>{
@@ -2097,6 +2141,7 @@ function goTo(id){
      dentro de uma pasta fechada — invisível na hora de saber onde se está */
   const pagina = PAGES.find(p=>p.id===id);
   navSecaoAberta = pagina ? pagina.secao : '';
+  navGrupoAberto = pagina && pagina.grupo ? pagina.grupo : '';
   window.scrollTo(0,0); render();
 }
 
