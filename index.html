@@ -553,6 +553,8 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 .sync-ind.ok .pt{background:var(--verde);}
 .sync-ind.neutro{background:var(--azul-claro);color:var(--azul-esc);border-bottom-color:#c9d6f7;}
 .sync-ind.neutro .pt{background:var(--azul);}
+.sync-ind.erro{background:#fdecea;color:#8b241a;border-bottom-color:#f0c4be;}
+.sync-ind.erro .pt{background:#c0392b;box-shadow:0 0 0 3px rgba(192,57,43,.22);}
 @media(max-width:760px){.sync-ind{padding:9px 14px;}}
 
 /* ---- o mesmo estado, no pé da barra lateral (computador) ----
@@ -567,6 +569,8 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 .sync-lat.pendente .pt{background:#e39b00;box-shadow:0 0 0 3px rgba(227,155,0,.25);}
 .sync-lat.ok      .pt{background:#3fbf6f;}
 .sync-lat.neutro  .pt{background:#6f8ad6;}
+.sync-lat.erro{color:#f1a79d;}
+.sync-lat.erro .pt{background:#e0584a;box-shadow:0 0 0 3px rgba(224,88,74,.25);}
 
 /* No computador o estado fica na lateral; no celular, na faixa do topo.
    Um dos dois sempre aparece, nunca os dois. */
@@ -832,7 +836,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.19.0';
+const VERSAO = '1.20.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1229,7 +1233,7 @@ let storageOK = true;
 function saveDB(){
   // carimba nos registros alterados a hora da mudança — é o que permite
   // juntar os dados de dois computadores sem ninguém perder trabalho
-  try{ carimbarAlteracoes(); _foto = tirarFoto(DB); atualizarIndicadorSync(); }catch(e){ /* módulo de sync ainda não carregado */ }
+  try{ carimbarAlteracoes(); _foto = tirarFoto(DB); atualizarIndicadorSync(); agendarAutoSync(); }catch(e){ /* módulo de sync ainda não carregado */ }
   try{
     localStorage.setItem(DB_KEY, JSON.stringify(DB));
   }catch(e){
@@ -9559,13 +9563,19 @@ async function sincronizarAgora(){
   await sincronizarArquivo();
 }
 
-async function sincronizarArquivo(){
-  if(!arquivoSync){ await escolherArquivoSync(false); return; }
+/* `silencioso` = chamada pela sincronização automática (ver mais abaixo): sem toast,
+   sem alert (o erro sobe pra quem chamou) e, se o arquivo não mudou desde a última
+   leitura e não há nada novo daqui, nem regrava — evita ficar escrevendo no Drive à
+   toa a cada 2 minutos em cada computador. Devolve o resumo da mesclagem. */
+let autoUltimoLido = 0;   // `lastModified` do arquivo na última vez que lemos/gravamos
+async function sincronizarArquivo(silencioso){
+  if(!arquivoSync){ if(silencioso) return null; await escolherArquivoSync(false); return; }
   try{
     // 1) lê o que está no Drive e mescla
     let res = {novos:0, atualizados:0, removidos:0, enviados:0};
     try{
       const arq = await arquivoSync.getFile();
+      if(silencioso && !pendenteSync() && arq.lastModified === autoUltimoLido) return null;
       const texto = await arq.text();
       if(texto && texto.trim()) res = aplicarPacote(texto);
     }catch(e){ /* arquivo novo/vazio — segue e grava */ }
@@ -9573,15 +9583,115 @@ async function sincronizarArquivo(){
     const w = await arquivoSync.createWritable();
     await w.write(JSON.stringify(pacoteSync(), null, 2));
     await w.close();
+    try{ autoUltimoLido = (await arquivoSync.getFile()).lastModified; }catch(e){}
     meta().ultimaSync = Date.now();
     saveDB();
     atualizarIndicadorSync();
     if(currentPage === 'sync') renderSync();
-    toast('Sincronizado com o Drive. ' + resumoMesclagem(res));
+    if(!silencioso) toast('Sincronizado com o Drive. ' + resumoMesclagem(res));
+    return res;
   }catch(e){
+    if(silencioso) throw e;
     alert('Falha ao sincronizar: ' + (e && e.message ? e.message : e)
         + '\n\nSe o arquivo mudou de lugar, clique em "Escolher o arquivo no Drive" para apontar de novo.');
   }
+}
+
+/* =========================================================
+   SINCRONIZAÇÃO AUTOMÁTICA (05/10/2026)
+
+   Pedido do Maycon: com uma auxiliar usando o app, esquecer o clique em "Sincronizar
+   agora" deixava um lado sem as alterações do outro. Agora o app sincroniza SOZINHO:
+   4s depois de cada edição, ao abrir, ao voltar pra aba/janela, ao voltar a internet
+   e a cada 2 min. É o MESMO motor de mesclagem de sempre (registro a registro, o mais
+   novo vence) — só os gatilhos são novos, nada de regra nova de junção.
+
+   Limites reais, mostrados no indicador em vez de escondidos:
+   - o navegador só deixa gravar no arquivo se a permissão estiver liberada; depois
+     de reabrir o navegador ela às vezes volta a exigir UM clique (aí o indicador
+     fica vermelho até o clique em "Sincronizar agora");
+   - no celular o Google exige toque pra renovar o acesso (~1h) — mesma coisa;
+   - o Drive leva segundos/minutos pra repassar o arquivo entre computadores. Como
+     cada aparelho guarda tudo localmente e a junção é idempotente, nada se perde:
+     a próxima rodada completa o que faltar.
+   Pode ser desligada por aparelho (localStorage, não viaja na sincronização). */
+const AUTO_SYNC_CHAVE = 'belaAngraAutoSync';
+const AUTO_SYNC_ESPERA_EDICAO_MS = 4000;
+const AUTO_SYNC_PERIODO_MS = 120000;
+const AUTO_SYNC_MIN_ENTRE_RODADAS_MS = 15000;
+let autoSyncOcupado = false, autoSyncErro = '', autoSyncTimer = null, autoSyncUltima = 0;
+
+function autoSyncLigado(){
+  try{ return localStorage.getItem(AUTO_SYNC_CHAVE) !== '0'; }catch(e){ return true; }
+}
+function setAutoSync(ligado){
+  try{ localStorage.setItem(AUTO_SYNC_CHAVE, ligado ? '1' : '0'); }catch(e){}
+  autoSyncErro = '';
+  atualizarIndicadorSync();
+  if(currentPage === 'sync') renderSync();
+  if(ligado) autoSync('ligou', true);
+}
+/* gancho que o 09b_drive.js (só no build do celular) preenche */
+window.autoSyncDriveGancho = null;
+
+function autoSyncTransporte(){
+  const g = window.autoSyncDriveGancho;
+  if(g && g.usa()) return 'drive';
+  if(suportaArquivoDireto() && arquivoSync) return 'arquivo';
+  return '';
+}
+
+async function autoSync(motivo, ignorarEspera){
+  if(!autoSyncLigado() || autoSyncOcupado) return;
+  if(typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  const t = autoSyncTransporte();
+  if(!t) return;
+  if(!ignorarEspera && Date.now() - autoSyncUltima < AUTO_SYNC_MIN_ENTRE_RODADAS_MS) return;
+  autoSyncOcupado = true; autoSyncUltima = Date.now();
+  atualizarIndicadorSync();
+  try{
+    let res = null;
+    if(t === 'drive'){
+      res = await window.autoSyncDriveGancho.rodar();
+    }else{
+      const p = await arquivoSync.queryPermission({mode:'readwrite'});
+      arquivoSyncLiberado = (p === 'granted');
+      if(!arquivoSyncLiberado){ autoSyncErro = 'permissao'; return; }
+      res = await sincronizarArquivo(true);
+    }
+    autoSyncErro = '';
+    if(res && (res.novos || res.atualizados || res.removidos)) aposChegarDadosAutomatico(res);
+  }catch(e){
+    const msg = (e && e.message) ? e.message : String(e);
+    autoSyncErro = /^acesso$|expirou/.test(msg) ? 'acesso' : msg;
+  }finally{
+    autoSyncOcupado = false;
+    atualizarIndicadorSync();
+    if(currentPage === 'sync') renderSync();
+  }
+}
+
+/* Chegou coisa do outro aparelho: atualiza a tela se for seguro (nada aberto, nenhum
+   campo em edição) — senão só avisa, pra nunca apagar o que alguém está digitando. */
+function aposChegarDadosAutomatico(res){
+  const modal = document.getElementById('modalRoot');
+  const ae = document.activeElement;
+  const digitando = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
+  const modalAberto = modal && modal.innerHTML.trim() !== '';
+  if(!digitando && !modalAberto){
+    try{ render(); }catch(e){}
+    toast('Chegaram dados novos de outro aparelho.');
+  }else{
+    toast('Chegaram dados novos de outro aparelho — aparecem quando você trocar de tela.');
+  }
+}
+
+/* chamada pelo saveDB: espera a pessoa parar de mexer e então sincroniza */
+function agendarAutoSync(){
+  if(!autoSyncLigado() || autoSyncOcupado || !autoSyncTransporte()) return;
+  if(!pendenteSync()) return;
+  clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(function(){ autoSync('edicao', true); }, AUTO_SYNC_ESPERA_EDICAO_MS);
 }
 
 /* ---------- transporte B: baixar / carregar (funciona em qualquer aparelho) ---------- */
@@ -9691,6 +9801,22 @@ function renderSync(){
         Este aparelho está na <b>versão ${esc(VERSAO)}</b>.
         Confira se é a mesma nos outros — no PC a versão nova chega pelo Drive, no celular só
         depois de o app ser republicado. Versões diferentes calculam diferente.
+      </p>
+    </div>
+
+    <div class="card" style="border-left:4px solid ${autoSyncLigado()?'var(--verde)':'var(--amarelo)'};">
+      <h2>Sincronização automática</h2>
+      <label class="check" style="font-size:14px;font-weight:600;">
+        <input type="checkbox" ${autoSyncLigado()?'checked':''} onchange="setAutoSync(this.checked)">
+        Sincronizar sozinho neste aparelho
+      </label>
+      <p class="help" style="margin-top:8px;">
+        Ligada, o sistema envia e recebe sozinho: uns segundos depois de cada alteração, ao abrir,
+        ao voltar pra janela e a cada 2 minutos. Não precisa mais lembrar de clicar em Sincronizar.
+        ${autoSyncTransporte()==='drive'
+          ? '<br><b>No celular/iPad</b> o Google só deixa renovar o acesso com um toque, e ele vale cerca de 1 hora. Quando vence, o próximo clique que você der no trabalho normal (salvar uma ficha, marcar presença ou falta, confirmar uma entrega de EPI…) faz o que você pediu e, em seguida, renova o acesso sozinho — abre e fecha uma janelinha do Google. Se aparecer o aviso vermelho, é só tocar no botão.'
+          : '<br>No computador, depois de reabrir o navegador ele às vezes pede 1 clique pra liberar o arquivo — o aviso vermelho no topo mostra quando isso acontece.'}
+        Esta opção vale só para este aparelho.
       </p>
     </div>
 
@@ -9876,7 +10002,30 @@ function atualizarIndicadorSync(){
 
   let estado, faixaHTML, ladoHTML;
 
-  if(pendenteSync()){
+  const autoOn = autoSyncLigado();
+  /* o motivo da parada, em português, pra quem olhar o indicador saber o que fazer */
+  const motivoParada = autoSyncErro === 'permissao'
+    ? 'o navegador pediu pra liberar o arquivo de novo — 1 clique resolve'
+    : autoSyncErro === 'acesso'
+      ? 'o acesso ao Google venceu — toque no botão pra renovar (leva 1 segundo)'
+      : autoSyncErro ? 'não consegui falar com o Drive' : '';
+
+  if(autoOn && autoSyncOcupado){
+    estado = 'neutro';
+    faixaHTML = `<span class="pt"></span><span>Sincronizando com o Drive…</span>`;
+    ladoHTML  = `<span class="pt"></span>Sincronizando…`;
+  } else if(pendenteSync() && autoOn && autoSyncErro){
+    estado = 'erro';
+    faixaHTML = `<span class="pt"></span>
+      <span>A sincronização automática parou: ${esc(motivoParada)}${m.ultimaEdicao?' · última edição '+desdeQuando(m.ultimaEdicao.quando):''}</span>
+      <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">⟳ Sincronizar agora</button>`;
+    ladoHTML = `<span class="pt"></span>Automática parada<br>${esc(motivoParada)}
+      <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">⟳ Sincronizar</button>`;
+  } else if(pendenteSync() && autoOn && autoSyncTransporte() && !autoSyncErro && navigator.onLine !== false){
+    estado = 'neutro';
+    faixaHTML = `<span class="pt"></span><span>Enviando suas alterações ao Drive…</span>`;
+    ladoHTML  = `<span class="pt"></span>Enviando…`;
+  } else if(pendenteSync()){
     estado = 'pendente';
     faixaHTML = `<span class="pt"></span>
       <span>Alterações não enviadas ao Drive${m.ultimaEdicao?' · última edição '+desdeQuando(m.ultimaEdicao.quando):''}</span>
@@ -9886,8 +10035,9 @@ function atualizarIndicadorSync(){
       <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">⟳ Sincronizar</button>`;
   } else if(syncConfigurada() && m.ultimaSync){
     estado = 'ok';
-    faixaHTML = `<span class="pt"></span><span>Tudo sincronizado com o Drive · ${desdeQuando(m.ultimaSync)}</span>`;
-    ladoHTML  = `<span class="pt"></span>Sincronizado · ${desdeQuando(m.ultimaSync)}`;
+    const sufixo = autoOn && autoSyncTransporte() ? ' · automático' : '';
+    faixaHTML = `<span class="pt"></span><span>Tudo sincronizado com o Drive · ${desdeQuando(m.ultimaSync)}${sufixo}</span>`;
+    ladoHTML  = `<span class="pt"></span>Sincronizado · ${desdeQuando(m.ultimaSync)}${sufixo}`;
   } else {
     estado = 'neutro';
     faixaHTML = `<span class="pt"></span>
@@ -9913,9 +10063,16 @@ _foto = tirarFoto(DB);
 /* tenta reencontrar sozinho o arquivo do Drive escolhido da última vez */
 document.addEventListener('DOMContentLoaded', function(){
   atualizarIndicadorSync();
-  reconectarArquivoSync();
+  /* ao abrir: reencontra o arquivo e já faz a primeira rodada automática */
+  Promise.resolve(reconectarArquivoSync()).then(function(){ autoSync('abrir', true); }, function(){});
   setInterval(atualizarIndicadorSync, 60000);   // mantém o "há X min" atualizado
   iniciarSnapshotAutomatico();
+
+  /* gatilhos da sincronização automática (ver bloco "SINCRONIZAÇÃO AUTOMÁTICA") */
+  setInterval(function(){ if(!document.hidden) autoSync('periodico'); }, AUTO_SYNC_PERIODO_MS);
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) autoSync('voltou'); });
+  window.addEventListener('focus', function(){ autoSync('foco'); });
+  window.addEventListener('online', function(){ autoSync('internet', true); });
 });
 /* =========================================================
    FINANCEIRO — núcleo, cadastros e a tela de Caixa e Contas
@@ -14535,6 +14692,75 @@ window.addEventListener('resize', function(){
       if(currentPage === 'sync') renderSync();
     }
   }
+
+  /* ---------------------------------------------------------
+     SINCRONIZAÇÃO AUTOMÁTICA (05/10/2026)
+
+     Pedido do Maycon: a auxiliar usa o app no iPad (Safari), e esquecer o toque em
+     "Sincronizar" deixava um lado sem as alterações do outro. O ciclo (lê, junta,
+     grava) é o mesmo de `sincronizarDrive`, só que SEM alert/toast e sem criar
+     arquivo — só roda em aparelho que já foi conectado (`driveFileId`). Os gatilhos
+     (depois de cada edição, ao abrir, ao voltar pro app, a cada 2 min) vivem em
+     `09_sync.js` e chegam aqui pelo gancho `window.autoSyncDriveGancho`.
+
+     O limite é o Safari: ele só deixa pedir/renovar o acesso do Google a partir de
+     um TOQUE (ver `pedirToken`). O acesso dura ~1h. Quando vence, a rodada automática
+     não consegue sozinha — então o PRIMEIRO CLIQUE de trabalho da pessoa (salvar,
+     marcar presença, confirmar entrega…) renova o acesso DEPOIS de fazer o que ela
+     pediu (o Google abre e fecha uma janelinha) e a rodada já segue. Se mesmo assim
+     não der, o indicador fica vermelho com o botão de sempre.
+     --------------------------------------------------------- */
+  let ultimoModDrive = '';
+  async function modificadoEm(id){
+    const r = await chamar(API + '/files/' + id + '?fields=modifiedTime');
+    const j = await r.json();
+    return (j && j.modifiedTime) || '';
+  }
+  async function rodarSilencioso(){
+    if(sincronizando) return null;
+    if(!tokenValido()) throw new Error('acesso');
+    const id = meta().driveFileId;
+    if(!id) return null;
+    sincronizando = true;
+    try{
+      const mod = await modificadoEm(id);
+      /* nada novo lá e nada novo aqui: não lê nem grava à toa */
+      if(!pendenteSync() && mod && mod === ultimoModDrive) return null;
+      let res = {novos:0, atualizados:0, removidos:0, enviados:0};
+      const texto = await lerArquivo(id);
+      if(texto && texto.trim()) res = aplicarPacote(texto);
+      await gravarArquivo(id, JSON.stringify(pacoteSync(), null, 2));
+      try{ ultimoModDrive = await modificadoEm(id); }catch(e){}
+      meta().ultimaSync = Date.now();
+      saveDB();
+      return res;
+    }finally{
+      sincronizando = false;
+    }
+  }
+  window.autoSyncDriveGancho = { usa: driveJaUsado, rodar: rodarSilencioso };
+
+  let pedindoPorToque = false, ultimaTentativaToque = 0;
+  function renovarPorToque(){
+    if(!autoSyncLigado() || !driveJaUsado() || tokenValido() || pedindoPorToque) return;
+    if(!driveDisponivel() || navigator.onLine === false) return;
+    /* só incomoda se houver motivo: algo a enviar, ou faz tempo que não sincroniza */
+    const m = meta();
+    if(!pendenteSync() && m.ultimaSync && Date.now() - m.ultimaSync < 5 * 60000) return;
+    /* se ela fechou/negou a janelinha do Google, não insiste por 10 min */
+    if(Date.now() - ultimaTentativaToque < 10 * 60000) return;
+    ultimaTentativaToque = Date.now();
+    pedindoPorToque = true;
+    pedirToken(false).then(function(){
+      pedindoPorToque = false;
+      autoSync('toque', true);
+    }, function(){ pedindoPorToque = false; });
+  }
+  /* `click` na fase de BOLHA (não captura): o onclick do próprio botão (salvar ficha,
+     marcar presença/falta, confirmar entrega de EPI…) roda PRIMEIRO e já grava o que
+     a pessoa fez; só então, no mesmo toque, pedimos o acesso. Assim o toque que ela
+     já ia dar vira o toque que o Safari exige — ela não faz nada a mais. */
+  document.addEventListener('click', renovarPorToque, false);
 
   async function desconectarDrive(){
     if(!confirm('Desconectar este aparelho do Google Drive?\n\n'
