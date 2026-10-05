@@ -842,7 +842,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.21.2';
+const VERSAO = '1.21.3';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1980,9 +1980,9 @@ const PAGES = [
   {id:'caixa',        secao:'Financeiro', label:'Caixa e Contas',            icon:'cofre',    sub:'Saldo de cada conta, por empresa e consolidado'},
   {id:'lancamentos',  secao:'Financeiro', label:'A Pagar / A Receber',       icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
   {id:'fluxo',        secao:'Financeiro', label:'Fluxo de Caixa',            icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
-  {id:'fechamento',   secao:'Financeiro', label:'Fechamento / Pagamento',    icon:'confere',  sub:'Fechamento semanal e quinzenal (sextas-feiras) e dos fichados'},
-  {id:'adiantamentos',secao:'Financeiro', label:'Vales / Adiantamentos',     icon:'dinheiro', sub:'Vales de diaristas descontados no fechamento'},
-  {id:'vales',        secao:'Financeiro', label:'Vales VT / VR (Fichados)',  icon:'ticket',   sub:'Adiantamento de transporte e alimentação'},
+  {id:'fechamento',   secao:'Financeiro', label:'Fechamento',                icon:'confere',  sub:'Pagamento semanal e quinzenal (sextas-feiras) e dos fichados'},
+  {id:'adiantamentos',secao:'Financeiro', label:'Vales',                     icon:'dinheiro', sub:'Vales e adiantamentos descontados no fechamento'},
+  {id:'vales',        secao:'Financeiro', label:'Vales VT / VR',             icon:'ticket',   sub:'Fichados — adiantamento de transporte e alimentação'},
   {id:'obras',        secao:'Financeiro', label:'Obras',                     icon:'obra',     sub:'Cadastro de obras, equipe alocada e custo estimado'},
   {id:'custos',      secao:'Financeiro', label:'Custo Consolidado',         icon:'grafico',  sub:'Custo real por funcionário, obra e tipo de serviço'},
   {id:'provisoes',    secao:'Financeiro', label:'Provisões Trabalhistas',    icon:'provisao', sub:'13º, férias e multa do FGTS acumulados, mês a mês'},
@@ -5083,7 +5083,7 @@ function renderCalendarDiarista(){
         <span>🎉 Feriado cadastrado</span>
         ${f.admissao?'<span style="color:#9aa0ab;">— dias fora do vínculo (antes da admissão ou depois da demissão) ficam bloqueados</span>':''}
       </div>
-      <p class="help">Clique no dia para alternar: trabalhado → falta → vazio. O pagamento é fechado na tela <b>Fechamento / Pagamento</b>, sempre por sexta-feira.</p>
+      <p class="help">Clique no dia para alternar: trabalhado → falta → vazio. O pagamento é fechado na tela <b>Fechamento</b>, sempre por sexta-feira.</p>
       <div class="grid grid-4" style="margin-top:14px;">
         <div class="kpi"><div class="v">${dias}</div><div class="l">Diárias no mês</div></div>
         <div class="kpi"><div class="v">${faltas}</div><div class="l">Faltas</div></div>
@@ -7669,7 +7669,7 @@ function renderHoleriteFuncionario(f){
     <p class="help">
       A versão <b>"com vales"</b> acrescenta vale-transporte e vale-alimentação calculados pelos
       <b>dias realmente trabalhados neste mês</b> (dias no vínculo menos falta/atestado/licença/folga
-      DESTE mês) — diferente da tela <b>Vales / Adiantamentos</b>, que paga adiantado e só desconta a
+      DESTE mês) — diferente da tela <b>Vales</b>, que paga adiantado e só desconta a
       falta no mês seguinte (é assim porque o vale sai antes de a falta acontecer). No holerite, que é
       referente ao mês fechado, o valor certo já é o líquido dos dias efetivamente trabalhados.
     </p>
