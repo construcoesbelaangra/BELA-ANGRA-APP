@@ -854,7 +854,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.22.0';
+const VERSAO = '1.22.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -9816,7 +9816,7 @@ async function autoSync(motivo, ignorarEspera){
     if(res && (res.novos || res.atualizados || res.removidos)) aposChegarDadosAutomatico(res);
   }catch(e){
     const msg = (e && e.message) ? e.message : String(e);
-    autoSyncErro = /^acesso$|expirou/.test(msg) ? 'acesso' : msg;
+    autoSyncErro = /^acesso$|expirou|liberar o acesso/.test(msg) ? 'acesso' : msg;
   }finally{
     autoSyncOcupado = false;
     atualizarIndicadorSync();
@@ -14808,7 +14808,15 @@ window.addEventListener('resize', function(){
   /* + openid/email/profile (05/10/2026): são os escopos BÁSICOS do Google (não sensíveis,
      não precisam de verificação) e servem só pra saber QUEM entrou — o e-mail decide
      o perfil em 20_usuarios.js. O app continua sem ver a senha da conta. */
-  const ESCOPO = 'https://www.googleapis.com/auth/drive.file openid email profile';
+  const ESCOPO_DRIVE = 'https://www.googleapis.com/auth/drive.file';
+  const ESCOPO = ESCOPO_DRIVE + ' openid email profile';
+  /* depois de um token sem a permissão do Drive, o próximo pedido abre a janela de
+     consentimento DE NOVO (senão o Google devolveria o mesmo acesso incompleto) */
+  let forcarConsentProxima = false;
+  const MSG_SEM_DRIVE = 'Faltou liberar o acesso ao Google Drive.\n\n'
+    + 'Na janela do Google, marque a caixinha do Drive ("Ver, editar, criar e excluir apenas '
+    + 'os arquivos do Google Drive que você usar com este app") e continue. Depois toque de '
+    + 'novo para sincronizar.';
 
   const NOME_ARQUIVO = 'bela-angra-dados.json';
   const API    = 'https://www.googleapis.com/drive/v3';
@@ -14954,6 +14962,19 @@ window.addEventListener('resize', function(){
           falha(new Error(resp.error_description || resp.error));
           return;
         }
+        /* O Google deixa a pessoa DESMARCAR cada permissão na janela de consentimento. Se ela
+           liberar só o e-mail e não o Drive, o token vem sem acesso a arquivo nenhum e o app
+           só descobria na hora de gravar ("403 insufficient authentication scopes"). Confere
+           aqui e explica o que fazer; o próximo pedido já abre a janela de novo. */
+        let temDrive = true;
+        try{ temDrive = google.accounts.oauth2.hasGrantedAllScopes(resp, ESCOPO_DRIVE); }catch(e){}
+        if(!temDrive){
+          token = null; tokenAte = 0; salvarTokenSessao();
+          forcarConsentProxima = true;
+          falha(new Error(MSG_SEM_DRIVE));
+          return;
+        }
+        forcarConsentProxima = false;
         token = resp.access_token;
         /* desconta 60s de folga para não estourar no meio de uma gravação */
         tokenAte = Date.now() + ((Number(resp.expires_in) || 3600) - 60) * 1000;
@@ -14962,7 +14983,7 @@ window.addEventListener('resize', function(){
         ok(token);
       };
       try{
-        tokenClient.requestAccessToken({prompt: promptEspecifico || (forcarConsentimento ? 'consent' : '')});
+        tokenClient.requestAccessToken({prompt: promptEspecifico || ((forcarConsentimento || forcarConsentProxima) ? 'consent' : '')});
       }catch(e){ falha(e); }
     });
   }
@@ -14991,6 +15012,12 @@ window.addEventListener('resize', function(){
         const j = await r.json();
         detalhe = (j && j.error && j.error.message) ? j.error.message : '';
       }catch(e){}
+      /* token sem a permissão do Drive (ex.: guardado de antes, ou o Drive foi desmarcado) */
+      if(r.status === 403 && /scope/i.test(detalhe)){
+        token = null; tokenAte = 0; salvarTokenSessao();
+        forcarConsentProxima = true;
+        throw new Error(MSG_SEM_DRIVE);
+      }
       throw new Error('Drive respondeu ' + r.status + (detalhe ? ': ' + detalhe : ''));
     }
     return r;
