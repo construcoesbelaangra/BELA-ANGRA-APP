@@ -854,7 +854,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.23.1';
+const VERSAO = '1.24.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1986,6 +1986,7 @@ const PAGES = [
   {id:'diario',       secao:'RH',         label:'Diário de Obras',           icon:'diario',   sub:'Clima, atividades e o que cada um fez no dia'},
   {id:'ponto',        secao:'RH',         label:'Ponto',                     icon:'calendario',sub:'Presença e faltas — fichados e diaristas'},
   {id:'fechFichados', secao:'RH',         label:'Líquido dos Fichados',      icon:'confere',  sub:'Dia 20 e 5º dia útil — líquido informado pela contabilidade'},
+  {id:'recibosVales',secao:'RH',         label:'Recibos VT / VR',           icon:'ticket',   sub:'Recibos do adiantamento de transporte e alimentação, para enviar aos funcionários'},
   {id:'holerite',    secao:'RH',         label:'Holerite',                  icon:'documento',sub:'Recibo de pagamento e demonstrativo de encargos'},
   {id:'estoque',      secao:'RH',         label:'Estoque de EPI',            icon:'caixa',    sub:'EPI e uniformes — entradas, saídas e cautelas'},
 
@@ -2162,7 +2163,7 @@ function render(){
   const renderers = {
     dashboard: renderDashboard, funcionarios: renderFuncionarios, obras: renderObras,
     diario: renderDiario,
-    ponto: renderPonto, fechamento: renderFechamento, fechFichados: renderLiquidoFichadosRH,
+    ponto: renderPonto, fechamento: renderFechamento, fechFichados: renderLiquidoFichadosRH, recibosVales: renderRecibosVales,
     adiantamentos: renderAdiantamentos, vales: renderVales, holerite: renderHolerite,
     estoque: renderEstoque, custos: renderCustos,
     caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, provisoes: renderProvisoes,
@@ -7192,6 +7193,55 @@ function renderVales(){
         O <b>VR/dia</b> é ${fmtMoney(DB.config.valorVRPadrao||0)} por padrão (ajustável por funcionário na ficha, e o padrão fica em Configurações).
         Diaristas não entram aqui: recebem a diária e pronto.
       </p>
+    </div>
+  `;
+}
+
+/* ---------------------------------------------------------
+   VERSÃO CRUA PARA O RH — só os recibos (05/10/2026)
+
+   Pedido do Maycon: quem manda o recibo de VT/VR para cada funcionário é a auxiliar, então
+   ela precisa dos recibos — mas sem o resto da tela de Vales VT / VR (que fica no Financeiro,
+   completa): sem "de onde sai o pagamento", sem totais, sem "N de M pagos", sem a caixinha de
+   pago, sem resumo do mês e sem campos para editar dias/descontos. Usa o MESMO mês
+   (`valesMes`) e os MESMOS recibos (`printRecibo`/`printTodosRecibosVale`) da tela completa,
+   então o documento é idêntico ao que o Financeiro gera. */
+function renderRecibosVales(){
+  initValesMes();
+  const c = document.getElementById('content');
+  const fichados = ativosNoMes(valesMes)
+    .filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(valesMes), ultimoDiaMes(valesMes)) && recebeAlgumVale(f))
+    .sort(cmpFuncionarios);
+  const rows = fichados.map(f=>calcVale(f, valesMes));
+
+  c.innerHTML = `
+    <div class="card">
+      <div class="grid grid-3" style="align-items:end;">
+        <div class="field" style="margin:0;"><label>Mês de referência</label>
+          <input type="month" value="${valesMes}" onchange="valesMes=this.value; render();">
+        </div>
+        <div></div>
+        ${rows.length ? `<div style="text-align:right;">
+          <button class="btn btn-primary" onclick="printTodosRecibosVale()">Imprimir todos os recibos (PDF)</button>
+        </div>` : ''}
+      </div>
+      <div class="table-wrap" style="margin-top:14px;">
+        ${rows.length ? `
+        <table>
+          <thead><tr>
+            <th>Funcionário</th><th style="text-align:center;">Dias</th><th class="num">Valor do recibo</th><th></th>
+          </tr></thead>
+          <tbody>
+          ${rows.map(r=>`<tr>
+            <td><b>${esc(r.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc([r.f.cidadeVT1,r.f.cidadeVT2].filter(Boolean).join(' + ')||'trecho não cadastrado')}</span></td>
+            <td style="text-align:center;">${r.dias}</td>
+            <td class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(r.liquido)}</td>
+            <td><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button></td>
+          </tr>`).join('')}
+          </tbody>
+        </table>` : `<div class="empty">Nenhum funcionário fichado com vale ativado em ${monthLabel(valesMes)}.</div>`}
+      </div>
+      <p class="help">Os valores e os dias vêm da tela de <b>Vales VT / VR</b> do financeiro — aqui só se imprime o recibo.</p>
     </div>
   `;
 }
