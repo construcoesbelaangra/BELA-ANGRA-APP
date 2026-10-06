@@ -857,7 +857,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.25.3';
+const VERSAO = '1.25.4';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -6941,10 +6941,13 @@ function relatorioFichadosHTML(tipo, mes){
     return obraNome(a).localeCompare(obraNome(b), 'pt-BR');
   });
 
-  const NCOL = 7;
+  /* O saldo (5º dia útil) é o relatório ENXUTO, para caber numa página só (06/10/2026,
+     pedido do Maycon): sem situação, sem subtotal por obra, sem assinatura, sem totais
+     no rodapé (o total já está no topo) e sem a nota explicativa. O do dia 20 segue completo. */
+  const NCOL = ehAdiant ? 7 : 6;
   const cab = ehAdiant
     ? `<th>#</th><th>Funcionário</th><th>Cargo</th><th style="text-align:right;">Salário</th><th>Observação</th><th style="text-align:right;">Adiantamento</th><th>Situação</th>`
-    : `<th>#</th><th>Funcionário</th><th>Cargo</th><th style="text-align:right;">Líquido (contabilidade)</th><th style="text-align:right;">(−) Adiantamento</th><th style="text-align:right;">Saldo a pagar</th><th>Situação</th>`;
+    : `<th>#</th><th>Funcionário</th><th>Cargo</th><th style="text-align:right;">Líquido</th><th style="text-align:right;">(−) Adiantamento</th><th style="text-align:right;">Saldo a pagar</th>`;
 
   const blocos = ordemGrupos.map(oid=>{
     const lista = grupos[oid];
@@ -6962,17 +6965,17 @@ function relatorioFichadosHTML(tipo, mes){
       return `<tr><td class="c">${i+1}</td><td>${esc(r.f.nome)}</td><td class="c">${cargo}</td>
         <td class="n">${r.liquido===null?'(pendente)':fmtNum(r.liquido)}</td>
         <td class="n">${r.temDireitoAdiantamento?fmtNum(r.adiantamento):'—'}</td>
-        <td class="n"><b>${v===null?'(pendente)':fmtNum(v)}</b></td><td>${v===null?'—':sit}</td></tr>`;
+        <td class="n"><b>${v===null?'(pendente)':fmtNum(v)}</b></td></tr>`;
     }).join('');
     return `
-    <table class="dtab" style="margin-top:12px;">
+    <table class="dtab${ehAdiant?'':' compacta'}" style="margin-top:${ehAdiant?12:8}px;">
       <thead>
         <tr class="grp"><td colspan="${NCOL}">${nomeObra}</td></tr>
         <tr>${cab}</tr>
       </thead>
       <tbody>${linhas}</tbody>
-      <tfoot><tr><td colspan="${NCOL-2}" style="text-align:right;">SUBTOTAL · ${lista.length} pessoa(s)</td>
-        <td class="n">${fmtNum(soma(lista))}</td><td></td></tr></tfoot>
+      ${ehAdiant ? `<tfoot><tr><td colspan="${NCOL-2}" style="text-align:right;">SUBTOTAL · ${lista.length} pessoa(s)</td>
+        <td class="n">${fmtNum(soma(lista))}</td><td></td></tr></tfoot>` : ''}
     </table>`;
   }).join('');
 
@@ -6995,24 +6998,22 @@ function relatorioFichadosHTML(tipo, mes){
         <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Total geral a pagar</div>
         <div style="font-size:24px;font-weight:800;color:#123a9e;">${fmtMoney(soma(comValor))}</div>
       </div>
-      <div style="flex:1;border:1px solid #bbb;border-radius:6px;padding:8px 12px;">
+      ${ehAdiant ? `<div style="flex:1;border:1px solid #bbb;border-radius:6px;padding:8px 12px;">
         <div style="font-size:10px;color:#555;text-transform:uppercase;">Já pago (${pagos.length})</div>
         <div style="font-size:15px;font-weight:700;">${fmtMoney(soma(pagos))}</div>
       </div>
       <div style="flex:1;border:1px solid #bbb;border-radius:6px;padding:8px 12px;">
         <div style="font-size:10px;color:#555;text-transform:uppercase;">Ainda a pagar (${aPagar.length})</div>
         <div style="font-size:15px;font-weight:700;">${fmtMoney(soma(aPagar))}</div>
-      </div>
+      </div>` : ''}
     </div>
     ${pendentes ? `<div style="font-size:11px;color:#a33;margin:2px 0 4px;"><b>Atenção:</b> ${pendentes} funcionário(s) sem o líquido informado — o total ainda vai aumentar.</div>` : ''}
     ${blocos}
-    <div class="dtotais">TOTAL GERAL A PAGAR: <b>${fmtMoney(soma(comValor))}</b>
+    ${ehAdiant ? `<div class="dtotais">TOTAL GERAL A PAGAR: <b>${fmtMoney(soma(comValor))}</b>
       <br>Já marcado como pago (${pagos.length}): ${fmtMoney(soma(pagos))} · Ainda a pagar (${aPagar.length}): ${fmtMoney(soma(aPagar))}</div>
-    <p class="dnote">${ehAdiant
-      ? `Adiantamento de ${rows[0].pctAdiant}% do salário, pago no dia 20. Quem foi admitido dentro do mês recebe proporcional aos dias; quem foi admitido depois do dia 20 não recebe adiantamento e não aparece aqui.`
-      : `Saldo = líquido informado pela contabilidade − adiantamento já pago no dia 20. Pago no 5º dia útil de ${monthLabel(mesMais(mes,1))} (conta sábado; só domingo e feriado ficam de fora).`}
+    <p class="dnote">Adiantamento de ${rows[0].pctAdiant}% do salário, pago no dia 20. Quem foi admitido dentro do mês recebe proporcional aos dias; quem foi admitido depois do dia 20 não recebe adiantamento e não aparece aqui.
     ${pendentes ? `<br><b>Atenção:</b> ${pendentes} funcionário(s) ainda sem o líquido informado — não entram na soma; o total ainda vai aumentar.` : ''}</p>
-    <div class="assinatura"><div>Responsável pelo pagamento</div><div>${esc(DB.empresa.razaoSocial)}</div></div>
+    <div class="assinatura"><div>Responsável pelo pagamento</div><div>${esc(DB.empresa.razaoSocial)}</div></div>` : ''}
     ${docFoot()}
   </div>`;
 }
