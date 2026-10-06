@@ -670,6 +670,9 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 .dtab th{background:#e9edf6;border:1px solid #444;padding:3px 5px;font-weight:800;font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:#111;text-align:left;white-space:nowrap;}
 .dtab td{border:1px solid #b9bec8;padding:3px 5px;}
 .dtab td.n{text-align:right;white-space:nowrap;}
+/* versão apertada, para relatório de uma página só com 40+ linhas (Resumo de Vales) */
+.dtab.compacta th, .dtab.compacta td{padding:1.5px 5px;}
+.dtab.compacta td{font-size:9.5px;white-space:nowrap;}
 .dtab td.c{text-align:center;}
 .dtab tfoot td{font-weight:800;background:#f2f4f9;}
 .dtab .grp td{background:#dde3f0;font-weight:800;font-size:9.5px;text-transform:uppercase;}
@@ -854,7 +857,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.25.2';
+const VERSAO = '1.25.3';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -7476,7 +7479,7 @@ function printResumoVales(){
     ${docHead('Resumo de Vales — Transporte e Alimentação', monthLabel(valesMes),
       `Dias considerados<br><b>${diasVale(valesMes)}</b>`)}
     <!-- o total vem PRIMEIRO: quem lê o relatório quase sempre só quer esse número -->
-    <div style="display:flex;gap:10px;margin:10px 0 12px;">
+    <div style="display:flex;gap:10px;margin:8px 0 8px;">
       <div style="flex:2;border:2px solid #123a9e;border-radius:6px;padding:8px 12px;">
         <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Total a pagar — ${monthLabel(valesMes)}</div>
         <div style="font-size:24px;font-weight:800;color:#123a9e;">${fmtMoney(rows.reduce((s,r)=>s+r.liquido,0))}</div>
@@ -7490,20 +7493,19 @@ function printResumoVales(){
         <div style="font-size:15px;font-weight:700;">${fmtMoney(rows.reduce((s,r)=>s+r.totalVR,0))}</div>
       </div>
     </div>
-    <table class="dtab">
-      <thead><tr><th>#</th><th>Funcionário</th><th>Trecho</th><th style="text-align:right;">VT/dia</th>
+    <table class="dtab compacta">
+      <thead><tr><th>#</th><th>Funcionário</th><th style="text-align:right;">VT/dia</th>
         <th style="text-align:right;">VR/dia</th><th style="text-align:center;">Dias</th>
         <th style="text-align:right;">Total VT</th><th style="text-align:right;">Total VR</th>
         <th style="text-align:right;">Descontos</th><th style="text-align:right;">Líquido</th></tr></thead>
       <tbody>${rows.map((r,i)=>`<tr>
         <td class="c">${i+1}</td><td>${esc(r.f.nome)}</td>
-        <td>${esc([r.f.cidadeVT1,r.f.cidadeVT2].filter(Boolean).join(' + ')||'—')}</td>
         <td class="n">${fmtNum(r.vtDia)}</td><td class="n">${fmtNum(r.vrDia)}</td>
         <td class="c">${r.dias}</td>
         <td class="n">${fmtNum(r.totalVT)}</td><td class="n">${fmtNum(r.totalVR)}</td>
         <td class="n">${(r.descFaltas+r.totalParcelas+r.descOutros)?"- "+fmtNum(r.descFaltas+r.totalParcelas+r.descOutros):"—"}</td>
         <td class="n"><b>${fmtNum(r.liquido)}</b></td></tr>`).join('')}</tbody>
-      <tfoot><tr><td colspan="6" style="text-align:right;">TOTAL</td>
+      <tfoot><tr><td colspan="5" style="text-align:right;">TOTAL</td>
         <td class="n">${fmtNum(rows.reduce((s,r)=>s+r.totalVT,0))}</td>
         <td class="n">${fmtNum(rows.reduce((s,r)=>s+r.totalVR,0))}</td>
         <td class="n">- ${fmtNum(rows.reduce((s,r)=>s+r.descFaltas+r.totalParcelas+r.descOutros,0))}</td>
