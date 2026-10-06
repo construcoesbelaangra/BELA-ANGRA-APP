@@ -854,7 +854,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.25.0';
+const VERSAO = '1.25.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -7459,6 +7459,21 @@ function printResumoVales(){
   <div class="doc">
     ${docHead('Resumo de Vales — Transporte e Alimentação', monthLabel(valesMes),
       `Dias considerados<br><b>${diasVale(valesMes)}</b>`)}
+    <!-- o total vem PRIMEIRO: quem lê o relatório quase sempre só quer esse número -->
+    <div style="display:flex;gap:10px;margin:10px 0 12px;">
+      <div style="flex:2;border:2px solid #123a9e;border-radius:6px;padding:8px 12px;">
+        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Total a pagar — ${monthLabel(valesMes)}</div>
+        <div style="font-size:24px;font-weight:800;color:#123a9e;">${fmtMoney(rows.reduce((s,r)=>s+r.liquido,0))}</div>
+      </div>
+      <div style="flex:1;border:1px solid #bbb;border-radius:6px;padding:8px 12px;">
+        <div style="font-size:10px;color:#555;text-transform:uppercase;">Vale-transporte</div>
+        <div style="font-size:15px;font-weight:700;">${fmtMoney(rows.reduce((s,r)=>s+r.totalVT,0))}</div>
+      </div>
+      <div style="flex:1;border:1px solid #bbb;border-radius:6px;padding:8px 12px;">
+        <div style="font-size:10px;color:#555;text-transform:uppercase;">Vale-refeição</div>
+        <div style="font-size:15px;font-weight:700;">${fmtMoney(rows.reduce((s,r)=>s+r.totalVR,0))}</div>
+      </div>
+    </div>
     <table class="dtab">
       <thead><tr><th>#</th><th>Funcionário</th><th>Trecho</th><th style="text-align:right;">VT/dia</th>
         <th style="text-align:right;">VR/dia</th><th style="text-align:center;">Dias</th>
