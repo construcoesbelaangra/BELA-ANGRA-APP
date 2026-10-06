@@ -854,7 +854,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.24.0';
+const VERSAO = '1.25.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1461,6 +1461,8 @@ function ativosNoPeriodo(ini, fim){
   });
 }
 function ativosNoMes(ym){ return ativosNoPeriodo(primeiroDiaMes(ym), ultimoDiaMes(ym)); }
+/* quem se aponta no Ponto: tira o pessoal de escritório (sempre presente, sem ponto) */
+function comPonto(lista){ return lista.filter(f=>!f.escritorio); }
 
 /* ---------- ORDEM DAS LISTAS DE FUNCIONÁRIOS ----------
    A ordem padrão espelha a folha de ponto do Maycon e a medição da Bandeira:
@@ -1585,6 +1587,39 @@ function obraDoFuncionarioEm(f, iso){
   const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
   const exc = reg && reg.excecaoDia ? reg.excecaoDia[iso] : null;
   return (exc && exc.obraId) || obraHistoricaEm(f, iso);
+}
+
+/* ---------- FUNCIONÁRIO DE ESCRITÓRIO (06/10/2026) ----------
+   Pedido do Maycon: a Mariana trabalha em home office para a empresa toda, não
+   para uma obra. Dois efeitos, ligados por uma caixinha só na ficha
+   (`f.escritorio`):
+   1. SEM PONTO — está sempre presente e nunca falta; sai das telas de Ponto e
+      aparece como "trabalhado" nos dias úteis da folha da contabilidade
+      (`statusParaFolhaContabil`). Sem ponto, nenhuma falta é descontada do vale.
+   2. CUSTO RATEADO — o custo dela é dividido em partes iguais entre as obras
+      marcadas em `f.rateioObras` (lista de ids; cadastro, não constante: o nome
+      das obras é dado da empresa). Vale para provisões, rateio de guias e para
+      os lançamentos de pagamento dela (`l.rateioObras`, copiado na criação).
+      Sem nenhuma obra marcada, ela continua "sem obra" como qualquer cadastro
+      incompleto — nada some. */
+function semPonto(f){ return !!(f && f.escritorio); }
+function rateioObrasDe(f){
+  return (f && f.escritorio && Array.isArray(f.rateioObras))
+    ? f.rateioObras.filter(id=>DB.obras.some(o=>o.id===id)) : [];
+}
+/* [{obraId, fator}] — como o custo de uma pessoa se reparte entre obras num dia.
+   Quem não é de escritório (ou não tem obras marcadas) cai inteiro na obra de
+   sempre, igual antes desta função existir. */
+function fatiasCustoFunc(f, iso){
+  const ids = rateioObrasDe(f);
+  if(ids.length) return ids.map(id=>({obraId:id, fator:1/ids.length}));
+  return [{obraId: obraDoFuncionarioEm(f, iso)||'', fator:1}];
+}
+/* o mesmo, para um LANÇAMENTO que carrega `rateioObras` (ou só `obraId`) */
+function fatiasObraLanc(l){
+  const ids = (l.rateioObras||[]).filter(id=>id);
+  if(ids.length) return ids.map(id=>({obraId:id, fator:1/ids.length}));
+  return [{obraId: l.obraId||'', fator:1}];
 }
 
 /* Cargo DEFINITIVO de um funcionário NUM DIA específico — não confundir com
@@ -2969,6 +3004,14 @@ function openFuncModal(id){
         </div>
         <div class="field"><label>Data de admissão <span style="font-weight:400;color:#9aa0ab;">(entrada na empresa)</span></label><input type="date" id="f_admissao" value="${f.admissao||''}"></div>
       </div>
+      <div id="wrap_escritorio">
+        <label class="check"><input type="checkbox" id="f_escritorio" ${f.escritorio?'checked':''} onchange="toggleEscritorio()">
+          Trabalha no escritório / home office (sem ponto, custo dividido entre obras)</label>
+        <div id="wrap_rateioObras" style="${f.escritorio?'':'display:none;'}margin:2px 0 8px 22px;">
+          <p class="help" style="margin:0 0 4px;">Sem ponto: está sempre presente e nunca falta — não precisa apontar. O custo dela é dividido em partes iguais entre as obras marcadas:</p>
+          ${DB.obras.map(o=>`<label class="check" style="display:block;"><input type="checkbox" class="f_rateioObra" value="${o.id}" ${(f.rateioObras||[]).includes(o.id)?'checked':''}> ${esc(o.nome)}</label>`).join('') || '<p class="help">Cadastre as obras primeiro.</p>'}
+        </div>
+      </div>
       <div class="grid grid-3" id="wrap_vinculoDesde" data-ja-mudou="${vinculoMudouAntes?1:0}" style="${vinculoMudouAntes ? '' : 'display:none;'}">
         <div class="field"><label id="lbl_vinculoDesde">Fichado desde</label>
           <input type="date" id="f_vinculoDesde" value="${vinculoDesdeValor}"></div>
@@ -3192,6 +3235,9 @@ function toggleVinculoDesde(){
   if(lbl) lbl.textContent = val('f_tipo')==='fichado' ? 'Fichado desde (registro na contabilidade)' : 'Diarista desde';
 }
 
+function toggleEscritorio(){
+  document.getElementById('wrap_rateioObras').style.display = checked('f_escritorio') ? '' : 'none';
+}
 function toggleFuncTipo(){
   const tipo = val('f_tipo');
   const diarista = tipo==='diarista';
@@ -3347,6 +3393,9 @@ function saveFunc(id){
     holeriteDiarista: checked('f_holeriteDiarista'),
     statusRegistro: val('f_statusRegistro') || 'nao_enviado',
     obraPadrao: val('f_obraPadrao'),
+    escritorio: checked('f_escritorio'),
+    rateioObras: checked('f_escritorio')
+      ? Array.from(document.querySelectorAll('.f_rateioObra:checked')).map(x=>x.value) : [],
     admissao: val('f_admissao'),
     demissao: val('f_demissao'),
     motivoDemissao: val('f_motivoDemissao'),
@@ -3848,7 +3897,7 @@ function renderPontoMensal(){
      continua aparecendo para lançar/corrigir os dias em que trabalhou. */
   const ymPm = `${pmAno}-${String(pmMes).padStart(2,'0')}`;
   /* quem foi fichado em algum dia do mês (inclusive quem era diarista e virou fichado no meio dele) */
-  const todos = ativosNoMes(ymPm).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ymPm), ultimoDiaMes(ymPm)));
+  const todos = comPonto(ativosNoMes(ymPm)).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(ymPm), ultimoDiaMes(ymPm)));
   /* filtrar por obra é o jeito de apontar: chega na obra, vê quem está lá, aponta só aquela equipe */
   const fichados = ordenarFuncionarios(filtraObra(todos, pmObraFiltro));
   if(!fichados.some(f=>f.id===pmFuncId)) pmFuncId = fichados.length ? fichados[0].id : null;
@@ -4227,7 +4276,7 @@ function equipeDoDia(){
      aquele bloqueava até quem foi demitido DENTRO do próprio dia sendo
      lançado — um diarista admitido dia 10 e demitido dia 14 sumia do Ponto
      antes de dar para marcar a presença dos dias 10 a 14 que ele trabalhou. */
-  const base = ativosNoPeriodo(pdiaData, pdiaData).filter(f=>
+  const base = comPonto(ativosNoPeriodo(pdiaData, pdiaData)).filter(f=>
     (pdiaTipo === 'todos' || vinculoEm(f, pdiaData) === pdiaTipo));
   /* Filtro de obra tem que respeitar o DIA sendo lançado, não a obra atual do
      cadastro — senão um fichado transferido (`f.obraHistorico`) aparece na
@@ -4512,7 +4561,7 @@ function preencherPresenca(tipo, ini, fim){
   let n = 0, pessoas = 0;
   /* ativosNoPeriodo, não status!=='inativo': mesmo motivo do equipeDoDia —
      quem foi demitido dentro do período escolhido precisa continuar entrando. */
-  ativosNoPeriodo(ini, fim).filter(f=>
+  comPonto(ativosNoPeriodo(ini, fim)).filter(f=>
     (tipo==='todos' || vinculoNoPeriodo(f, tipo, ini, fim))).forEach(f=>{
     let tocou = false;
     let iso = ini;
@@ -4642,6 +4691,12 @@ function executarPreenchimento(tipo){
    `STATUS_CYCLE` do fichado. `f.apareceNaFolhaContabil` (03_func.js) é quem liga
    isso, funcionário por funcionário — sem precisar duplicar o cadastro dele. */
 function statusParaFolhaContabil(f, iso, ym){
+  /* pessoal de escritório (home office) não tem ponto: está sempre presente.
+     Dia útil comum = trabalhado; feriado fica em branco como para todo mundo. */
+  if(semPonto(f)){
+    const dw = dowOf(iso);
+    return (dw>=1 && dw<=5 && !isFeriado(iso)) ? 'trabalhado' : '';
+  }
   if(vinculoEm(f, iso) === 'fichado'){
     const reg = DB.pontoMensal[`${f.id}_${ym}`] || {dias:{}};
     return reg.dias[iso] || '';
@@ -6290,7 +6345,7 @@ function sincronizaLancamentoAdiantamento(a){
   if(!ct) return;
   const campos = {
     tipo:'despesa', natureza:'operacao', empresaId: ct.empresaId, contaId: a.contaId,
-    categoriaId: a.categoriaId || '', obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+    categoriaId: a.categoriaId || '', obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: f.tipoServico || '',
     descricao: `${a.tipo==='desconto'?'Desconto':'Vale/adiantamento'} — ${f.nome}${a.descricao?' — '+a.descricao:''}`,
     valor: a.valor, vencimento: a.data, obs: ''
   };
@@ -6471,7 +6526,7 @@ function toggleAdiantamentoFichadoPago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.fichadosCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: f.tipoServico || '',
     descricao: `Adiantamento de salário (dia 20) — ${f.nome} — ${monthLabel(mes)}`,
     valor: c.adiantamento, vencimento: c.dataAdiantamento, obs: ''
   };
@@ -6523,7 +6578,7 @@ function toggleSaldoFichadoPago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.fichadosCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: f.tipoServico || '',
     descricao: `Saldo de salário (5º dia útil) — ${f.nome} — ${monthLabel(mes)}`,
     valor: c.saldo, vencimento: c.dataPagamento, obs: ''
   };
@@ -7328,7 +7383,7 @@ function toggleValePago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.valesCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: f.tipoServico || '',
     descricao: `Vale-transporte/refeição — ${f.nome} — ${monthLabel(mes)}`,
     valor: r.liquido, vencimento: hoje, obs: ''
   };
@@ -8467,22 +8522,34 @@ let custoServico = '';
 let custoPeriodicidade = '';
 let custoAgrupar = 'funcionario';
 
+/* Linhas do custo consolidado. Pessoal de escritório (`f.escritorio` com obras
+   marcadas) vira UMA linha por obra, com a fatia do custo (partes iguais) —
+   assim o filtro e o resumo por obra somam certo. Os demais, uma linha só. */
+function linhasCusto(){
+  let lista = ativos();
+  if(custoVinculo)       lista = lista.filter(f=>f.tipo===custoVinculo);
+  if(custoServico)       lista = lista.filter(f=>f.tipoServico===custoServico);
+  if(custoPeriodicidade) lista = lista.filter(f=>f.tipo==='diarista' && f.periodicidade===custoPeriodicidade);
+  const rows = [];
+  lista.forEach(f=>{
+    const e = calcEncargos(f, custoMes);
+    const epi = DB.config.encargosAtivos.epi ? e.epi.total : 0;
+    const encargos = e.totalEncargos - epi;
+    const fatias = rateioObrasDe(f).length ? fatiasCustoFunc(f, todayISO()) : [{obraId: f.obraPadrao||'', fator:1}];
+    fatias.forEach(({obraId, fator})=>{
+      if(custoObra && obraId !== custoObra) return;
+      rows.push({f, obraId, fator, base:e.base*fator, encargos:encargos*fator, epi:epi*fator, custoTotal:e.custoTotal*fator});
+    });
+  });
+  return rows.filter(r=>r.base>0 || r.epi>0).sort((a,b)=>b.custoTotal-a.custoTotal);
+}
+
 function renderCustos(){
   initValesMes();
   if(!custoMes) custoMes = valesMes;
   const c = document.getElementById('content');
 
-  let lista = ativos();
-  if(custoObra)          lista = lista.filter(f=>f.obraPadrao===custoObra);
-  if(custoVinculo)       lista = lista.filter(f=>f.tipo===custoVinculo);
-  if(custoServico)       lista = lista.filter(f=>f.tipoServico===custoServico);
-  if(custoPeriodicidade) lista = lista.filter(f=>f.tipo==='diarista' && f.periodicidade===custoPeriodicidade);
-
-  const rows = lista.map(f=>{
-    const e = calcEncargos(f, custoMes);
-    return {f, base:e.base, encargos:e.totalEncargos - (DB.config.encargosAtivos.epi?e.epi.total:0),
-            epi: DB.config.encargosAtivos.epi ? e.epi.total : 0, custoTotal:e.custoTotal};
-  }).filter(r=>r.base>0 || r.epi>0).sort((a,b)=>b.custoTotal-a.custoTotal);
+  const rows = linhasCusto();
 
   const tot = k => rows.reduce((s,r)=>s+r[k],0);
   const obraOpts = DB.obras.map(o=>`<option value="${o.id}" ${custoObra===o.id?'selected':''}>${esc(o.nome)}</option>`).join('');
@@ -8527,7 +8594,7 @@ function renderCustos(){
       </div>
 
       <div class="kpis" style="margin-top:6px;">
-        <div class="kpi"><div class="v">${rows.length}</div><div class="l">Funcionários no filtro</div></div>
+        <div class="kpi"><div class="v">${new Set(rows.map(r=>r.f.id)).size}</div><div class="l">Funcionários no filtro</div></div>
         <div class="kpi"><div class="v">${fmtMoney(tot('base'))}</div><div class="l">Salários e diárias</div></div>
         <div class="kpi"><div class="v">${fmtMoney(tot('encargos'))}</div><div class="l">Encargos e provisões</div></div>
         <div class="kpi"><div class="v" style="color:var(--azul-esc);">${fmtMoney(tot('custoTotal'))}</div><div class="l">Custo real total</div></div>
@@ -8547,8 +8614,8 @@ function renderCustos(){
   `;
 }
 
-function chaveAgrupamento(f){
-  if(custoAgrupar==='obra')    return obraNome(f.obraPadrao);
+function chaveAgrupamento(f, obraId){
+  if(custoAgrupar==='obra')    return obraNome(obraId);
   if(custoAgrupar==='servico') return SERVICO_LABEL[f.tipoServico] || '—';
   if(custoAgrupar==='vinculo') return f.tipo==='fichado' ? 'Fichados' : `Diaristas ${PERIODICIDADE_LABEL[f.periodicidade]||''}`.trim();
   if(custoAgrupar==='funcao')  return (f.funcao||'Sem função').toUpperCase();
@@ -8562,7 +8629,7 @@ function tabelaCusto(rows){
         <th class="num">Base</th><th class="num">Encargos</th><th class="num">EPI</th><th class="num">Custo real</th></tr></thead>
       <tbody>${rows.map(r=>`<tr>
         <td><b>${esc(r.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc(r.f.funcao||'')}</span></td>
-        <td>${esc(obraNome(r.f.obraPadrao))}</td>
+        <td>${esc(obraNome(r.obraId))}${r.fator<1?' <span style="font-size:11px;color:#9aa0ab;">(1/'+Math.round(1/r.fator)+')</span>':''}</td>
         <td>${r.f.tipo==='fichado'?'Fichado':'Diarista '+(PERIODICIDADE_LABEL[r.f.periodicidade]||'')}</td>
         <td>${SERVICO_LABEL[r.f.tipoServico]||'—'}</td>
         <td class="num">${fmtMoney(r.base)}</td>
@@ -8579,9 +8646,9 @@ function tabelaCusto(rows){
   }
   const grupos = {};
   rows.forEach(r=>{
-    const k = chaveAgrupamento(r.f);
+    const k = chaveAgrupamento(r.f, r.obraId);
     if(!grupos[k]) grupos[k] = {n:0, base:0, encargos:0, epi:0, custoTotal:0};
-    grupos[k].n++; grupos[k].base+=r.base; grupos[k].encargos+=r.encargos;
+    grupos[k].n+=r.fator; grupos[k].base+=r.base; grupos[k].encargos+=r.encargos;
     grupos[k].epi+=r.epi; grupos[k].custoTotal+=r.custoTotal;
   });
   const lista = Object.entries(grupos).sort((a,b)=>b[1].custoTotal-a[1].custoTotal);
@@ -8592,7 +8659,7 @@ function tabelaCusto(rows){
       <th class="num">Custo real</th><th class="num">% do total</th></tr></thead>
     <tbody>${lista.map(([k,g])=>`<tr>
       <td><b>${esc(k)}</b></td>
-      <td class="num">${g.n}</td>
+      <td class="num">${Number.isInteger(g.n)?g.n:fmtNum(g.n,1)}</td>
       <td class="num">${fmtMoney(g.base)}</td>
       <td class="num">${fmtMoney(g.encargos)}</td>
       <td class="num">${g.epi?fmtMoney(g.epi):'—'}</td>
@@ -8600,7 +8667,7 @@ function tabelaCusto(rows){
       <td class="num">${total?fmtNum(g.custoTotal/total*100,1)+'%':'—'}</td>
     </tr>`).join('')}</tbody>
     <tfoot><tr><th style="text-align:right;">TOTAL</th>
-      <th class="num">${lista.reduce((s,[,g])=>s+g.n,0)}</th>
+      <th class="num">${fmtNum(lista.reduce((s,[,g])=>s+g.n,0),0)}</th>
       <th class="num">${fmtMoney(lista.reduce((s,[,g])=>s+g.base,0))}</th>
       <th class="num">${fmtMoney(lista.reduce((s,[,g])=>s+g.encargos,0))}</th>
       <th class="num">${fmtMoney(lista.reduce((s,[,g])=>s+g.epi,0))}</th>
@@ -8622,17 +8689,7 @@ function encargosResumoTexto(){
 }
 
 function printCustos(){
-  let lista = ativos();
-  if(custoObra)          lista = lista.filter(f=>f.obraPadrao===custoObra);
-  if(custoVinculo)       lista = lista.filter(f=>f.tipo===custoVinculo);
-  if(custoServico)       lista = lista.filter(f=>f.tipoServico===custoServico);
-  if(custoPeriodicidade) lista = lista.filter(f=>f.tipo==='diarista' && f.periodicidade===custoPeriodicidade);
-
-  const rows = lista.map(f=>{
-    const e = calcEncargos(f, custoMes);
-    return {f, base:e.base, encargos:e.totalEncargos - (DB.config.encargosAtivos.epi?e.epi.total:0),
-            epi: DB.config.encargosAtivos.epi ? e.epi.total : 0, custoTotal:e.custoTotal};
-  }).filter(r=>r.base>0 || r.epi>0).sort((a,b)=>b.custoTotal-a.custoTotal);
+  const rows = linhasCusto();
   if(!rows.length){ alert('Nada a imprimir com estes filtros.'); return; }
 
   const filtros = [];
@@ -8646,7 +8703,7 @@ function printCustos(){
   // resumos cruzados
   const resumo = (fn, titulo) => {
     const g = {};
-    rows.forEach(r=>{ const k = fn(r.f); g[k] = (g[k]||0) + r.custoTotal; });
+    rows.forEach(r=>{ const k = fn(r.f, r.obraId); g[k] = (g[k]||0) + r.custoTotal; });
     const ent = Object.entries(g).sort((a,b)=>b[1]-a[1]);
     return `
     <table class="dtab" style="margin-top:10px;">
@@ -8664,7 +8721,7 @@ function printCustos(){
         <th style="text-align:right;">Base</th><th style="text-align:right;">Encargos</th><th style="text-align:right;">EPI</th><th style="text-align:right;">Custo real</th></tr></thead>
       <tbody>${rows.map((r,i)=>`<tr>
         <td class="c">${i+1}</td><td>${esc(r.f.nome)}</td><td>${esc(r.f.funcao||'—')}</td>
-        <td>${esc(obraNome(r.f.obraPadrao))}</td>
+        <td>${esc(obraNome(r.obraId))}${r.fator<1?' (1/'+Math.round(1/r.fator)+')':''}</td>
         <td>${r.f.tipo==='fichado'?'Fichado':'Diarista'}</td>
         <td>${SERVICO_LABEL[r.f.tipoServico]||'—'}</td>
         <td class="n">${fmtNum(r.base)}</td><td class="n">${fmtNum(r.encargos)}</td>
@@ -8677,7 +8734,7 @@ function printCustos(){
         <td class="n">${fmtNum(totalGeral)}</td></tr></tfoot>
     </table>
 
-    ${resumo(f=>obraNome(f.obraPadrao), 'Custo por obra')}
+    ${resumo((f, obraId)=>obraNome(obraId), 'Custo por obra')}
     ${resumo(f=>SERVICO_LABEL[f.tipoServico]||'—', 'Custo por tipo de serviço')}
     ${resumo(f=>f.tipo==='fichado'?'Fichados':`Diaristas ${PERIODICIDADE_LABEL[f.periodicidade]||''}`.trim(), 'Custo por vínculo')}
 
@@ -10903,7 +10960,7 @@ function lancamentosFiltrados(){
   return DB.lancamentos.filter(l=>{
     if(tipoDaAba && l.tipo !== tipoDaAba) return false;
     if(lancEmpresa && l.empresaId !== lancEmpresa && l.empresaDestinoId !== lancEmpresa) return false;
-    if(lancObra && l.obraId !== lancObra) return false;
+    if(lancObra && !fatiasObraLanc(l).some(x=>x.obraId === lancObra)) return false;
 
     if(lancPeriodo === 'aberto' && statusLanc(l) === 'quitado') return false;
     if(lancPeriodo === 'mes'){
@@ -11049,7 +11106,7 @@ function tabelaLancamentos(lista){
               ? esc(contaNome(l.contaId)) + ' → ' + esc(contaNome(l.contaDestinoId))
               : esc(l.categoriaId?categoriaNome(l.categoriaId):'—')}</td>
         <td>${esc(empresaFinNome(l.empresaId))}</td>
-        <td>${l.obraId?esc(obraNome(l.obraId)):'—'}</td>
+        <td>${(l.rateioObras||[]).length ? `Rateado (${l.rateioObras.length} obras)` : (l.obraId?esc(obraNome(l.obraId)):'—')}</td>
         <td class="num">${fmtMoney(l.valor)}</td>
         <td class="num" style="font-weight:700;">${st==='quitado'?'—':fmtMoney(saldoAberto(l))}</td>
         <td>${badgeStatus(l)}</td>
@@ -11271,7 +11328,7 @@ function openLancDetalhe(id){
                l.empresaDestinoId&&l.empresaDestinoId!==l.empresaId?` <span class="badge badge-yellow">entre empresas</span>`:''}</td></tr>`
           : `<tr><th>Categoria</th><td>${esc(l.categoriaId?categoriaNome(l.categoriaId):'—')}</td></tr>
              <tr><th>Conta prevista</th><td>${esc(l.contaId?contaNome(l.contaId):'— escolhida na baixa —')}</td></tr>`}
-        <tr><th>Obra</th><td>${l.obraId?esc(obraNome(l.obraId)):'—'}</td></tr>
+        <tr><th>Obra</th><td>${(l.rateioObras||[]).length ? 'Rateado igualmente: '+l.rateioObras.map(id=>esc(obraNome(id))).join(', ') : (l.obraId?esc(obraNome(l.obraId)):'—')}</td></tr>
         ${l.tipo!=='transferencia'?`<tr><th>Operação</th><td>${l.tipoServico?esc(SERVICO_LABEL[l.tipoServico]):'— não classificado —'}</td></tr>`:''}
         ${l.tipoGuia?`<tr><th>Rateio de guia</th><td>${esc(TIPO_GUIA_LABEL[l.tipoGuia])} <a href="#" onclick="closeModal(); goTo('rateioGuias'); return false;">ver rateio</a></td></tr>`:''}
         <tr><th>Natureza</th><td>${NATUREZA_LABEL[l.natureza]||'Operação'}${
@@ -12026,19 +12083,22 @@ function blocoPorObra(){
   const linhas = DB.obras.map(o=>{
     let rec = 0, des = 0;
     DB.lancamentos.forEach(l=>{
-      if(l.obraId !== o.id) return;
+      /* lançamento rateado (pessoal de escritório) conta só a fatia desta obra */
+      const fatia = fatiasObraLanc(l).find(x=>x.obraId === o.id);
+      if(!fatia) return;
       if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
-      const v = valorNoMes(l, fluxoMes, fluxoRegime);
+      const v = valorNoMes(l, fluxoMes, fluxoRegime) * fatia.fator;
       if(!v) return;
       if(l.tipo === 'receita') rec += v; else des += v;
     });
+    rec = Math.round(rec*100)/100; des = Math.round(des*100)/100;
     return {o, rec, des, res: Math.round((rec-des)*100)/100};
   }).filter(x=>x.rec || x.des);
 
   const semObra = (()=>{
     let rec = 0, des = 0;
     DB.lancamentos.forEach(l=>{
-      if(l.obraId) return;
+      if(fatiasObraLanc(l)[0].obraId) return;
       if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
       const v = valorNoMes(l, fluxoMes, fluxoRegime);
       if(!v) return;
@@ -13811,14 +13871,17 @@ function fichadosParaProvisao(){
 function provisoesPorObra(linhas, ymFim){
   const porObra = {};
   linhas.forEach(l=>{
-    const obraId = obraDoFuncionarioEm(l.f, ultimoDiaMes(ymFim)) || '';
-    if(!porObra[obraId]) porObra[obraId] = {obraId, acumulado:0, doMes:0, qtd:0};
-    porObra[obraId].acumulado += l.acumulado;
-    porObra[obraId].doMes += l.doMes;
-    porObra[obraId].qtd++;
+    /* pessoal de escritório reparte o custo entre as obras marcadas (fatiasCustoFunc) */
+    fatiasCustoFunc(l.f, ultimoDiaMes(ymFim)).forEach(({obraId, fator})=>{
+      if(!porObra[obraId]) porObra[obraId] = {obraId, acumulado:0, doMes:0, qtd:0};
+      porObra[obraId].acumulado += l.acumulado * fator;
+      porObra[obraId].doMes += l.doMes * fator;
+      porObra[obraId].qtd += fator;
+    });
   });
   return Object.values(porObra)
-    .map(o=>({...o, acumulado: Math.round(o.acumulado*100)/100, doMes: Math.round(o.doMes*100)/100}))
+    .map(o=>({...o, acumulado: Math.round(o.acumulado*100)/100, doMes: Math.round(o.doMes*100)/100,
+              qtd: Math.round(o.qtd*100)/100}))
     .sort((a,b)=> (a.obraId?obraNome(a.obraId):'~').localeCompare(b.obraId?obraNome(b.obraId):'~'));
 }
 
@@ -13928,7 +13991,7 @@ function renderProvisoes(){
           <thead><tr><th>Obra</th><th class="num">Fichados</th><th class="num">Acumulado até ${monthLabel(provMes)}</th><th class="num">Valor deste mês</th></tr></thead>
           <tbody>${porObraLinhas.map(o=>`<tr>
             <td>${o.obraId ? esc(obraNome(o.obraId)) : '<span style="color:#9aa0ab;">Sem obra</span>'}</td>
-            <td class="num">${o.qtd}</td>
+            <td class="num">${Number.isInteger(o.qtd)?o.qtd:fmtNum(o.qtd,1)}</td>
             <td class="num">${fmtMoney(o.acumulado)}</td>
             <td class="num">${fmtMoney(o.doMes)}</td>
           </tr>`).join('')}</tbody>
@@ -14079,9 +14142,11 @@ function resumoRateioGuias(mes){
   const porObra = {};
   const linhaObra = obraId => (porObra[obraId] = porObra[obraId] || {obraId, fgts:0, inss:0, simples:0});
   linhas.forEach(l=>{
-    const obraId = obraDoFuncionarioEm(l.f, ultimoDiaMes(mes)) || '';
-    const o = linhaObra(obraId);
-    o.fgts += l.fgts; o.inss += l.inss;
+    /* pessoal de escritório reparte a cota entre as obras marcadas (fatiasCustoFunc) */
+    fatiasCustoFunc(l.f, ultimoDiaMes(mes)).forEach(({obraId, fator})=>{
+      const o = linhaObra(obraId);
+      o.fgts += l.fgts * fator; o.inss += l.inss * fator;
+    });
   });
   simplesLancs.forEach(l=>{
     const o = linhaObra(l.obraId || '');
@@ -14251,9 +14316,10 @@ function obrasComSocio(){
 function receitaCustoObraMesCompetencia(obraId, mes){
   let rec = 0, des = 0;
   DB.lancamentos.forEach(l=>{
-    if(l.obraId !== obraId) return;
+    const fatia = fatiasObraLanc(l).find(x=>x.obraId === obraId);
+    if(!fatia) return;
     if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
-    const v = valorNoMes(l, mes, 'competencia');
+    const v = valorNoMes(l, mes, 'competencia') * fatia.fator;
     if(!v) return;
     if(l.tipo === 'receita') rec += v; else des += v;
   });
