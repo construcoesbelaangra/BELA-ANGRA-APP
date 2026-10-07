@@ -857,7 +857,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.25.5';
+const VERSAO = '1.25.6';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -11306,6 +11306,14 @@ function sociosJaUsados(){
   return Object.keys(set).sort((a,b)=>a.localeCompare(b,'pt-BR'));
 }
 
+/* devolve quantas baixas foram movidas da conta antiga para a atual do lançamento */
+function moverBaixasDeConta(l, contaAntiga){
+  if(l.tipo === 'transferencia' || !contaAntiga || !l.contaId || contaAntiga === l.contaId) return 0;
+  let n = 0;
+  (l.baixas||[]).forEach(b=>{ if(!b.contaId || b.contaId === contaAntiga){ b.contaId = l.contaId; n++; } });
+  return n;
+}
+
 function saveLanc(id, irParaBaixa){
   const desc  = val('l_desc').trim();
   const valor = numVal('l_valor');
@@ -11328,7 +11336,15 @@ function saveLanc(id, irParaBaixa){
   let alvo;
   if(id){
     alvo = DB.lancamentos.find(x=>x.id===id);
+    const contaAntiga = alvo.contaId;
     Object.assign(alvo, dados);
+    /* Trocar a conta do lançamento leva junto as baixas que estavam NELA. O saldo anda pela
+       baixa (cada uma guarda a própria conta), então sem isto o extrato continuava debitando
+       da conta antiga (caso real de 07/10/2026: pagamentos mudados para o Itaú Empresa, mas
+       as baixas ficaram no Nu Empresa). Baixa que foi dada de propósito em OUTRA conta
+       (diferente da prevista antiga) não é tocada. */
+    const moveu = moverBaixasDeConta(alvo, contaAntiga);
+    if(moveu){ const ct = conta(alvo.contaId); toast(`${moveu} baixa(s) também passaram para ${ct ? ct.nome : 'a nova conta'}.`); }
   }else{
     alvo = Object.assign({id: uid(), baixas: [], origem: 'manual'}, dados);
     DB.lancamentos.push(alvo);
