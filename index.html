@@ -857,7 +857,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.25.6';
+const VERSAO = '1.26.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -12210,19 +12210,72 @@ function blocoPorObra(){
    `blocoPorObra()` trata quem não tem obra.
    ========================================================= */
 
-function blocoPorOperacao(){
-  const chaves = [...Object.keys(SERVICO_LABEL), ''];
-  const linhas = chaves.map(k=>{
-    let rec = 0, des = 0;
-    DB.lancamentos.forEach(l=>{
-      if((l.tipoServico||'') !== k) return;
-      if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
-      const v = valorNoMes(l, fluxoMes, fluxoRegime);
-      if(!v) return;
-      if(l.tipo === 'receita') rec += v; else des += v;
+/* ---------- LANÇAMENTO SEM OPERAÇÃO É DILUÍDO (14/10/2026) ----------
+   Pedido do Maycon: a linha "Não classificado" aparecia sempre NEGATIVA (só
+   tem custo, nunca receita) e distorcia o resultado das duas operações. O que
+   não tem operação passa a ser DIVIDIDO em partes iguais entre as operações
+   em andamento — uma "operação em andamento" é um par (obra × serviço) que
+   existe de verdade: tem funcionário ativo daquele serviço na obra, ou
+   contrato de empreitada nela.
+   - Lançamento COM obra: divide só entre os pares DAQUELA obra (Gustavo tem
+     Homem-Hora e Empreitada → metade para cada; Neymar só tem Homem-Hora →
+     100% Homem-Hora).
+   - Lançamento SEM obra: divide entre TODOS os pares (1 empreitada + 3
+     homem-hora = 4 partes → Empreitada leva 1/4, Homem-Hora leva 3/4).
+   Rateado em obras (`l.rateioObras`, pessoal de escritório): cada obra
+   leva a sua fatia e divide dentro dos pares dela.
+   Só sobra "Não classificado" se NÃO existir operação em andamento nenhuma. */
+function paresObraOperacao(){
+  const set = {};
+  const add = (obraId, tipo)=>{ if(obraId && tipo && SERVICO_LABEL[tipo]) set[obraId+'|'+tipo] = {obraId, tipo}; };
+  (DB.funcionarios||[]).forEach(f=>{ if(f.status !== 'inativo') add(f.obraPadrao, f.tipoServico); });
+  (DB.contratosEmpreitada||[]).forEach(c=>add(c.obraId, 'empreitada'));
+  return Object.values(set).filter(p=>(DB.obras||[]).some(o=>o.id === p.obraId));
+}
+/* [{tipo, fator}] — em que operação(ões) este lançamento conta. `pares` é opcional
+   (passar a lista já calculada quando for chamar em laço). */
+function fatiasOperacaoLanc(l, pares){
+  if(l.tipoServico) return [{tipo:l.tipoServico, fator:1}];
+  pares = pares || paresObraOperacao();
+  if(!pares.length) return [{tipo:'', fator:1}];
+  const acc = {};
+  fatiasObraLanc(l).forEach(({obraId, fator})=>{
+    let escopo = obraId ? pares.filter(p=>p.obraId === obraId) : [];
+    if(!escopo.length) escopo = pares;
+    escopo.forEach(p=>{ acc[p.tipo] = (acc[p.tipo]||0) + fator/escopo.length; });
+  });
+  return Object.keys(acc).map(t=>({tipo:t, fator:acc[t]}));
+}
+/* texto curto: "Gustavo — Empreitada · Gustavo — Homem-Hora · ..." */
+function textoOperacoesEmAndamento(){
+  return paresObraOperacao()
+    .sort((a,b)=>(obraNome(a.obraId)+a.tipo).localeCompare(obraNome(b.obraId)+b.tipo, 'pt-BR'))
+    .map(p=>`${obraNome(p.obraId)} — ${SERVICO_LABEL[p.tipo]}`).join(' · ');
+}
+
+/* soma receita/despesa por operação, já com a diluição. `valorDe(l)` devolve o
+   valor do lançamento no critério da tela (mês/regime ou total baixado). */
+function somarPorOperacao(valorDe){
+  const pares = paresObraOperacao();
+  const acc = {};
+  DB.lancamentos.forEach(l=>{
+    if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+    const v = valorDe(l);
+    if(!v) return;
+    fatiasOperacaoLanc(l, pares).forEach(({tipo, fator})=>{
+      const a = acc[tipo] = acc[tipo] || {rec:0, des:0};
+      if(l.tipo === 'receita') a.rec += v*fator; else a.des += v*fator;
     });
-    return {nome: k ? SERVICO_LABEL[k] : 'Não classificado', rec, des, res: Math.round((rec-des)*100)/100};
+  });
+  const r2 = n => Math.round(n*100)/100;
+  return [...Object.keys(SERVICO_LABEL), ''].map(k=>{
+    const a = acc[k] || {rec:0, des:0};
+    return {chave:k, nome: k ? SERVICO_LABEL[k] : 'Não classificado', rec:r2(a.rec), des:r2(a.des), res:r2(a.rec-a.des)};
   }).filter(x=>x.rec || x.des);
+}
+
+function blocoPorOperacao(){
+  const linhas = somarPorOperacao(l=>valorNoMes(l, fluxoMes, fluxoRegime));
 
   return `
   <div class="card">
@@ -12241,7 +12294,10 @@ function blocoPorOperacao(){
     </div>
     <p class="help" style="margin-bottom:0;">
       Igual ao resultado por obra: só entra o que foi lançado no financeiro. O custo da mão
-      de obra ainda não é somado sozinho aqui — ver o aviso em <b>Resultado por obra</b>.
+      de obra ainda não é somado sozinho aqui — ver o aviso em <b>Resultado por obra</b>.<br>
+      <b>Lançamento sem operação é dividido</b> em partes iguais entre as operações em
+      andamento (com obra: só as dela; sem obra: todas). Operações em andamento:
+      ${esc(textoOperacoesEmAndamento() || 'nenhuma')}.
     </p>
   </div>`;
 }
@@ -12257,18 +12313,7 @@ function blocoPorOperacao(){
    "o que já gastei", não o que está previsto/em aberto (mesmo raciocínio já
    documentado: "o saldo anda pela BAIXA, nunca pelo vencimento"). */
 function resultadoTotalPorOperacao(){
-  const chaves = [...Object.keys(SERVICO_LABEL), ''];
-  return chaves.map(k=>{
-    let rec = 0, des = 0;
-    DB.lancamentos.forEach(l=>{
-      if((l.tipoServico||'') !== k) return;
-      if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
-      const v = (l.baixas||[]).reduce((s,b)=>s+(Number(b.valor)||0),0);
-      if(!v) return;
-      if(l.tipo === 'receita') rec += v; else des += v;
-    });
-    return {chave:k, nome: k ? SERVICO_LABEL[k] : 'Não classificado', rec, des, res: Math.round((rec-des)*100)/100};
-  }).filter(x=>x.rec || x.des);
+  return somarPorOperacao(l=>(l.baixas||[]).reduce((s,b)=>s+(Number(b.valor)||0),0));
 }
 
 function blocoTotalPorOperacao(){
@@ -12296,7 +12341,9 @@ function blocoTotalPorOperacao(){
     </div>
     <p class="help" style="margin-bottom:0;">
       Mesmo aviso do bloco do mês: só entra o que foi lançado no financeiro — o custo de mão
-      de obra ainda não é somado sozinho aqui.
+      de obra ainda não é somado sozinho aqui. O que foi lançado <b>sem operação</b> é dividido
+      em partes iguais entre as operações em andamento (com obra: só as dela; sem obra: todas):
+      ${esc(textoOperacoesEmAndamento() || 'nenhuma')}.
     </p>
   </div>`;
 }
@@ -12308,15 +12355,19 @@ function blocoTotalPorOperacao(){
 function imprimirRelatorioOperacao(chave){
   const nome = chave ? SERVICO_LABEL[chave] : 'Não classificado';
   const linhas = [];
+  const pares = paresObraOperacao();
   DB.lancamentos.forEach(l=>{
-    if((l.tipoServico||'') !== chave) return;
     if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+    const fatia = fatiasOperacaoLanc(l, pares).find(x=>x.tipo === (chave||''));
+    if(!fatia) return;
     (l.baixas||[]).forEach(b=>{
       if(!Number(b.valor)) return;
       linhas.push({
-        data: b.data, tipo: l.tipo, descricao: l.descricao||'',
+        data: b.data, tipo: l.tipo,
+        descricao: (l.descricao||'') + (!l.tipoServico && chave ? ` (sem operação — parte de ${fmtNum(fatia.fator*100,0)}%)` : ''),
         obra: obraNome(l.obraId), categoria: categoriaNome(l.categoriaId),
-        conta: contaNome(b.contaId||l.contaId), valor: Number(b.valor)||0
+        conta: contaNome(b.contaId||l.contaId),
+        valor: Math.round((Number(b.valor)||0) * fatia.fator * 100) / 100
       });
     });
   });
