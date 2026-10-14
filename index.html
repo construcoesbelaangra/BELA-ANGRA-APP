@@ -857,7 +857,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.26.0';
+const VERSAO = '1.26.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -12377,6 +12377,49 @@ function imprimirRelatorioOperacao(chave){
   const resultado = Math.round((totalRec-totalDes)*100)/100;
   const periodo = linhas.length ? `${fmtDate(linhas[0].data)} a ${fmtDate(linhas[linhas.length-1].data)}` : '—';
 
+  /* PREVISTO (14/10/2026): o que ainda NÃO foi baixado — saldo em aberto de cada lançamento
+     da operação (medição a receber, guia a vencer, conta a pagar), com a mesma diluição.
+     Fica numa seção separada do caixa, e o resultado projetado = caixa + previsto. */
+  const previstos = [];
+  DB.lancamentos.forEach(l=>{
+    if(l.tipo === 'transferencia' || l.natureza === 'particular') return;
+    const aberto = saldoAberto(l);
+    if(aberto <= 0) return;
+    const fatia = fatiasOperacaoLanc(l, pares).find(x=>x.tipo === (chave||''));
+    if(!fatia) return;
+    previstos.push({
+      data: l.vencimento || '', tipo: l.tipo,
+      descricao: (l.descricao||'') + (!l.tipoServico && chave ? ` (sem operação — parte de ${fmtNum(fatia.fator*100,0)}%)` : ''),
+      obra: obraNome(l.obraId), categoria: categoriaNome(l.categoriaId),
+      parcial: valorBaixado(l) > 0,
+      valor: Math.round(aberto * fatia.fator * 100) / 100
+    });
+  });
+  previstos.sort((a,b)=> (a.data||'9999').localeCompare(b.data||'9999'));
+  const prevRec = Math.round(previstos.filter(x=>x.tipo==='receita').reduce((s,x)=>s+x.valor,0)*100)/100;
+  const prevDes = Math.round(previstos.filter(x=>x.tipo==='despesa').reduce((s,x)=>s+x.valor,0)*100)/100;
+  const projetado = Math.round((resultado + prevRec - prevDes)*100)/100;
+  const blocoPrevisto = previstos.length ? `
+    <h3 style="margin:16px 0 4px;font-size:12px;">Previsto — ainda não baixado (a receber / a pagar)</h3>
+    <table class="dtab">
+      <thead><tr><th>Vencimento</th><th>Tipo</th><th>Descrição</th><th>Obra</th><th>Categoria</th><th class="num">Em aberto</th></tr></thead>
+      <tbody>${previstos.map(x=>`<tr>
+        <td>${x.data?fmtDate(x.data):'—'}</td>
+        <td>${x.tipo==='receita'?'A receber':'A pagar'}</td>
+        <td>${esc(x.descricao)}${x.parcial?' (saldo restante)':''}</td>
+        <td>${esc(x.obra)}</td>
+        <td>${esc(x.categoria)}</td>
+        <td class="num">${x.tipo==='despesa'?'-':''}${fmtMoney(x.valor)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot>
+        <tr><td colspan="5" style="text-align:right;">Previsto a receber</td><td class="num">${fmtMoney(prevRec)}</td></tr>
+        <tr><td colspan="5" style="text-align:right;">Previsto a pagar</td><td class="num">${fmtMoney(prevDes)}</td></tr>
+      </tfoot>
+    </table>
+    <div class="dtotais">
+      Resultado projetado (caixa + previsto): <b style="color:${projetado<0?'#c0392b':'#1f6b3e'};">${fmtMoney(projetado)}</b>
+    </div>` : '';
+
   const html = `
   <div class="doc">
     ${docHead(`Relatório de Resultado — ${esc(nome)}`, '', `Emitida em<br><b>${fmtDate(todayISO())}</b>`)}
@@ -12402,6 +12445,7 @@ function imprimirRelatorioOperacao(chave){
     <div class="dtotais">
       Resultado (${esc(nome)}): <b style="color:${resultado<0?'#c0392b':'#1f6b3e'};">${fmtMoney(resultado)}</b>
     </div>
+    ${blocoPrevisto}
     ${docFoot()}
   </div>`;
   doPrint(html, `Resultado ${nomeArquivoSeguro(nome)} - ${todayISO()}`);
