@@ -305,7 +305,8 @@ html{max-width:100%;overflow-x:hidden;}
 .grid-2{grid-template-columns:repeat(2,minmax(0,1fr));}
 .grid-3{grid-template-columns:repeat(3,minmax(0,1fr));}
 .grid-4{grid-template-columns:repeat(4,minmax(0,1fr));}
-@media(max-width:900px){.grid-2,.grid-3,.grid-4{grid-template-columns:repeat(2,minmax(0,1fr));}}
+.grid-5{display:grid;gap:14px;grid-template-columns:repeat(5,minmax(0,1fr));}
+@media(max-width:900px){.grid-2,.grid-3,.grid-4,.grid-5{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:600px){.grid-2,.grid-3,.grid-4{grid-template-columns:minmax(0,1fr);}}
 .kpi, .grid > *{min-width:0;}
 .kpi .v{overflow-wrap:anywhere;}
@@ -864,7 +865,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.29.1';
+const VERSAO = '1.29.2';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -5964,7 +5965,15 @@ function renderFechamento(){
   const faltaVlr = totalLiq - pagoVlr;
   const tudoPago = calcs.length > 0 && pagos.length === calcs.length;
 
-  c.innerHTML = previsaoPainelHTML() + `
+  /* o painel de previsão vai para o FIM da página (pedido do Maycon, 15/10/2026) — calculado
+     aqui porque ele grava a "foto" da previsão na primeira vez que a sexta aparece */
+  const painelPrevisao = previsaoPainelHTML();
+  /* "Previsto da sexta" do KPI: a mesma estimativa do painel (`previsaoDaSexta`), só que da
+     sexta ESCOLHIDA aqui e respeitando o filtro de obra da tela */
+  const previstoDaSextaFiltrado = Math.round(previsaoDaSexta(fcSexta).linhas
+    .filter(l=>!fcObraFiltro || l.f.obraPadrao===fcObraFiltro)
+    .reduce((s,l)=>s+l.previsto, 0)*100)/100;
+  c.innerHTML = `
     <div class="card">
       <div class="tabs">
         <button class="tab active">Diaristas</button>
@@ -5993,8 +6002,11 @@ function renderFechamento(){
           : `Nesta sexta fecham <b>só os semanais</b>. A próxima quinzena fecha em <b>${fmtDate(addDays(fcSexta,7))}</b>. A âncora fica em Configurações.`}
       </p>
 
-      <div class="grid grid-4" style="margin-top:6px;">
+      <div class="grid grid-5" style="margin-top:6px;">
         <div class="kpi"><div class="v">${calcs.length}</div><div class="l">Diaristas/fichados no fechamento</div></div>
+        <div class="kpi" title="Estimativa do que vai sair nesta sexta: o que já está no ponto + os dias ainda em branco contados como trabalhados${fcObraFiltro?' (só a obra filtrada)':''}">
+          <div class="v" style="color:var(--azul-esc);">${fmtMoney(previstoDaSextaFiltrado)}</div>
+          <div class="l">Previsto da sexta ${fmtDate(fcSexta)}</div></div>
         <div class="kpi"><div class="v">${fmtMoney(totalBruto)}</div><div class="l">Total em diárias</div></div>
         <div class="kpi"><div class="v" style="color:var(--vermelho);">${fmtMoney(totalVales)}</div><div class="l">Vales a descontar</div></div>
         <div class="kpi"><div class="v">${fmtMoney(totalLiq)}</div><div class="l">Líquido a pagar${totalQuent?` · ${totalQuent} quentinhas`:''}${totalComissao?` · +${fmtMoney(totalComissao)} de comissão`:''}${totalVtExtra?` · +${fmtMoney(totalVtExtra)} de VT extra`:''}</div></div>
@@ -6090,7 +6102,7 @@ function renderFechamento(){
       </div>
       <p class="help">Período semanal = sábado a sexta (7 dias). Quinzenal = 14 dias terminando na sexta. Assim, um sábado trabalhado sempre cai no pagamento da sexta seguinte.</p>` : ''}
     </div>
-  `;
+  ` + painelPrevisao;
 }
 
 /* ---- Recibo individual do diarista (ou comissão-só de fichado) ----
