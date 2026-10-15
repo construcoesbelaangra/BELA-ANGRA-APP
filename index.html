@@ -864,7 +864,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.28.2';
+const VERSAO = '1.29.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4546,6 +4546,7 @@ function renderPontoDia(){
               : 'Acende depois que você preencher o dia. Serve para confirmar tudo de uma vez, depois de marcar as faltas.'}">
             ✓ Confirmar todos${pend?` (${pend})`:''}
           </button>`; })()}
+        <button class="btn btn-secondary btn-sm" onclick="printRelatorioDia()">🖨️ Relatório do dia (PDF)</button>
         <button class="btn btn-secondary btn-sm" onclick="limparODia()">Limpar o dia</button>
       </div>
 
@@ -4631,6 +4632,64 @@ function preencherEsteDia(){
 
 /* Escotilha de saída: apaga o dia inteiro para recomeçar. Essa pergunta antes,
    porque aqui sim se perde lançamento. */
+/* ---------- RELATÓRIO DO DIA (15/10/2026) ----------
+   Pedido do Maycon: da tela "Lançar o dia", um relatório com funcionário, cargo, tipo de
+   serviço e presença. Usa a MESMA lista da tela (`equipeDoDia`: respeita folha Fichados/
+   Diaristas/Todos, filtro de obra e ordem escolhida), então sai no papel o que está filtrado.
+   Cargo = o do DIA (promoção/função do dia); tipo de serviço = o do DIA (`tipoServicoEm`). */
+function rotuloPresencaDia(s, feriado){
+  if(s.status === 'trabalhado') return s.auto ? 'Presente (a confirmar)' : 'Presente';
+  if(s.status === 'falta' || s.status === 'falta_injustificada') return 'Falta';
+  if(s.status === 'falta_justificada') return 'Falta justificada';
+  if(s.status === 'atestado')          return 'Falta com atestado';
+  if(s.status === 'licenca')           return 'Licença';
+  if(s.status === 'folga')             return 'Folga';
+  return feriado ? 'Não trabalhou (feriado)' : 'Sem lançamento';
+}
+function printRelatorioDia(){
+  initPdia();
+  const lista = equipeDoDia();
+  if(!lista.length){ alert('Ninguém na lista deste dia — nada a imprimir.'); return; }
+  const iso = pdiaData;
+  const feriado = feriadoDoDia(iso);
+  const linhas = lista.map(f=>{
+    const s = statusDoDia(f, iso);
+    return {
+      nome: f.nome,
+      cargo: funcaoEfetivaNoDia(f, iso) || '—',
+      servico: SERVICO_LABEL[tipoServicoEm(f, iso)] || '—',
+      presenca: rotuloPresencaDia(s, feriado), status: s.status || ''
+    };
+  });
+  const cont = k => linhas.filter(k).length;
+  const nPres = cont(l=>l.status==='trabalhado');
+  const nFalta = cont(l=>l.status && l.status!=='trabalhado' && l.status!=='licenca' && l.status!=='folga');
+  const nVazio = cont(l=>!l.status);
+  const filtros = [];
+  if(pdiaTipo==='fichado') filtros.push('Fichados'); else if(pdiaTipo==='diarista') filtros.push('Diaristas'); else filtros.push('Fichados e diaristas');
+  if(pdiaObra) filtros.push(obraNome(pdiaObra));
+  const compacta = linhas.length > 28 ? ' compacta' : '';
+  const html = `
+  <div class="doc">
+    ${docHead('Relatório de Presença do Dia',
+      `${esc(DOW_FULL[dowOf(iso)])}, ${fmtDate(iso)} · ${esc(filtros.join(' · '))}${feriado?` · 🎉 ${esc(feriado.nome)}`:''}`,
+      `Emitido em<br><b>${fmtDate(todayISO())}</b>`)}
+    <p class="dnote" style="margin:0 0 6px;">
+      <b>${linhas.length}</b> pessoa(s) · Presentes: <b>${nPres}</b> · Faltas: <b>${nFalta}</b> ·
+      ${feriado?'Não trabalharam':'Sem lançamento'}: <b>${nVazio}</b>
+    </p>
+    <table class="dtab${compacta}">
+      <thead><tr><th style="width:28px;">#</th><th>Funcionário</th><th>Cargo</th><th>Tipo de serviço</th><th>Presença</th></tr></thead>
+      <tbody>${linhas.map((l,i)=>`<tr>
+        <td class="c">${i+1}</td><td>${esc(l.nome)}</td><td>${esc(l.cargo)}</td><td>${esc(l.servico)}</td>
+        <td><b style="color:${l.status==='trabalhado'?'#1f6b3e':(l.status&&l.status!=='licenca'&&l.status!=='folga'?'#c0392b':'#6c7280')};">${esc(l.presenca)}</b></td>
+      </tr>`).join('')}</tbody>
+    </table>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, `Presenca do dia ${iso}${pdiaObra?' - '+nomeArquivoSeguro(obraNome(pdiaObra)):''}`);
+}
+
 function limparODia(){
   const lista = equipeDoDia();
   if(!lista.length) return;
