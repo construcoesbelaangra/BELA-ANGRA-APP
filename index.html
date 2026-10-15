@@ -671,6 +671,13 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 .dtab td{border:1px solid #b9bec8;padding:3px 5px;}
 .dtab td.n{text-align:right;white-space:nowrap;}
 /* versão apertada, para relatório de uma página só com 40+ linhas (Resumo de Vales) */
+/* select com busca (selectComBusca, 02_core.js) */
+.combo{position:relative;}
+.combo-input{width:100%;}
+.combo-lista{position:absolute;left:0;right:0;top:100%;z-index:60;background:#fff;border:1px solid #c9ced8;border-radius:8px;max-height:220px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.18);margin-top:2px;}
+.combo-op{padding:7px 10px;cursor:pointer;font-size:13px;}
+.combo-op:hover,.combo-op.sel{background:#e9edf6;}
+.combo-vazio{padding:8px 10px;color:#9aa0ab;font-size:12.5px;}
 .dtab.compacta th, .dtab.compacta td{padding:1.5px 5px;}
 .dtab.compacta td{font-size:9.5px;white-space:nowrap;}
 .dtab td.c{text-align:center;}
@@ -857,7 +864,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.27.0';
+const VERSAO = '1.28.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1335,6 +1342,56 @@ function openModal(html, wide){
   root.innerHTML = `<div class="modal-bg" onclick="if(event.target===this) closeModal()"><div class="modal${wide?' wide':''}">${html}</div></div>`;
 }
 function closeModal(){ document.getElementById('modalRoot').innerHTML = ''; }
+
+/* ---------- SELECT COM BUSCA (lupa) — 15/10/2026 ----------
+   Pedido do Maycon em Estoque de EPI → "+ Solicitação": o menu de funcionário/item tinha
+   dezenas de nomes e nenhum jeito de procurar. Esconde o <select> de verdade (continua sendo
+   ele que guarda o valor — `val(id)`, `onchange` e tudo que já lia dele seguem iguais) e
+   põe no lugar uma caixa de busca com a lista filtrando a cada letra, sem acento e sem
+   diferenciar maiúscula. Aplicar DEPOIS de o modal estar na tela: `selectComBusca('s_func')`. */
+function selectComBusca(id){
+  const sel = document.getElementById(id);
+  if(!sel || sel.dataset.comBusca) return;
+  sel.dataset.comBusca = '1';
+  const norm = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+  const box = document.createElement('div');
+  box.className = 'combo';
+  box.innerHTML = '<input type="text" class="combo-input" autocomplete="off" placeholder="🔍 Buscar..."><div class="combo-lista" style="display:none;"></div>';
+  sel.parentNode.insertBefore(box, sel);
+  sel.style.display = 'none';
+  const inp = box.querySelector('input'), lista = box.querySelector('.combo-lista');
+  const rotulo = () => { const o = sel.options[sel.selectedIndex]; return (o && o.value) ? o.textContent : ''; };
+  const desenhar = filtro => {
+    const f = norm(filtro);
+    const ops = Array.from(sel.options).filter(o => !f || norm(o.textContent).indexOf(f) >= 0);
+    lista.innerHTML = ops.length
+      ? ops.map(o => `<div class="combo-op${o.value===sel.value?' sel':''}" data-v="${esc(o.value)}">${esc(o.textContent)}</div>`).join('')
+      : '<div class="combo-vazio">Nada encontrado</div>';
+  };
+  const abrir  = () => { lista.style.display = ''; };
+  const fechar = () => { lista.style.display = 'none'; inp.value = rotulo(); };
+  const escolher = v => {
+    sel.value = v;
+    sel.dispatchEvent(new Event('change', {bubbles:true}));   // dispara o onchange que já existia
+    fechar();
+  };
+  inp.value = rotulo();
+  inp.addEventListener('focus', () => { inp.select(); desenhar(''); abrir(); });
+  inp.addEventListener('input', () => { desenhar(inp.value); abrir(); });
+  inp.addEventListener('blur', () => setTimeout(fechar, 150));
+  inp.addEventListener('keydown', e => {
+    if(e.key === 'Escape'){ fechar(); inp.blur(); }
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      const primeiro = lista.querySelector('.combo-op');
+      if(primeiro) escolher(primeiro.getAttribute('data-v'));
+    }
+  });
+  lista.addEventListener('mousedown', e => {
+    const op = e.target.closest('.combo-op');
+    if(op){ e.preventDefault(); escolher(op.getAttribute('data-v')); }
+  });
+}
 function val(id){ const e=document.getElementById(id); return e ? e.value : ''; }
 /* Campo com máscara de moeda guarda o valor de verdade em `dataset.valor`
    (string decimal comum, "1908.5") — é ele que numVal() lê quando existe, por
@@ -8403,7 +8460,10 @@ function renderEstoque(){
           <tbody>${DB.epiEntradas.slice().sort((a,b)=>(b.data||'').localeCompare(a.data||'')).map(e=>`
             <tr><td>${fmtDate(e.data)}</td><td>${esc(e.item)}</td><td>${esc(e.fornecedor||'—')}</td>
             <td class="num">${e.quantidade}</td><td class="num">${fmtMoney(e.valorUnit)}</td><td class="num">${fmtMoney(e.quantidade*e.valorUnit)}</td>
-            <td><button class="btn btn-danger btn-sm" onclick="deleteEpiEntrada('${e.id}')">Excluir</button></td></tr>
+            <td style="white-space:nowrap;">
+              <button class="btn btn-secondary btn-sm" onclick="openEpiEntradaModal('${e.id}')">Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteEpiEntrada('${e.id}')">Excluir</button>
+            </td></tr>
           `).join('')}</tbody></table>` : `<div class="empty">Nenhuma entrada registrada.</div>`}
         </div>
       </div>
@@ -8433,32 +8493,41 @@ function renderEstoque(){
   `;
 }
 
-function openEpiEntradaModal(){
+/* `id` opcional: com ele abre a entrada JÁ EXISTENTE para editar (15/10/2026). O saldo e o custo
+   médio são calculados das entradas (`itensEstoque`), então acompanham a edição sozinhos. */
+function openEpiEntradaModal(id){
+  const e = id ? DB.epiEntradas.find(x=>x.id===id) : null;
   const itens = itensEstoque().map(i=>`<option value="${esc(i.item)}">`).join('');
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
-    <h2>Nova entrada de EPI / uniforme</h2>
+    <h2>${e ? 'Editar entrada de EPI / uniforme' : 'Nova entrada de EPI / uniforme'}</h2>
+    <input type="hidden" id="e_id" value="${e ? esc(e.id) : ''}">
     <div class="grid grid-2">
-      <div class="field"><label>Data</label><input type="date" id="e_data" value="${todayISO()}"></div>
-      <div class="field"><label>Fornecedor</label><input id="e_fornecedor"></div>
+      <div class="field"><label>Data</label><input type="date" id="e_data" value="${e ? esc(e.data||'') : todayISO()}"></div>
+      <div class="field"><label>Fornecedor</label><input id="e_fornecedor" value="${e ? esc(e.fornecedor||'') : ''}"></div>
     </div>
     <div class="grid grid-3">
-      <div class="field"><label>Item (descrição)</label><input id="e_item" list="itensList" placeholder="Ex: Bota de segurança"><datalist id="itensList">${itens}</datalist></div>
-      <div class="field"><label>Quantidade</label><input type="number" step="1" id="e_qtd" value="1"></div>
-      <div class="field"><label>Valor unitário (R$)</label><input type="number" step="0.01" id="e_valor"></div>
+      <div class="field"><label>Item (descrição)</label><input id="e_item" list="itensList" placeholder="Ex: Bota de segurança" value="${e ? esc(e.item||'') : ''}"><datalist id="itensList">${itens}</datalist></div>
+      <div class="field"><label>Quantidade</label><input type="number" step="1" id="e_qtd" value="${e ? e.quantidade : 1}"></div>
+      <div class="field"><label>Valor unitário (R$)</label><input type="number" step="0.01" id="e_valor" value="${e ? e.valorUnit : ''}"></div>
     </div>
-    <p class="help">Se o item já existe, escolha o mesmo nome na lista — assim o saldo e o custo médio ficam corretos.</p>
+    <p class="help">Se o item já existe, escolha o mesmo nome na lista — assim o saldo e o custo médio ficam corretos.${e ? ' Mudar a quantidade ou o valor aqui já corrige o saldo e o custo médio do item.' : ''}</p>
     <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveEpiEntrada()">Salvar</button></div>
   `);
 }
 function saveEpiEntrada(){
   const item = val('e_item').trim();
   if(!item){ alert('Informe o item.'); return; }
-  DB.epiEntradas.push({
-    id: uid(), data: val('e_data'), fornecedor: val('e_fornecedor'),
-    item, quantidade: numVal('e_qtd'), valorUnit: numVal('e_valor')
-  });
-  saveDB(); closeModal(); renderEstoque(); toast('Entrada registrada.');
+  const id = val('e_id');
+  const dados = {data: val('e_data'), fornecedor: val('e_fornecedor'), item, quantidade: numVal('e_qtd'), valorUnit: numVal('e_valor')};
+  const existente = id ? DB.epiEntradas.find(x=>x.id===id) : null;
+  /* mudar o NOME do item deixa as saídas já registradas apontando para o nome antigo — avisa */
+  if(existente && existente.item !== item && DB.epiSaidas.some(s=>s.itemNome === existente.item)){
+    if(!confirm(`Você mudou o nome do item de "${existente.item}" para "${item}".\n\nAs solicitações/entregas já registradas continuam com o nome antigo e o saldo de cada nome é calculado separado.\n\nContinuar?`)) return;
+  }
+  if(existente){ Object.assign(existente, dados); }
+  else { DB.epiEntradas.push(Object.assign({id: uid()}, dados)); }
+  saveDB(); closeModal(); renderEstoque(); toast(existente ? 'Entrada atualizada.' : 'Entrada registrada.');
 }
 function deleteEpiEntrada(id){
   if(!confirm('Excluir esta entrada?')) return;
@@ -8469,7 +8538,12 @@ function openEpiSolicitacaoModal(){
   const itens = itensEstoque();
   if(!itens.length){ alert('Registre uma entrada de material antes de solicitar saída.'); return; }
   const itemOpts = itens.map(i=>`<option value="${esc(i.item)}">${esc(i.item)} — saldo ${i.saldoQtd} un. · ${fmtMoney(i.custoMedio)}/un.</option>`).join('');
-  const funcOpts = ativos().sort(cmpFuncionarios).map(f=>`<option value="${f.id}" data-obra="${f.obraPadrao||''}">${esc(f.nome)}</option>`).join('');
+  /* ordem NUMÉRICA pela matrícula (quem não tem matrícula vai depois, por nome) e a
+     matrícula aparece no rótulo — pedido do Maycon (15/10/2026) */
+  const numMat = f => { const n = parseInt(String(f.matricula||'').replace(/\D/g,''), 10); return isNaN(n) ? Infinity : n; };
+  const funcOpts = ativos().slice()
+    .sort((a,b)=> (numMat(a)-numMat(b)) || a.nome.localeCompare(b.nome, 'pt-BR'))
+    .map(f=>`<option value="${f.id}" data-obra="${f.obraPadrao||''}">${f.matricula?esc(f.matricula)+' — ':''}${esc(f.nome)}</option>`).join('');
   const obraOpts = DB.obras.map(o=>`<option value="${o.id}">${esc(o.nome)}</option>`).join('');
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
@@ -8488,6 +8562,8 @@ function openEpiSolicitacaoModal(){
     <p class="help" id="s_aviso"></p>
     <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveEpiSolicitacao()">Salvar solicitação</button></div>
   `);
+  selectComBusca('s_item');
+  selectComBusca('s_func');
   onSaidaItemChange();
 }
 function onSaidaItemChange(){
