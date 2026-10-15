@@ -857,7 +857,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.26.1';
+const VERSAO = '1.26.2';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -13394,6 +13394,11 @@ function custoPorEtapa(obraId){
       if(!etapaId) return;
       const f = func(funcId);
       if(!f) return;
+      /* A etapa do contrato é custo de quem é EMPREITADA. Homem-Hora é cobrado da
+         Bandeira por hora (outra receita) — mesmo que tenha ficado com etapa marcada no
+         Diário, não entra aqui. Achado em 15/10/2026: 9 pessoas Homem-Hora (R$ 48.297,94)
+         estavam inflando o custo da Fundação. */
+      if(f.tipoServico !== 'empreitada') return;
       custo[etapaId] = Math.round(((custo[etapaId]||0) + custoDiaEmpreitada(f, d.data)) * 100) / 100;
     });
   });
