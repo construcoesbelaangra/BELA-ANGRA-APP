@@ -857,7 +857,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.26.3';
+const VERSAO = '1.27.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1686,6 +1686,20 @@ function periodicidadeHistoricaEm(f, iso){
   const hist = (f.periodicidadeHistorico||[]).filter(h=>h.inicio<=iso);
   if(hist.length) return hist[hist.length-1].periodicidade;
   return f.periodicidade || 'semanal';
+}
+
+/* Tipo de serviço (Homem-Hora × Empreitada) de uma pessoa NUM DIA específico — 15/10/2026.
+   Caso real: Bruno Basilio e Juarez Felipe passaram de Homem-Hora para Empreitada em
+   12/10. Trocar `f.tipoServico` direto mudaria também os dias de ANTES (saíam da Medição HH
+   já em rascunho e entravam no custo da empreitada). Mesmo padrão dos outros históricos:
+   `f.tipoServicoHistorico = [{tipoServico, inicio}]`. Sem histórico, vale o `f.tipoServico`.
+   Se a data é anterior à primeira entrada, vale a primeira (nunca o valor de hoje). */
+function tipoServicoEm(f, iso){
+  const hist = (f.tipoServicoHistorico||[]).slice().sort((a,b)=>a.inicio.localeCompare(b.inicio));
+  if(!hist.length) return f.tipoServico || '';
+  let v = hist[0].tipoServico;
+  hist.forEach(h=>{ if(h.inicio <= iso) v = h.tipoServico; });
+  return v;
 }
 
 /* =========================================================
@@ -3352,6 +3366,19 @@ function saveFunc(id){
     periodicidadeHistorico = novaPeriodicidade ? [{periodicidade: novaPeriodicidade, inicio: val('f_admissao') || '0001-01-01'}] : [];
   }
 
+  /* Histórico do TIPO DE SERVIÇO (15/10/2026) — mesma ideia: quem passa de Homem-Hora para
+     Empreitada não pode levar os dias antigos junto (Medição HH, custo por etapa). A troca vale
+     a partir de HOJE; para uma data anterior (ex.: "desde segunda 12/10") o ajuste é feito no
+     dado (`tipoServicoHistorico`). Ver `tipoServicoEm` (02_core.js). */
+  const novoTipoServico = val('f_tipoServico');
+  let tipoServicoHistorico = existing.tipoServicoHistorico;
+  if(existing.id && (existing.tipoServico || '') !== (novoTipoServico || '')){
+    tipoServicoHistorico = (tipoServicoHistorico
+      || (existing.tipoServico ? [{tipoServico: existing.tipoServico, inicio: existing.admissao || '0001-01-01'}] : []))
+      .concat([{tipoServico: novoTipoServico, inicio: todayISO()}])
+      .sort((a,b)=>a.inicio.localeCompare(b.inicio));
+  }
+
   /* Histórico do VÍNCULO (19/09/2026) — diarista que vira fichado (ou o contrário) continua sendo
      a MESMA pessoa, com um único cadastro: a mudança entra aqui com a data em que passou a valer
      (`f_vinculoDesde`), e as telas de período (fechamento, ponto, vale, folha) consultam esse
@@ -3384,7 +3411,8 @@ function saveFunc(id){
     id, nome,
     tipo: novoTipo,
     vinculoHistorico,
-    tipoServico: val('f_tipoServico'),
+    tipoServico: novoTipoServico,
+    tipoServicoHistorico,
     periodicidade: novaPeriodicidade,
     periodicidadeHistorico,
     periodicidadeComissao: val('f_periodicidadeComissao') || 'semanal',
@@ -5510,7 +5538,7 @@ function togglePago(funcId, sexta, per, valor){
       tipo: 'despesa', natureza: 'operacao',
       empresaId: ct.empresaId, contaId,
       categoriaId: DB.config.fechamentoCategoriaPadrao || '',
-      obraId: f.obraPadrao || '', tipoServico: f.tipoServico || '',
+      obraId: f.obraPadrao || '', tipoServico: tipoServicoEm(f, sexta) || '',
       /* linha "só comissão" (fichado pago junto com os diaristas, ver
          `linhasComissaoFichados` acima) usa `per==='comissao'` como sentinela
          — nem periodicidade semanal nem quinzenal de verdade */
@@ -6348,7 +6376,7 @@ function sincronizaLancamentoAdiantamento(a){
   if(!ct) return;
   const campos = {
     tipo:'despesa', natureza:'operacao', empresaId: ct.empresaId, contaId: a.contaId,
-    categoriaId: a.categoriaId || '', obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: f.tipoServico || '',
+    categoriaId: a.categoriaId || '', obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoEm(f, a.data) || '',
     descricao: `${a.tipo==='desconto'?'Desconto':'Vale/adiantamento'} — ${f.nome}${a.descricao?' — '+a.descricao:''}`,
     valor: a.valor, vencimento: a.data, obs: ''
   };
@@ -6529,7 +6557,7 @@ function toggleAdiantamentoFichadoPago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.fichadosCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: f.tipoServico || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoEm(f, c.dataAdiantamento) || '',
     descricao: `Adiantamento de salário (dia 20) — ${f.nome} — ${monthLabel(mes)}`,
     valor: c.adiantamento, vencimento: c.dataAdiantamento, obs: ''
   };
@@ -6581,7 +6609,7 @@ function toggleSaldoFichadoPago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.fichadosCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: f.tipoServico || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoEm(f, ultimoDiaMes(mes)) || '',
     descricao: `Saldo de salário (5º dia útil) — ${f.nome} — ${monthLabel(mes)}`,
     valor: c.saldo, vencimento: c.dataPagamento, obs: ''
   };
@@ -7415,7 +7443,7 @@ function toggleValePago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.valesCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: f.tipoServico || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoEm(f, primeiroDiaMes(mes)) || '',
     descricao: `Vale-transporte/refeição — ${f.nome} — ${monthLabel(mes)}`,
     valor: r.liquido, vencimento: hoje, obs: ''
   };
@@ -12617,7 +12645,8 @@ function diaContaNaMedicaoHH(f, iso, obraId){
 function calcMedicaoHH(obraId, ini, fim){
   const blocos = blocosSemanaMedicao(ini, fim);
   const funcionarios = ativosNoPeriodo(ini, fim)
-    .filter(f=>f.tipoServico==='homem_hora' && !f.duplicataSoContabil);
+    .filter(f=>(f.tipoServico==='homem_hora' || (f.tipoServicoHistorico||[]).some(h=>h.tipoServico==='homem_hora'))
+               && !f.duplicataSoContabil);
   const precos = DB.config.tabelaHH || {};
 
   const porCategoria = {servente:{dias:0,valor:0}, meioOficial:{dias:0,valor:0},
@@ -12630,6 +12659,7 @@ function calcMedicaoHH(obraId, ini, fim){
       const porCatNoBloco = {};    // categoria ('' = sem categoria) -> {dias, abonados}
       dias.forEach(iso=>{
         if(iso < ini || iso > fim) return;   // o bloco pode passar do intervalo pedido
+        if(tipoServicoEm(f, iso) !== 'homem_hora') return;   // virou Empreitada depois: não é mais HH
         const st = diaContaNaMedicaoHH(f, iso, obraId);
         if(!st) return;
         const cat = categoriaHH(funcaoEfetivaNoDia(f, iso)) || '';
@@ -13404,7 +13434,7 @@ function custoPorEtapa(obraId){
          Bandeira por hora (outra receita) — mesmo que tenha ficado com etapa marcada no
          Diário, não entra aqui. Achado em 15/10/2026: 9 pessoas Homem-Hora (R$ 48.297,94)
          estavam inflando o custo da Fundação. */
-      if(f.tipoServico !== 'empreitada') return;
+      if(tipoServicoEm(f, d.data) !== 'empreitada') return;
       custo[etapaId] = Math.round(((custo[etapaId]||0) + custoDiaEmpreitada(f, d.data)) * 100) / 100;
     });
   });
