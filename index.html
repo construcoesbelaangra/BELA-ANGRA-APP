@@ -857,7 +857,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.26.2';
+const VERSAO = '1.26.3';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -13380,7 +13380,13 @@ function custoDiaEmpreitada(f, iso){
   const mes = iso.slice(0,7);
   const dias = diasUteisDoFuncionarioNoMes(f, mes);
   if(!dias) return 0;
-  return Math.round((calcEncargos(f, mes).custoTotal / dias) * 100) / 100;
+  /* `calcEncargos` já traz salário + INSS patronal + RAT + Terceiros + FGTS + provisão da multa
+     do FGTS + 13º + férias+1/3 + VT/VR + EPI do mês (os que estiverem ativos em Configurações).
+     Soma-se a provisão de AVISO PRÉVIO (mesma da tela Provisões Trabalhistas, quando ligada) —
+     é o delta do mês, então a soma dos meses fecha com o acumulado daquela tela. */
+  const aviso = (DB.config.provisaoAvisoPrevioAtivo !== false && typeof avisoPrevioDoMes === 'function')
+    ? avisoPrevioDoMes(f, mes) : 0;
+  return Math.round(((calcEncargos(f, mes).custoTotal + aviso) / dias) * 100) / 100;
 }
 
 /* Soma, pelo Diário de Obras inteiro daquela obra, o custo de mão de obra de
