@@ -864,7 +864,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.29.0';
+const VERSAO = '1.29.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4010,7 +4010,7 @@ function renderPontoMensal(){
       </div>
       <div class="grid grid-3" style="align-items:end;">
         <div class="field" style="grid-column:span 2;"><label>Funcionário (fichado) — ${fichados.length} na lista</label>
-          <select onchange="pmFuncId=this.value; renderPontoMensal();">${funcOpts || '<option>Nenhum fichado nesta obra</option>'}</select>
+          <select id="pm_func" onchange="pmFuncId=this.value; renderPontoMensal();">${funcOpts || '<option>Nenhum fichado nesta obra</option>'}</select>
         </div>
         <div class="field"><label>Ordem da lista</label>${selectOrdem('renderPontoMensal();')}</div>
       </div>
@@ -4019,6 +4019,7 @@ function renderPontoMensal(){
                      : 'Cadastre um funcionário do tipo "Fichado" primeiro.'}</div>`}
     </div>
   `;
+  selectComBusca('pm_func');   // lupa de busca no menu de funcionário (15/10/2026)
 }
 
 function pmKey(){ return `${pmFuncId}_${pmAno}-${String(pmMes).padStart(2,'0')}`; }
@@ -5259,7 +5260,7 @@ function renderPontoDiarista(){
       </div>
       <div class="grid grid-3" style="align-items:end;">
         <div class="field" style="grid-column:span 2;"><label>Diarista — ${diaristas.length} na lista</label>
-          <select onchange="pdFuncId=this.value; renderPontoDiarista();">${funcOpts || '<option>Nenhum diarista nesta obra</option>'}</select>
+          <select id="pd_func" onchange="pdFuncId=this.value; renderPontoDiarista();">${funcOpts || '<option>Nenhum diarista nesta obra</option>'}</select>
         </div>
         <div class="field"><label>Ordem da lista</label>${selectOrdem('renderPontoDiarista();')}</div>
       </div>
@@ -5268,6 +5269,7 @@ function renderPontoDiarista(){
                      : 'Cadastre um funcionário do tipo "Diarista" primeiro.'}</div>`}
     </div>
   `;
+  selectComBusca('pd_func');   // lupa de busca no menu de diarista (15/10/2026)
 }
 
 function renderCalendarDiarista(){
