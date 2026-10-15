@@ -864,7 +864,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.28.0';
+const VERSAO = '1.28.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -8538,12 +8538,11 @@ function openEpiSolicitacaoModal(){
   const itens = itensEstoque();
   if(!itens.length){ alert('Registre uma entrada de material antes de solicitar saída.'); return; }
   const itemOpts = itens.map(i=>`<option value="${esc(i.item)}">${esc(i.item)} — saldo ${i.saldoQtd} un. · ${fmtMoney(i.custoMedio)}/un.</option>`).join('');
-  /* ordem NUMÉRICA pela matrícula (quem não tem matrícula vai depois, por nome) e a
-     matrícula aparece no rótulo — pedido do Maycon (15/10/2026) */
-  const numMat = f => { const n = parseInt(String(f.matricula||'').replace(/\D/g,''), 10); return isNaN(n) ? Infinity : n; };
+  /* ordem ALFABÉTICA pelo nome, só o nome no rótulo — o Maycon pediu "numérica" e
+     esclareceu depois (15/10/2026) que queria alfabética */
   const funcOpts = ativos().slice()
-    .sort((a,b)=> (numMat(a)-numMat(b)) || a.nome.localeCompare(b.nome, 'pt-BR'))
-    .map(f=>`<option value="${f.id}" data-obra="${f.obraPadrao||''}">${f.matricula?esc(f.matricula)+' — ':''}${esc(f.nome)}</option>`).join('');
+    .sort((a,b)=> a.nome.localeCompare(b.nome, 'pt-BR'))
+    .map(f=>`<option value="${f.id}" data-obra="${f.obraPadrao||''}">${esc(f.nome)}</option>`).join('');
   const obraOpts = DB.obras.map(o=>`<option value="${o.id}">${esc(o.nome)}</option>`).join('');
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
