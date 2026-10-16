@@ -547,6 +547,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 .calendar .day.folga{background:#eceef2;}
 .calendar .day.falta{background:#fdecea;}
 .calendar .day.feriado{background:#f0e9fb;}
+.calendar .day.feriado_pago{background:#e3ebfb;}
 .calendar .day.sabado{background:#e5f5ea;}
 .calendar .day.fora{opacity:.42;}
 /* dia preenchido pelo sistema e ainda não conferido pelo usuário */
@@ -865,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.29.3';
+const VERSAO = '1.30.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4452,6 +4453,14 @@ function renderPontoDia(){
        e sobra só um lançamento de duas pontas, igual o Maycon pediu — o "não
        trabalhou" é o mesmo status em branco de sempre, só com outro rótulo. */
     if(feriadoHoje){
+      /* Diarista (16/10/2026): três escolhas — trabalhou · não trabalhou · pagar o dia (o Maycon
+         paga o feriado mesmo sem a pessoa ter trabalhado, sem marcar como presença). O texto
+         "direito a pagamento em dobro" saiu daqui; só o fichado (CLT) ainda o mostra. */
+      if(vinculoEm(f, pdiaData) !== 'fichado'){
+        return op('trabalhado',   'T',  'Trabalhou',                          '#1f8a4c')
+             + op('',             '—',  'Não trabalhou',                      '#6c7280')
+             + op('feriado_pago', 'PD', 'Pagar o dia (sem trabalhar)',        '#1c4fd8');
+      }
       return op('trabalhado', 'T', 'Trabalhou (feriado — direito a pagamento em dobro)', '#1f8a4c')
            + op('',           '—', 'Não trabalhou (feriado)',                            '#6c7280');
     }
@@ -4655,6 +4664,7 @@ function rotuloPresencaDia(s, feriado){
   if(s.status === 'atestado')          return 'Falta com atestado';
   if(s.status === 'licenca')           return 'Licença';
   if(s.status === 'folga')             return 'Folga';
+  if(s.status === 'feriado_pago')      return 'Feriado pago (não trabalhou)';
   return feriado ? 'Não trabalhou (feriado)' : 'Sem lançamento';
 }
 function printRelatorioDia(){
@@ -4674,7 +4684,7 @@ function printRelatorioDia(){
   });
   const cont = k => linhas.filter(k).length;
   const nPres = cont(l=>l.status==='trabalhado');
-  const nFalta = cont(l=>l.status && l.status!=='trabalhado' && l.status!=='licenca' && l.status!=='folga');
+  const nFalta = cont(l=>l.status && l.status!=='trabalhado' && l.status!=='licenca' && l.status!=='folga' && l.status!=='feriado_pago');
   const nVazio = cont(l=>!l.status);
   const filtros = [];
   if(pdiaTipo==='fichado') filtros.push('Fichados'); else if(pdiaTipo==='diarista') filtros.push('Diaristas'); else filtros.push('Fichados e diaristas');
@@ -4693,7 +4703,7 @@ function printRelatorioDia(){
       <thead><tr><th style="width:28px;">#</th><th>Funcionário</th><th>Cargo</th><th>Tipo de serviço</th><th>Presença</th></tr></thead>
       <tbody>${linhas.map((l,i)=>`<tr>
         <td class="c">${i+1}</td><td>${esc(l.nome)}</td><td>${esc(l.cargo)}</td><td>${esc(l.servico)}</td>
-        <td><b style="color:${l.status==='trabalhado'?'#1f6b3e':(l.status&&l.status!=='licenca'&&l.status!=='folga'?'#c0392b':'#6c7280')};">${esc(l.presenca)}</b></td>
+        <td><b style="color:${l.status==='trabalhado'?'#1f6b3e':(l.status==='feriado_pago'?'#1c4fd8':(l.status&&l.status!=='licenca'&&l.status!=='folga'?'#c0392b':'#6c7280'))};">${esc(l.presenca)}</b></td>
       </tr>`).join('')}</tbody>
     </table>
     ${docFoot()}
@@ -4861,6 +4871,7 @@ function statusParaFolhaContabil(f, iso, ym){
   }
   const r = DB.pontoDiarista.find(p=>p.funcionarioId===f.id && p.data===iso);
   if(!r || !r.status) return '';
+  if(r.status === 'feriado_pago') return '';   // dia pago sem trabalhar: não é presença, a folha fica em branco
   return r.status === 'trabalhado' ? 'trabalhado' : 'falta_injustificada';
 }
 
@@ -5210,8 +5221,8 @@ let pdMes = new Date().getMonth()+1;
 let pdObraFiltro = '';
 
 /* Não se trabalha sábado nem feriado na empresa — a diária é sempre a mesma. */
-const PD_LABEL  = {trabalhado:'Trabalhado', falta:'Falta'};
-const PD_SIGLA  = {trabalhado:'✓', falta:'F'};
+const PD_LABEL  = {trabalhado:'Trabalhado', falta:'Falta', feriado_pago:'Feriado pago (não trabalhou)'};
+const PD_SIGLA  = {trabalhado:'✓', falta:'F', feriado_pago:'PD'};
 const PD_CYCLE  = ['trabalhado','falta',''];
 
 /* impede lançar ponto fora do vínculo (antes da admissão ou depois da demissão) */
@@ -5295,7 +5306,7 @@ function renderCalendarDiarista(){
     const iso = `${pdAno}-${String(pdMes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const e = pdEntry(pdFuncId, iso);
     const st = e ? e.status : '';
-    if(st==='trabalhado'){ dias++; totalBrutoMes += valorDiariaHistoricoEm(f, iso); }
+    if(st==='trabalhado' || st==='feriado_pago'){ dias++; totalBrutoMes += valorDiariaHistoricoEm(f, iso); }
     else if(st==='falta') faltas++;
     if(e && e.quentinha) quent++;
 
@@ -5339,6 +5350,7 @@ function renderCalendarDiarista(){
       <div class="legend">
         <span><span class="dot" style="background:#e5f5ea"></span>Trabalhado (✓)</span>
         <span><span class="dot" style="background:#fdecea"></span>Falta (F)</span>
+        <span><span class="dot" style="background:#e3ebfb"></span>Feriado pago, sem trabalhar (PD)</span>
         <span>🍱 quentinha (clique no ícone)</span>
         <span>🎉 Feriado cadastrado</span>
         ${f.admissao?'<span style="color:#9aa0ab;">— dias fora do vínculo (antes da admissão ou depois da demissão) ficam bloqueados</span>':''}
@@ -5362,7 +5374,9 @@ function cyclePd(iso){
   if(!e){
     DB.pontoDiarista.push({id:uid(), funcionarioId:pdFuncId, obraId:f.obraPadrao||'', data:iso, status:'trabalhado', quentinha:false});
   } else {
-    const next = PD_CYCLE[(PD_CYCLE.indexOf(e.status)+1)%PD_CYCLE.length];
+    /* em feriado cadastrado o ciclo é trabalhado → feriado pago → vazio (falta não faz sentido) */
+    const ciclo = isFeriado(iso) ? ['trabalhado','feriado_pago',''] : PD_CYCLE;
+    const next = ciclo[(ciclo.indexOf(e.status)+1)%ciclo.length];
     delete e.auto;                                   // tocar no dia confirma
     if(next===''){
       if(e.quentinha){ e.status = ''; }              // mantém o registro só pela quentinha
@@ -5453,7 +5467,7 @@ function salvarFuncaoComissaoDiarista(iso){
 
 /* ---- cálculo de um diarista dentro de um período ---- */
 function calcDiarista(f, periodo){
-  let diasTrabalhados=0, faltas=0, quentinhas=0, totalComissao=0, totalVtExtra=0, bruto=0;
+  let diasTrabalhados=0, diasFeriadoPago=0, brutoFeriadoPago=0, faltas=0, quentinhas=0, totalComissao=0, totalVtExtra=0, bruto=0;
   const detalhe = [];
   let iso = periodo.inicio;
   while(iso <= periodo.fim){
@@ -5463,6 +5477,11 @@ function calcDiarista(f, periodo){
          `valorDiariaHistoricoEm` (02_core.js). Sem isso, corrigir a diária hoje
          mudava o líquido de semanas já fechadas e pagas (achado real, 16/09/2026). */
       if(e.status==='trabalhado'){ diasTrabalhados++; bruto += valorDiariaHistoricoEm(f, iso); }
+      /* FERIADO PAGO (16/10/2026): o Maycon paga o dia de feriado mesmo sem a pessoa ter
+         trabalhado. Entra no bruto e na contagem de diárias (o recibo/mensagem continuam
+         fechando), mas `diasFeriadoPago` guarda quantos foram — não é presença: a folha
+         da contabilidade e a Medição HH não contam esse dia como trabalhado. */
+      else if(e.status==='feriado_pago'){ const vdia = valorDiariaHistoricoEm(f, iso); diasTrabalhados++; diasFeriadoPago++; brutoFeriadoPago += vdia; bruto += vdia; }
       else if(e.status==='falta') faltas++;
       if(e.quentinha) quentinhas++;
       if(e.status) detalhe.push({data:iso, status:e.status, quentinha:!!e.quentinha});
@@ -5492,7 +5511,7 @@ function calcDiarista(f, periodo){
     faltas, quentinhas, detalhe, bruto,
     vales, totalVales, totalComissao, totalVtExtra,
     liquido: bruto - totalVales + totalComissao + totalVtExtra,
-    totalDias: diasTrabalhados
+    totalDias: diasTrabalhados, diasFeriadoPago, brutoFeriadoPago
   };
 }
 
@@ -6127,7 +6146,8 @@ function renderFechamento(){
 function reciboDiaristaHTML(x){
   const f = x.f;
   const linhas = [];
-  if(x.totalDias) linhas.push({d:'Diárias trabalhadas', ref:`${x.totalDias} × ${fmtMoney(x.vd)}`, v:x.bruto});
+  if(x.totalDias - (x.diasFeriadoPago||0) > 0) linhas.push({d:'Diárias trabalhadas', ref:`${x.totalDias - (x.diasFeriadoPago||0)} × ${fmtMoney(x.vd)}`, v:x.bruto - (x.brutoFeriadoPago||0)});
+  if(x.diasFeriadoPago) linhas.push({d:'Feriado pago (sem trabalhar)', ref:`${x.diasFeriadoPago} × ${fmtMoney(x.vd)}`, v:x.brutoFeriadoPago});
   if(x.totalComissao) linhas.push({d:'Comissão do período', ref:'', v:x.totalComissao});
 
   const titulo = x.apenasComissao ? 'Recibo de Pagamento — Comissão' : 'Recibo de Pagamento — Diarista';
@@ -6264,7 +6284,8 @@ function secaoFechamento(per, calcs){
             const e = pdEntry(x.f.id, d);
             if(!e || !e.status) return `<td class="c">·</td>`;
             if(e.status==='falta')   return `<td class="c" style="color:#c0392b;font-weight:800;">F</td>`;
-            
+            if(e.status==='feriado_pago') return `<td class="c" style="color:#1c4fd8;font-weight:800;" title="feriado pago (não trabalhou)">1</td>`;
+
             return `<td class="c" style="font-weight:800;">1</td>`;
           }).join('');
           return `<tr>
@@ -13901,6 +13922,7 @@ function statusBadgeDiario(f, iso){
   const s = statusDoDia(f, iso);
   if(!s.status) return '<span class="badge badge-gray">Sem lançamento</span>';
   if(s.status==='falta') return `<span class="badge badge-red">Falta</span>`;
+  if(s.status==='feriado_pago') return `<span class="badge badge-blue">Feriado pago</span>`;
   const cor = s.status==='trabalhado' ? 'badge-green' : (s.status.indexOf('falta')===0 ? 'badge-red' : 'badge-blue');
   return `<span class="badge ${cor}">${esc(STATUS_LABEL[s.status]||s.status)}${s.auto?' *':''}</span>`;
 }
