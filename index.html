@@ -865,7 +865,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.29.2';
+const VERSAO = '1.29.3';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -1810,6 +1810,10 @@ function fichadoDesde(f){
 /* Data de admissão para FOLHA e contabilidade: a de fichado, quando a pessoa foi fichada.
    Quem nunca mudou de vínculo cai na admissão de sempre — nada muda para ninguém mais. */
 function admissaoFolha(f){
+  /* Diarista que a contabilidade trata como registrado (João Martins, Jeferson Martins Caetano):
+     o app continua pagando como diarista, mas o holerite/folha da contabilidade mostram a data do
+     REGISTRO deles (`registroContabilDesde`, conferida no holerite de set/2026: 01/11/2025). */
+  if(f.apareceNaFolhaContabil && f.registroContabilDesde) return f.registroContabilDesde;
   if(teveVinculo(f, 'fichado')){ const d = fichadoDesde(f); if(d) return d; }
   return f.admissao;
 }
@@ -3128,6 +3132,10 @@ function openFuncModal(id){
       <div id="wrap_folhaContabil" style="${f.tipo==='diarista'?'':'display:none;'}">
         <label class="check"><input type="checkbox" id="f_apareceNaFolhaContabil" ${f.apareceNaFolhaContabil?'checked':''}>
           Incluir na folha de ponto mensal da contabilidade, mesmo sendo diarista</label>
+        <div class="field" style="max-width:260px;margin:2px 0 6px 22px;"><label>Registrado na contabilidade desde</label>
+          <input type="date" id="f_registroContabilDesde" value="${esc(f.registroContabilDesde||'')}">
+          <p class="help" style="margin-top:2px;">Data de admissão que sai no holerite e na folha da contabilidade (a da ficha de registro). Não muda como ele é pago.</p>
+        </div>
         <p class="help" style="margin-top:-6px;">
           Use isto quando a contabilidade trata esta pessoa como fichada (mesmo pagando por diária/quinzena de
           verdade) — evita ter que duplicar o cadastro só para ela aparecer na folha de "Ponto → Fichados → Ver o mês".
@@ -3478,6 +3486,7 @@ function saveFunc(id){
     /* quem tem data de saída fica inativo por definição — é o que tira ele do ponto */
     status: dDem ? 'inativo' : val('f_status'),
     apareceNaFolhaContabil: checked('f_apareceNaFolhaContabil'),
+    registroContabilDesde: checked('f_apareceNaFolhaContabil') ? val('f_registroContabilDesde') : '',
     foraDaFolhaContabil: checked('f_foraDaFolhaContabil'),
     holeriteDiarista: checked('f_holeriteDiarista'),
     statusRegistro: val('f_statusRegistro') || 'nao_enviado',
