@@ -866,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.32.0';
+const VERSAO = '1.32.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -15347,6 +15347,7 @@ function concLinhasDeTabela(rows){
 function concLinhasOfx(txt){
   const tag = (blk,t)=>{ const m = blk.match(new RegExp('<'+t+'>([^<\\r\\n]*)','i')); return m ? m[1].trim() : ''; };
   const linhas = [];
+  let saldoAnterior = null;
   const re = /<STMTTRN>([\s\S]*?)(?=<\/STMTTRN>|<STMTTRN>|<\/BANKTRANLIST>)/gi;
   let m;
   while((m = re.exec(txt))){
@@ -15354,8 +15355,17 @@ function concLinhasOfx(txt){
     const data = concData(tag(blk,'DTPOSTED').slice(0,8));
     let amt = tag(blk,'TRNAMT'); if(amt.includes(',') && !amt.includes('.')) amt = amt.replace(',','.');
     const valor = Math.round(parseFloat(amt)*100)/100;
-    if(!data || isNaN(valor) || valor===0) continue;
-    linhas.push({data, valor, hist:tag(blk,'MEMO')||tag(blk,'NAME'), nome:tag(blk,'NAME')!==tag(blk,'MEMO')?tag(blk,'NAME'):'', doc:'', idExterno:tag(blk,'FITID')});
+    if(!data || isNaN(valor)) continue;
+    const memo = tag(blk,'MEMO'), name = tag(blk,'NAME');
+    /* o Itaú manda o saldo do dia anterior como se fosse um lançamento ("SALDO ANTERIOR") */
+    if(concNorm(memo||name).startsWith('SALDO')){
+      if(concNorm(memo||name).includes('ANTERIOR')) saldoAnterior = {data, saldo:valor};
+      continue;
+    }
+    if(valor===0) continue;
+    let hist = memo||name, nomeL = name && name!==memo ? name : '', doc = '';
+    if(!nomeL) ({hist, nome:nomeL, doc} = concSepararMemo(memo||name));
+    linhas.push({data, valor, hist, nome:nomeL, doc, idExterno:tag(blk,'FITID')});
   }
   let saldoFinal = null;
   const lb = txt.match(/<LEDGERBAL>([\s\S]*?)(?:<\/LEDGERBAL>|$)/i);
@@ -15363,7 +15373,21 @@ function concLinhasOfx(txt){
     const s = parseFloat(tag(lb[1],'BALAMT').replace(',','.'));
     if(!isNaN(s)) saldoFinal = {data:concData(tag(lb[1],'DTASOF').slice(0,8)), saldo:Math.round(s*100)/100};
   }
-  return {linhas, saldoAnterior:null, saldoFinal};
+  return {linhas, saldoAnterior, saldoFinal};
+}
+/* O OFX do Itaú traz tudo num texto só: "PIX ENVIADO FELIPE RIBEIRO 178.910.577-37".
+   Separa em tipo do lançamento / nome / CPF-CNPJ, igual às colunas do Excel do mesmo banco —
+   assim a mesma linha tem a mesma chave nos dois formatos. */
+const CONC_TIPOS_MEMO = ['PIX ENVIADO','PIX RECEBIDO','PIX QRS','TRANSFERENCIA ENVIADA','TRANSFERENCIA RECEBIDA',
+  'RECEBIMENTOS','PAGAMENTOS','RECEBIMENTO','PAGAMENTO','TED','DOC','TARIFA','TARIFAS'];
+function concSepararMemo(memo){
+  let resto = String(memo||'').trim(), doc = '';
+  const m = resto.match(/\s+(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})\s*$/);
+  if(m){ doc = m[1]; resto = resto.slice(0, m.index).trim(); }
+  const up = concNorm(resto);
+  const tipo = CONC_TIPOS_MEMO.find(t=>up===t || up.startsWith(t+' '));
+  if(!tipo) return {hist:resto, nome:'', doc};
+  return {hist:tipo, nome:resto.slice(tipo.length).trim(), doc};
 }
 function concDecodificar(buf){
   let t = new TextDecoder('utf-8').decode(buf);
@@ -15410,7 +15434,10 @@ function concPrepararLinhas(contaId, linhas){
   const cont = {};
   return linhas.map(x=>{
     const r = Object.assign({}, x);
-    if(r.idExterno) r.chave = contaId+'|id:'+r.idExterno;
+    /* Identificador do banco só vale como chave se for estável. O do OFX do Itaú é "data + nº de
+       ordem no arquivo" (20261020005): muda de dono se o arquivo vier com outra ordem ou com
+       lançamentos a mais — então é ignorado e a chave sai do conteúdo da linha. */
+    if(r.idExterno && !/^20\d{6}\d{1,4}$/.test(r.idExterno)) r.chave = contaId+'|id:'+r.idExterno;
     else{
       const base = [r.data, r.valor.toFixed(2), concNorm(r.hist), concNorm(r.nome)].join('|');
       cont[base] = (cont[base]||0)+1;
