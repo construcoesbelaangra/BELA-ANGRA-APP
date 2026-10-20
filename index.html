@@ -866,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.32.4';
+const VERSAO = '1.33.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -15166,9 +15166,9 @@ function excluirUsuario(id){
    ========================================================= */
 
 const CONC_JANELA_DIAS = 3;
-const CONC_JANELA_SUGESTAO_DIAS = 45;
+const CONC_JANELA_SUGESTAO_DIAS = 15;   // era 45 e ligou uma diária de agosto a um Pix de outubro (20/10/2026)
 const CONC_STOP = new Set(['DE','DA','DO','DAS','DOS','E']);
-let concEstado = {contaId:'', arquivo:'', linhas:null, res:null, saldoAnterior:null, saldoFinal:null, erro:''};
+let concEstado = {contaId:'', arquivo:'', linhas:null, res:null, saldoAnterior:null, saldoFinal:null, erro:'', escolhas:{}};
 
 /* ---------------- texto e números ---------------- */
 function concNorm(s){
@@ -15436,6 +15436,32 @@ function concBaixasDaConta(contaId){
   }));
   return out;
 }
+/* a contraparte da linha é uma empresa do próprio grupo? (CNPJ cadastrado ou razão social parecida) */
+function concEhPropria(r){
+  const dig = s=>String(s||'').replace(/\D/g,'');
+  const doc = dig(r.doc);
+  const base = s=>concTokens(s).filter(t=>t!=='LTDA' && t!=='EIRELI' && t!=='EPP');
+  let melhor = null, melhorPts = -1;
+  DB.empresas.forEach(e=>{
+    let pts = -1;
+    if(doc.length>=14 && e.cnpj && dig(e.cnpj)===doc) pts = 100;
+    else if(r.nome){
+      const a = base(r.nome), b = base(e.nome), sb = new Set(b);
+      if(a.length>=2 && b.length>=2){
+        if(a.length===b.length && a.every(t=>sb.has(t))) pts = 90;                  // mesmas palavras (sem LTDA)
+        else if(concNomesParecidos(r.nome, e.nome)) pts = 50 - Math.abs(a.length-b.length);
+      }
+      if(e.apelido && concNorm(r.nome)===concNorm(e.apelido)) pts = Math.max(pts, 80);
+    }
+    if(pts>melhorPts){ melhorPts = pts; melhor = e; }
+  });
+  return melhorPts>=0 ? melhor : null;      // a empresa do grupo que é a contraparte (ou null)
+}
+/* guarda a chave na baixa sem repetir (aplicar duas vezes já deixou a mesma chave duplicada) */
+function concAddRef(b, chave){
+  b.extratoRef = b.extratoRef || [];
+  if(b.extratoRef.indexOf(chave)<0) b.extratoRef.push(chave);
+}
 function concTemChaveDaConta(b, contaId){
   return (b.extratoRef||[]).some(k=>k.startsWith(contaId+'|'));
 }
@@ -15534,11 +15560,17 @@ function concConciliar(contaId, linhas){
      (até CONC_JANELA_SUGESTAO_DIAS). Em vez de oferecer lançar de novo — que duplicaria —,
      sugere ligar à baixa que já existe. Cada baixa é sugerida a uma linha só. */
   const sug = [];
+  /* a baixa tem que estar dentro do PERÍODO do arquivo (com a folga da janela): o que está fora o banco
+     mostraria em outro extrato — ligar uma diária de agosto a um Pix de outubro só porque o valor é igual
+     deixa o saldo errado */
+  const ds = res.map(x=>x.data).sort();
+  const periodoIni = ds.length ? addDays(ds[0], -CONC_JANELA_SUGESTAO_DIAS) : '', periodoFim = ds.length ? addDays(ds[ds.length-1], CONC_JANELA_SUGESTAO_DIAS) : '';
   res.forEach((r,i)=>{
     if(r.par) return;
     pool.forEach(p=>{
       if(usado.has(p) || concTemChaveDaConta(p.b, contaId)) return;
       if(Math.abs(p.valor-r.valor)>0.004) return;
+      if(p.data<periodoIni || p.data>periodoFim) return;
       const dd = Math.abs(concDias(r.data,p.data));
       if(dd>CONC_JANELA_SUGESTAO_DIAS) return;
       const nomeOk = r.nome && concNomeNaDescricao(r.nome, p.l.descricao||'');
@@ -15577,18 +15609,51 @@ function concConciliar(contaId, linhas){
     if(r.par || r.possivel || r.ident) return;
     if(/\bRDB\b/.test(concNorm(r.hist))) r.rdb = true;
   });
+  /* Pix entre contas DA PRÓPRIA empresa (ex.: Itaú ↔ Nu): é transferência, não receita nem despesa. Se a outra
+     ponta já foi lançada na outra conta como receita/despesa (acontece quando o outro extrato foi importado
+     primeiro), oferece transformar aquele lançamento em transferência — em vez de lançar de novo. */
+  res.forEach(r=>{
+    if(r.par || r.possivel || r.ident || r.rdb) return;
+    const emp = concEhPropria(r);
+    if(emp) r.propria = emp;     // guarda QUAL empresa do grupo é a contraparte (para sugerir a conta dela)
+  });
+  const poolOutras = [];
+  DB.contas.filter(ct=>ct.id!==contaId && ct.ativo!==false).forEach(ct=>{
+    concBaixasDaConta(ct.id).forEach(p=>{
+      if(p.l.tipo==='transferencia' || (p.l.baixas||[]).length!==1) return;
+      if(Math.abs((Number(p.l.valor)||0)-Math.abs(p.valor))>0.005) return;
+      poolOutras.push({p, contaId:ct.id});
+    });
+  });
+  const contraC = [];
+  res.forEach((r,i)=>{
+    if(!r.propria) return;
+    poolOutras.forEach(o=>{
+      if(Math.abs(o.p.valor + r.valor)>0.004) return;          // a outra ponta tem o sinal oposto
+      const dd = Math.abs(concDias(r.data, o.p.data));
+      if(dd>CONC_JANELA_DIAS) return;
+      contraC.push({i, o, score:dd*10 + (o.p.l.origem==='extrato'?0:3)});
+    });
+  });
+  contraC.sort((a,b)=>a.score-b.score || a.i-b.i);
+  const tomadas = new Set();
+  contraC.forEach(c=>{
+    const r = res[c.i];
+    if(r.contra || tomadas.has(c.o.p)) return;
+    r.contra = {p:c.o.p, contaId:c.o.contaId}; tomadas.add(c.o.p);
+  });
   /* rendimento de aplicação: entrada que o banco credita sozinho (não é cliente nem Pix de alguém) */
   res.forEach(r=>{
-    if(r.par || r.possivel || r.ident || r.rdb || r.valor<=0) return;
+    if(r.par || r.possivel || r.ident || r.rdb || r.propria || r.valor<=0) return;
     if(/\b(REND|RENDIMENTO|RENDIMENTOS|JUROS|APLIC|APLICACAO|RESGATE)\b/.test(concNorm((r.hist||'')+' '+(r.nome||'')))) r.rendimento = true;
   });
   /* entrada e saída do mesmo valor, em até CONC_JANELA_DIAS (ex.: Pix de 200 que entrou e foi repassado):
      um anula o outro, o saldo não muda — vem marcado para Ignorar os dois */
   res.forEach((r,i)=>{
-    if(r.par || r.possivel || r.ident || r.rdb || r.rendimento || r.anula || r.valor<=0) return;
+    if(r.par || r.possivel || r.ident || r.rdb || r.propria || r.rendimento || r.anula || r.valor<=0) return;
     let melhor = -1, dmin = 1e9;
     res.forEach((s,j)=>{
-      if(j===i || s.par || s.possivel || s.ident || s.rdb || s.rendimento || s.anula || s.valor>=0) return;
+      if(j===i || s.par || s.possivel || s.ident || s.rdb || s.propria || s.rendimento || s.anula || s.valor>=0) return;
       if(Math.abs(s.valor+r.valor)>0.004) return;
       const dd = Math.abs(concDias(r.data, s.data));
       if(dd<=CONC_JANELA_DIAS && dd<dmin){ dmin = dd; melhor = j; }
@@ -15604,7 +15669,7 @@ function concConciliar(contaId, linhas){
 async function concCarregar(file){
   if(!file) return;
   const st = concEstado;
-  st.erro = ''; st.arquivo = file.name; st.linhas = null; st.res = null;
+  st.erro = ''; st.arquivo = file.name; st.linhas = null; st.res = null; st.escolhas = {};
   try{
     const r = await concLerArquivo(file);
     if(!r || !r.linhas.length) throw new Error('Não achei nenhuma linha de lançamento neste arquivo (procurei as colunas Data e Valor).');
@@ -15621,8 +15686,34 @@ function concRecalcular(){
 }
 function concTrocarConta(id){
   concEstado.contaId = id;
+  concEstado.escolhas = {};
   concRecalcular();
   renderConciliacao();
+}
+/* A escolha de cada linha fica na MEMÓRIA, não só na tela: a sincronização automática redesenha a página
+   sozinha, e a escolha "Ignorar" voltava ao padrão (achado pelo Maycon, 20/10/2026). */
+function concEscolher(i, valor){
+  const st = concEstado;
+  if(st.res && st.res[i]){ st.escolhas = st.escolhas || {}; st.escolhas[st.res[i].chave] = valor; }
+}
+/* Desfaz a ligação de uma linha com o lançamento (ligação errada), para a linha voltar a ficar pendente.
+   Se o lançamento foi CRIADO pela importação, pergunta se quer excluí-lo também. */
+function concDesfazer(i){
+  const st = concEstado, r = st.res && st.res[i];
+  if(!r || !r.par) return;
+  const l = r.par.l, b = r.par.b;
+  if(!confirm(`Desfazer a ligação desta linha do banco?\n\n${fmtDate(r.data)} · ${r.hist||''}${r.nome?' — '+r.nome:''} · ${fmtMoney(Math.abs(r.valor))}\n`
+    + `ligada a: ${l.descricao||'lançamento'}\n\nO lançamento continua no app; só a ligação com o extrato é desfeita.`)) return;
+  b.extratoRef = (b.extratoRef||[]).filter(k=>k!==r.chave);
+  let excluido = false;
+  if(l.origem==='extrato' && confirm('Este lançamento foi CRIADO pela importação do extrato.\n\nExcluir o lançamento também? (Cancelar = só desfazer a ligação)')){
+    DB.lancamentos = DB.lancamentos.filter(x=>x.id!==l.id);
+    excluido = true;
+  }
+  saveDB();
+  concRecalcular();
+  renderConciliacao();
+  toast(excluido ? 'Ligação desfeita e lançamento excluído.' : 'Ligação desfeita — a linha voltou para "Faltam no app".');
 }
 
 /* chama as funções de marcar-pago do Fechamento/Vales sem redesenhar a tela delas e
@@ -15663,6 +15754,21 @@ function concPagarPeloApp(r, st){
   }
   return false;
 }
+/* Transforma o lançamento da outra conta (que foi lançado como receita/despesa) em transferência entre as
+   duas contas, uma baixa só. A baixa guarda a chave das DUAS pontas (cada uma com o prefixo da sua conta). */
+function concTransformarEmTransferencia(r, st){
+  const p = r.contra.p, l = p.l, b = p.b, outra = r.contra.contaId;
+  const sai = r.valor<0;                               // saiu DESTA conta → ela é a origem
+  const origem = sai ? st.contaId : outra, destino = sai ? outra : st.contaId;
+  Object.assign(l, {tipo:'transferencia', natureza:'operacao', contaId:origem, contaDestinoId:destino,
+    empresaId:conta(origem).empresaId, empresaDestinoId:conta(destino).empresaId,
+    categoriaId:'', obraId:'', tipoServico:'', tipoGuia:'',
+    descricao:'Transferência '+contaNome(origem)+' → '+contaNome(destino)});
+  delete l.rateioObras;
+  b.contaId = origem;
+  concAddRef(b, r.chave);
+  return true;
+}
 function concLancarVale(r, st){
   const f = r.func, abs = Math.abs(r.valor);
   const fichado = vinculoEm(f, r.data)==='fichado';
@@ -15687,6 +15793,7 @@ function concAplicar(){
     if(r.par){ if(r.via==='valor') acoes.push(['vincular', r]); continue; }
     const modo = val('conc_modo_'+i);
     if(modo==='ligar' && r.possivel) acoes.push(['ligar', r]);
+    else if(modo==='transferir' && r.contra) acoes.push(['transferir', r]);
     else if(modo==='pagar' && r.ident && r.ident.tipo!=='vale') acoes.push(['pagar', r]);
     else if(modo==='vale' && r.func) acoes.push(['vale', r]);
     else if(modo==='detalhar') fila.push(i);
@@ -15700,12 +15807,13 @@ function concAplicar(){
       + `e o saldo dessa conta anda errado.\n\nConfira a conta no alto da tela. Continuar mesmo assim?`)) return;
   }
   acoes.forEach(([acao, r])=>{
-    if(acao==='vincular'){ r.par.b.extratoRef = (r.par.b.extratoRef||[]).concat([r.chave]); feitos.ligadas++; }
+    if(acao==='vincular'){ concAddRef(r.par.b, r.chave); feitos.ligadas++; }
     else if(acao==='ligar'){
-      r.possivel.b.extratoRef = (r.possivel.b.extratoRef||[]).concat([r.chave]);
+      concAddRef(r.possivel.b, r.chave);
       if(r.possivel.moverConta) r.possivel.b.contaId = st.contaId;
       feitos.ligadas++;
     }
+    else if(acao==='transferir'){ if(concTransformarEmTransferencia(r, st)) feitos.transf = (feitos.transf||0)+1; }
     else if(acao==='pagar'){ if(concPagarPeloApp(r, st)) feitos.pagos++; }
     else if(acao==='vale'){ if(concLancarVale(r, st)) feitos.vales++; }
   });
@@ -15718,7 +15826,7 @@ function concFimAplicar(){
   const st = concEstado, f = st.feitos || {ligadas:0, pagos:0, vales:0};
   closeModal();
   st.fila = []; concRecalcular(); renderConciliacao();
-  toast(`${f.ligadas} ligada(s) · ${f.pagos} pagamento(s) marcado(s) no app · ${f.vales} vale(s) · ${st.criados||0} lançamento(s) novo(s).`);
+  toast(`${f.ligadas} ligada(s) · ${f.transf||0} virou(aram) transferência · ${f.pagos} pagamento(s) marcado(s) no app · ${f.vales} vale(s) · ${st.criados||0} lançamento(s) novo(s).`);
 }
 
 /* A janela de cada linha que o app não soube identificar */
@@ -15764,6 +15872,15 @@ function concAbrirDetalhe(){
       <button class="btn btn-primary" onclick="concDetalheSalvar()">${st.filaPos+1<st.fila.length?'Salvar e próxima':'Salvar'}</button>
     </div>
   `);
+  if(r.propria && !r.rdb){
+    /* Pix para/da própria empresa: transferência entre contas, não despesa nem receita */
+    document.getElementById('cd_modo').value = 'transferencia';
+    document.getElementById('cd_outra_w').style.display = '';
+    /* a conta bancária da empresa que mandou/recebeu — se for uma só, já vem escolhida
+       (ex.: Pix de "Construções Bela Angra Ltda" → Itaú CBA) */
+    const bancos = outras.filter(x=>x.empresaId===r.propria.id && x.tipo==='banco');
+    if(bancos.length===1) document.getElementById('cd_outra').value = bancos[0].id;
+  }
   if(r.rdb){
     /* caixinha/RDB: já abre como transferência, com a conta de nome "caixinha"/"rdb"/"aplic" se for uma só */
     document.getElementById('cd_modo').value = 'transferencia';
@@ -15863,8 +15980,10 @@ function renderConciliacao(){
         <tbody>${st.res.map((r,i)=>{
           if(r.par) return '';
           const id = r.ident;
-          const padrao = r.possivel ? 'ligar' : (id ? (id.tipo==='vale'?'vale':'pagar') : (r.anula ? 'ignorar' : 'detalhar'));
+          const padrao = r.possivel ? 'ligar' : (id ? (id.tipo==='vale'?'vale':'pagar') : (r.contra ? 'transferir' : (r.anula ? 'ignorar' : 'detalhar')));
           let aviso = '';
+          if(r.contra) aviso = `<span class="badge badge-yellow">é transferência entre as suas contas: na ${esc(contaNome(r.contra.contaId))} já existe ${r.valor<0?'a entrada':'a saída'} de ${fmtDate(r.contra.p.data)} (${esc(r.contra.p.l.descricao||'lançamento')}) lançada como ${r.contra.p.l.tipo}</span>`;
+          else if(r.propria) aviso = `<span class="badge badge-gray">Pix para/da própria empresa — é transferência entre contas (a janela já abre assim)</span>`;
           if(r.anula) aviso = `<span class="badge badge-gray">se anula com ${r.anula.valor<0?'a saída':'a entrada'} de ${fmtDate(r.anula.data)} (mesmo valor) — o saldo não muda</span>`;
           else if(r.rdb) aviso = `<span class="badge badge-gray">caixinha/RDB — é transferência entre contas (a janela já abre assim)</span>`;
           else if(r.rendimento) aviso = `<span class="badge badge-green">parece rendimento de aplicação</span>`;
@@ -15875,13 +15994,18 @@ function renderConciliacao(){
             <td><b>${esc(r.hist||'—')}</b>${r.nome?`<br><span style="font-size:11px;color:#6b7280;">${esc(r.nome)}</span>`:''}${aviso?'<br>'+aviso:''}</td>
             <td class="num" style="font-weight:700;color:${cor(r.valor)};">${r.valor<0?'−':'+'} ${fmtMoney(Math.abs(r.valor))}</td>
             <td style="white-space:nowrap;">
-              <select id="conc_modo_${i}">
-                ${r.possivel?`<option value="ligar" ${padrao==='ligar'?'selected':''}>Ligar a este lançamento (já existe)</option>`:''}
-                ${id && id.tipo!=='vale' && !r.possivel?`<option value="pagar" ${padrao==='pagar'?'selected':''}>Marcar como pago: ${esc(id.rotulo)}</option>`:''}
-                ${r.func && r.valor<0?`<option value="vale" ${padrao==='vale'?'selected':''}>Lançar como vale de ${esc(r.func.nome.split(' ')[0])}</option>`:''}
-                <option value="detalhar" ${padrao==='detalhar'?'selected':''}>Lançar — informar categoria, obra e operação</option>
-                <option value="ignorar" ${padrao==='ignorar'?'selected':''}>Ignorar</option>
-              </select>
+              <select id="conc_modo_${i}" onchange="concEscolher(${i}, this.value)">${(()=>{
+                const ops = [];
+                if(r.contra) ops.push(['transferir','Transformar em transferência com '+contaNome(r.contra.contaId)]);
+                if(r.possivel) ops.push(['ligar','Ligar a este lançamento (já existe)']);
+                if(id && id.tipo!=='vale' && !r.possivel) ops.push(['pagar','Marcar como pago: '+id.rotulo]);
+                if(r.func && r.valor<0) ops.push(['vale','Lançar como vale de '+r.func.nome.split(' ')[0]]);
+                ops.push(['detalhar','Lançar — informar categoria, obra e operação']);
+                ops.push(['ignorar','Ignorar']);
+                const guardada = st.escolhas && st.escolhas[r.chave];
+                const sel = ops.some(o=>o[0]===guardada) ? guardada : padrao;
+                return ops.map(o=>`<option value="${o[0]}" ${sel===o[0]?'selected':''}>${esc(o[1])}</option>`).join('');
+              })()}</select>
             </td></tr>`;
         }).join('')}</tbody></table></div>`
       : `<p class="help" style="margin-top:12px;padding:9px 12px;background:#e8f5ec;border-radius:8px;color:#1e6b3a;">
@@ -15905,13 +16029,14 @@ function renderConciliacao(){
       ${ok.length ? `
       <details style="margin-top:14px;"><summary style="cursor:pointer;font-weight:700;">Já lançadas (${ok.length})</summary>
       <div class="table-wrap" style="margin-top:8px;"><table>
-        <thead><tr><th>Data</th><th>Banco</th><th class="num">Valor</th><th>Lançamento no app</th><th>Ligação</th></tr></thead>
+        <thead><tr><th>Data</th><th>Banco</th><th class="num">Valor</th><th>Lançamento no app</th><th>Ligação</th><th></th></tr></thead>
         <tbody>${ok.map(r=>{
           const dd = concDias(r.par.data, r.data);
           return `<tr><td>${fmtDate(r.data)}</td><td>${esc(r.hist||'—')}${r.nome?' — '+esc(r.nome):''}</td>
             <td class="num">${r.valor<0?'−':'+'} ${fmtMoney(Math.abs(r.valor))}</td>
-            <td>${esc(r.par.l.descricao||'—')}${dd?` <span class="badge badge-yellow">baixa em ${fmtDate(r.par.data)}</span>`:''}</td>
-            <td>${r.via==='chave'?'<span class="badge badge-green">já ligada</span>':'<span class="badge badge-gray">por valor e data</span>'}</td></tr>`;
+            <td>${esc(r.par.l.descricao||'—')}${dd?` <span class="badge ${Math.abs(dd)>3?'badge-red':'badge-yellow'}">baixa em ${fmtDate(r.par.data)}${Math.abs(dd)>3?' — confira':''}</span>`:''}</td>
+            <td>${r.via==='chave'?'<span class="badge badge-green">já ligada</span>':'<span class="badge badge-gray">por valor e data</span>'}</td>
+            <td><button class="btn btn-secondary btn-sm" onclick="concDesfazer(${st.res.indexOf(r)})" title="Desfaz só a ligação com o extrato">Desfazer ligação</button></td></tr>`;
         }).join('')}</tbody></table></div></details>` : ''}`;
   }
 
