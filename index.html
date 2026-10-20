@@ -866,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.32.3';
+const VERSAO = '1.32.4';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -15690,6 +15690,14 @@ function concAplicar(){
     else if(modo==='pagar' && r.ident && r.ident.tipo!=='vale') acoes.push(['pagar', r]);
     else if(modo==='vale' && r.func) acoes.push(['vale', r]);
     else if(modo==='detalhar') fila.push(i);
+  }
+  /* trava: se quase nada casou, o mais provável é a conta errada (ou o período errado) — lançar tudo de novo
+     faria o saldo da conta andar errado e duplicaria o que já existe em outra conta */
+  const aLancar = fila.length + acoes.filter(([a])=>a==='vale'||a==='pagar').length;
+  if(st.res.length>=5 && aLancar/st.res.length>0.5){
+    if(!confirm(`Atenção: ${aLancar} das ${st.res.length} linhas deste arquivo vão virar lançamento novo.\n\n`
+      + `Isso costuma acontecer quando a CONTA escolhida (${ct.nome}) não é a do extrato — nada casa com o que já existe, `
+      + `e o saldo dessa conta anda errado.\n\nConfira a conta no alto da tela. Continuar mesmo assim?`)) return;
   }
   acoes.forEach(([acao, r])=>{
     if(acao==='vincular'){ r.par.b.extratoRef = (r.par.b.extratoRef||[]).concat([r.chave]); feitos.ligadas++; }
