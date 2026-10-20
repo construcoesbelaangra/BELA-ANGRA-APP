@@ -866,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.32.1';
+const VERSAO = '1.32.2';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -15561,6 +15561,24 @@ function concConciliar(contaId, linhas){
       }
     }
   });
+  /* rendimento de aplicação: entrada que o banco credita sozinho (não é cliente nem Pix de alguém) */
+  res.forEach(r=>{
+    if(r.par || r.possivel || r.ident || r.valor<=0) return;
+    if(/\b(REND|RENDIMENTO|RENDIMENTOS|JUROS|APLIC|APLICACAO|RESGATE)\b/.test(concNorm((r.hist||'')+' '+(r.nome||'')))) r.rendimento = true;
+  });
+  /* entrada e saída do mesmo valor, em até CONC_JANELA_DIAS (ex.: Pix de 200 que entrou e foi repassado):
+     um anula o outro, o saldo não muda — vem marcado para Ignorar os dois */
+  res.forEach((r,i)=>{
+    if(r.par || r.possivel || r.ident || r.rendimento || r.anula || r.valor<=0) return;
+    let melhor = -1, dmin = 1e9;
+    res.forEach((s,j)=>{
+      if(j===i || s.par || s.possivel || s.ident || s.rendimento || s.anula || s.valor>=0) return;
+      if(Math.abs(s.valor+r.valor)>0.004) return;
+      const dd = Math.abs(concDias(r.data, s.data));
+      if(dd<=CONC_JANELA_DIAS && dd<dmin){ dmin = dd; melhor = j; }
+    });
+    if(melhor>=0){ r.anula = res[melhor]; res[melhor].anula = r; }
+  });
   const datas = res.map(r=>r.data).sort();
   const soApp = datas.length ? pool.filter(p=>!usado.has(p) && !sugerido.has(p.b) && !sugerido.has(p) && p.data>=datas[0] && p.data<=datas[datas.length-1]) : [];
   return {res, soApp};
@@ -15722,6 +15740,11 @@ function concAbrirDetalhe(){
       <button class="btn btn-primary" onclick="concDetalheSalvar()">${st.filaPos+1<st.fila.length?'Salvar e próxima':'Salvar'}</button>
     </div>
   `);
+  if(r.rendimento){
+    /* rendimento: já sugere a categoria que tiver "rend" no nome, se existir */
+    const cat = cats.find(x=>concNorm(x.nome).includes('REND'));
+    if(cat) document.getElementById('cd_cat').value = cat.id;
+  }
 }
 function concDetalheProxima(){
   const st = concEstado;
@@ -15809,8 +15832,10 @@ function renderConciliacao(){
         <tbody>${st.res.map((r,i)=>{
           if(r.par) return '';
           const id = r.ident;
-          const padrao = r.possivel ? 'ligar' : (id ? (id.tipo==='vale'?'vale':'pagar') : 'detalhar');
+          const padrao = r.possivel ? 'ligar' : (id ? (id.tipo==='vale'?'vale':'pagar') : (r.anula ? 'ignorar' : 'detalhar'));
           let aviso = '';
+          if(r.anula) aviso = `<span class="badge badge-gray">se anula com ${r.anula.valor<0?'a saída':'a entrada'} de ${fmtDate(r.anula.data)} (mesmo valor) — o saldo não muda</span>`;
+          else if(r.rendimento) aviso = `<span class="badge badge-green">parece rendimento de aplicação</span>`;
           if(r.possivel) aviso = `<span class="badge badge-yellow">parece ser: ${esc(r.possivel.l.descricao||'lançamento')} (baixa em ${fmtDate(r.possivel.data)})${r.possivel.moverConta?' — a baixa está em outra conta; ao ligar passa para esta':''}</span>`;
           else if(id) aviso = `<span class="badge ${id.tipo==='vale'?'badge-gray':'badge-green'}">${id.tipo==='vale'?'não bate com nenhum pagamento — parece vale':'é: '+esc(id.rotulo)}</span>`;
           return `<tr>
@@ -15823,7 +15848,7 @@ function renderConciliacao(){
                 ${id && id.tipo!=='vale' && !r.possivel?`<option value="pagar" ${padrao==='pagar'?'selected':''}>Marcar como pago: ${esc(id.rotulo)}</option>`:''}
                 ${r.func && r.valor<0?`<option value="vale" ${padrao==='vale'?'selected':''}>Lançar como vale de ${esc(r.func.nome.split(' ')[0])}</option>`:''}
                 <option value="detalhar" ${padrao==='detalhar'?'selected':''}>Lançar — informar categoria, obra e operação</option>
-                <option value="ignorar">Ignorar</option>
+                <option value="ignorar" ${padrao==='ignorar'?'selected':''}>Ignorar</option>
               </select>
             </td></tr>`;
         }).join('')}</tbody></table></div>`
