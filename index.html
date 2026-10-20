@@ -866,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.31.0';
+const VERSAO = '1.32.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2110,6 +2110,7 @@ const PAGES = [
   {id:'caixa',        secao:'Financeiro', grupo:'Caixa',       label:'Caixa e Contas',      icon:'cofre',    sub:'Saldo de cada conta, por empresa e consolidado'},
   {id:'lancamentos',  secao:'Financeiro', grupo:'Caixa',       label:'A Pagar / A Receber', icon:'lista',    sub:'Lançamentos, baixa e contas que se repetem todo mês'},
   {id:'fluxo',        secao:'Financeiro', grupo:'Caixa',       label:'Fluxo de Caixa',      icon:'fluxo',    sub:'O que entra e sai adiante, e se o saldo fica negativo'},
+  {id:'conciliacao',  secao:'Financeiro', grupo:'Caixa',       label:'Conciliação bancária', icon:'confere', sub:'Compara o extrato do banco com as baixas e lança o que falta, sem duplicar'},
 
   {id:'fechamento',   secao:'Financeiro', grupo:'Pagamentos',  label:'Fechamento',          icon:'confere',  sub:'Pagamento semanal e quinzenal (sextas-feiras) e dos fichados'},
   {id:'vales',        secao:'Financeiro', grupo:'Pagamentos',  label:'Vales VT / VR',       icon:'ticket',   sub:'Fichados — adiantamento de transporte e alimentação'},
@@ -2281,7 +2282,7 @@ function render(){
     ponto: renderPonto, fechamento: renderFechamento, fechFichados: renderLiquidoFichadosRH, recibosVales: renderRecibosVales,
     adiantamentos: renderAdiantamentos, vales: renderVales, holerite: renderHolerite,
     estoque: renderEstoque, custos: renderCustos,
-    caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, provisoes: renderProvisoes,
+    caixa: renderCaixa, lancamentos: renderLancamentos, fluxo: renderFluxo, conciliacao: renderConciliacao, provisoes: renderProvisoes,
     medicaoHH: renderMedicaoHH,
     medicaoEmpreitada: renderMedicaoEmpreitada,
     rateioGuias: renderRateioGuias,
@@ -15130,6 +15131,720 @@ function excluirUsuario(id){
   if(!confirm('Excluir o acesso de ' + u.nome + '?')) return;
   DB.usuarios = DB.usuarios.filter(x => x.id !== id);
   saveDB(); render(); toast('Usuário removido.');
+}
+/* =========================================================
+   CONCILIAÇÃO BANCÁRIA (20/10/2026)
+
+   Pedido do Maycon: importar o extrato do banco (Itaú em Excel, Nu em CSV, ou
+   OFX de qualquer banco) e o app comparar com as baixas da conta — e, o mais
+   importante, RECONHECER O QUE JÁ FOI LANÇADO PARA NÃO DUPLICAR.
+
+   Como o app reconhece uma linha do banco:
+     1) pela CHAVE gravada na baixa (`b.extratoRef`) numa importação anterior —
+        é o que impede duplicar quando o período se repete em outro arquivo;
+     2) senão, pelo mesmo VALOR (com sinal) numa data até 3 dias de distância,
+        entre as baixas dessa conta que ainda não estão ligadas a nenhuma linha
+        (uma baixa só serve a uma linha; o nome na descrição desempata).
+   A chave é `contaId|identificador do banco` (Nu/OFX têm identificador) ou
+   `contaId|data|valor|lançamento|nome|nº` (Itaú não tem — conta a ocorrência
+   da mesma linha no mesmo dia).
+
+   Nada é gravado ao importar. Só o botão "Aplicar" mexe nos dados: liga as
+   baixas encontradas às linhas (para a próxima importação) e cria, só para as
+   linhas que o usuário mandou lançar, o lançamento já com a baixa e a chave.
+
+   Pagamento de funcionário (pedido do Maycon): o app descobre o que é pelo VALOR —
+   adiantamento do dia 20, saldo do mês anterior, VT/VR, diárias da sexta — e, se a
+   marca de pago ainda não foi dada, chama a mesma função do Fechamento/Vales
+   (toggle...Pago), com a conta do extrato como origem, e passa a baixa para a data
+   do banco. Se o app já tinha a marca, só liga a linha ao lançamento (e traz a baixa
+   para esta conta se estava noutra). Valor que não bate com nada vira VALE. Lançar
+   aqui e marcar lá depois duplicaria o custo — por isso essas linhas nunca viram
+   lançamento genérico.
+   O que o app não identifica abre uma janela (categoria, obra, operação, rateio de
+   guia; a conta já é a do extrato), uma linha por vez.
+   ========================================================= */
+
+const CONC_JANELA_DIAS = 3;
+const CONC_JANELA_SUGESTAO_DIAS = 45;
+const CONC_STOP = new Set(['DE','DA','DO','DAS','DOS','E']);
+let concEstado = {contaId:'', arquivo:'', linhas:null, res:null, saldoAnterior:null, saldoFinal:null, erro:''};
+
+/* ---------------- texto e números ---------------- */
+function concNorm(s){
+  return String(s===null||s===undefined?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+}
+function concTokens(s){ return concNorm(s).split(' ').filter(t=>t.length>=3 && !CONC_STOP.has(t)); }
+/* qual funcionário é este favorecido? Nome igual primeiro; senão o parecido (o banco corta/acrescenta
+   sobrenome) — e, se houver mais de um parecido, o de tamanho mais próximo. Dois "Jorge Luiz" de
+   sobrenomes diferentes não se confundem: o nome mais curto tem que caber inteiro no mais longo. */
+function concAcharFuncionario(nome){
+  const n = concNorm(nome);
+  if(!n) return null;
+  const exato = DB.funcionarios.find(f=>concNorm(f.nome)===n);
+  if(exato) return exato;
+  const nt = concTokens(nome).length;
+  const parecidos = DB.funcionarios.filter(f=>concNomesParecidos(nome, f.nome));
+  if(!parecidos.length) return null;
+  parecidos.sort((a,b)=>Math.abs(concTokens(a.nome).length-nt) - Math.abs(concTokens(b.nome).length-nt));
+  return parecidos[0];
+}
+/* o nome mais curto está inteiro dentro do mais longo (o banco corta/acrescenta sobrenome) */
+function concNomesParecidos(a, b){
+  const ta = concTokens(a), tb = concTokens(b);
+  if(ta.length<2 || tb.length<2) return false;
+  const [curto, longo] = ta.length<=tb.length ? [ta,tb] : [tb,ta];
+  const set = new Set(longo);
+  return curto.every(t=>set.has(t));
+}
+/* o nome do favorecido aparece na descrição de um lançamento (ex.: "Saldo — NOME — mês") */
+function concNomeNaDescricao(nome, desc){
+  const tn = concTokens(nome);
+  if(tn.length<2) return false;
+  const set = new Set(concTokens(desc));
+  return tn.filter(t=>set.has(t)).length / tn.length >= 0.75;
+}
+function concData(v){
+  if(v===null||v===undefined||v==='') return '';
+  const s = String(v).trim();
+  let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if(m) return `${m[3]}-${m[2]}-${m[1]}`;
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  if(/^\d{8}/.test(s) && !/[\/\-.,]/.test(s.slice(0,8))) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+  if(/^\d+(\.\d+)?$/.test(s)){
+    const n = parseFloat(s);
+    if(n>30000 && n<80000) return new Date(Date.UTC(1899,11,30)+Math.floor(n)*86400000).toISOString().slice(0,10);
+  }
+  return '';
+}
+function concValor(v){
+  if(typeof v==='number') return isFinite(v) ? Math.round(v*100)/100 : NaN;
+  let s = String(v===null||v===undefined?'':v).trim().replace(/R\$\s*/i,'').replace(/\s/g,'');
+  if(!s) return NaN;
+  if(s.includes(',')) s = s.replace(/\./g,'').replace(',','.');
+  const n = parseFloat(s);
+  return isNaN(n) ? NaN : Math.round(n*100)/100;
+}
+function concDias(a, b){
+  return Math.round((Date.UTC(+a.slice(0,4),+a.slice(5,7)-1,+a.slice(8,10)) - Date.UTC(+b.slice(0,4),+b.slice(5,7)-1,+b.slice(8,10)))/86400000);
+}
+
+/* ---------------- leitura dos arquivos ---------------- */
+/* .xlsx é um ZIP; só precisamos de duas peças (textos compartilhados e a 1ª planilha) */
+async function concLerZip(buf){
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let eocd = -1;
+  for(let i=u8.length-22; i>=Math.max(0,u8.length-65557); i--){
+    if(dv.getUint32(i,true)===0x06054b50){ eocd = i; break; }
+  }
+  if(eocd<0) throw new Error('Este arquivo não é um Excel (.xlsx) válido.');
+  const n = dv.getUint16(eocd+10,true);
+  let p = dv.getUint32(eocd+16,true);
+  const out = {};
+  for(let k=0; k<n; k++){
+    if(dv.getUint32(p,true)!==0x02014b50) break;
+    const metodo = dv.getUint16(p+10,true), comp = dv.getUint32(p+20,true);
+    const nl = dv.getUint16(p+28,true), el = dv.getUint16(p+30,true), cl = dv.getUint16(p+32,true);
+    const lo = dv.getUint32(p+42,true);
+    const nome = new TextDecoder().decode(u8.subarray(p+46,p+46+nl));
+    p += 46+nl+el+cl;
+    if(!(nome==='xl/sharedStrings.xml' || /^xl\/worksheets\/sheet\d+\.xml$/.test(nome))) continue;
+    const ini = lo+30+dv.getUint16(lo+26,true)+dv.getUint16(lo+28,true);
+    const dados = u8.subarray(ini, ini+comp);
+    if(metodo===0) out[nome] = new TextDecoder().decode(dados);
+    else if(metodo===8){
+      if(typeof DecompressionStream==='undefined') throw new Error('Este navegador não consegue abrir Excel — use o extrato em CSV ou OFX.');
+      out[nome] = await new Response(new Blob([dados]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    }
+  }
+  return out;
+}
+function concColIdx(ref){
+  const m = /^([A-Z]+)/.exec(ref||''); if(!m) return 0;
+  return m[1].split('').reduce((s,c)=>s*26+c.charCodeAt(0)-64,0)-1;
+}
+/* XML do Excel → matriz de linhas (colunas por posição) */
+function concXlsxParaTabela(sharedXml, sheetXml){
+  const dom = new DOMParser();
+  const shared = [];
+  if(sharedXml){
+    const d = dom.parseFromString(sharedXml,'application/xml');
+    Array.from(d.getElementsByTagName('si')).forEach(si=>{
+      shared.push(Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join(''));
+    });
+  }
+  const d = dom.parseFromString(sheetXml,'application/xml');
+  const rows = [];
+  Array.from(d.getElementsByTagName('row')).forEach(row=>{
+    const r = [];
+    Array.from(row.getElementsByTagName('c')).forEach(c=>{
+      const t = c.getAttribute('t');
+      const vEl = c.getElementsByTagName('v')[0];
+      let v = '';
+      if(t==='s') v = vEl ? (shared[+vEl.textContent]||'') : '';
+      else if(t==='inlineStr') v = Array.from(c.getElementsByTagName('t')).map(x=>x.textContent).join('');
+      else v = vEl ? vEl.textContent : '';
+      r[concColIdx(c.getAttribute('r'))] = v;
+    });
+    rows.push(r);
+  });
+  return rows;
+}
+function concParseCsv(txt){
+  txt = txt.replace(/^﻿/,'');
+  const prim = txt.split(/\r?\n/,1)[0];
+  const sep = prim.split(';').length > prim.split(',').length ? ';' : ',';
+  const rows = []; let cur = [], f = '', q = false;
+  for(let i=0;i<txt.length;i++){
+    const ch = txt[i];
+    if(q){ if(ch==='"'){ if(txt[i+1]==='"'){ f+='"'; i++; } else q=false; } else f+=ch; }
+    else if(ch==='"') q = true;
+    else if(ch===sep){ cur.push(f); f=''; }
+    else if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&txt[i+1]==='\n') i++; cur.push(f); f=''; rows.push(cur); cur=[]; }
+    else f+=ch;
+  }
+  if(f!==''||cur.length){ cur.push(f); rows.push(cur); }
+  return rows.filter(r=>r.some(c=>String(c).trim()!==''));
+}
+/* matriz → linhas do extrato. Acha sozinho o cabeçalho (Data + Valor). */
+function concLinhasDeTabela(rows){
+  let h = -1, cols = null;
+  for(let i=0;i<rows.length && h<0;i++){
+    const nm = Array.from(rows[i]||[], c=>concNorm(c));   // Array.from preenche os buracos das colunas vazias
+    const iData = nm.findIndex(x=>x==='DATA'), iVal = nm.findIndex(x=>x.startsWith('VALOR'));
+    if(iData>=0 && iVal>=0){
+      h = i;
+      cols = {data:iData, valor:iVal,
+        hist: nm.findIndex(x=>['LANCAMENTO','HISTORICO','DESCRICAO','MEMO'].includes(x)),
+        nome: nm.findIndex(x=>['RAZAO SOCIAL','FAVORECIDO','NOME'].includes(x)),
+        doc:  nm.findIndex(x=>x.startsWith('CPF')),
+        saldo:nm.findIndex(x=>x.startsWith('SALDO')),
+        id:   nm.findIndex(x=>['IDENTIFICADOR','ID','FITID'].includes(x))};
+    }
+  }
+  if(h<0) return null;
+  const txt = (r,i)=> i>=0 && r[i]!==undefined && r[i]!==null ? String(r[i]).trim() : '';
+  const linhas = []; let saldoAnterior = null, saldoFinal = null;
+  for(let i=h+1;i<rows.length;i++){
+    const r = rows[i]||[];
+    const hist = txt(r,cols.hist), data = concData(r[cols.data]);
+    if(concNorm(hist).startsWith('SALDO')){
+      const s = cols.saldo>=0 ? concValor(r[cols.saldo]) : NaN;
+      if(!isNaN(s)){
+        if(concNorm(hist).includes('ANTERIOR')) saldoAnterior = {data, saldo:s};
+        else saldoFinal = {data, saldo:s};
+      }
+      continue;
+    }
+    const valor = concValor(r[cols.valor]);
+    if(!data || isNaN(valor) || valor===0) continue;
+    linhas.push({data, valor, hist, nome:txt(r,cols.nome), doc:txt(r,cols.doc), idExterno:txt(r,cols.id)});
+  }
+  return {linhas, saldoAnterior, saldoFinal};
+}
+function concLinhasOfx(txt){
+  const tag = (blk,t)=>{ const m = blk.match(new RegExp('<'+t+'>([^<\\r\\n]*)','i')); return m ? m[1].trim() : ''; };
+  const linhas = [];
+  const re = /<STMTTRN>([\s\S]*?)(?=<\/STMTTRN>|<STMTTRN>|<\/BANKTRANLIST>)/gi;
+  let m;
+  while((m = re.exec(txt))){
+    const blk = m[1];
+    const data = concData(tag(blk,'DTPOSTED').slice(0,8));
+    let amt = tag(blk,'TRNAMT'); if(amt.includes(',') && !amt.includes('.')) amt = amt.replace(',','.');
+    const valor = Math.round(parseFloat(amt)*100)/100;
+    if(!data || isNaN(valor) || valor===0) continue;
+    linhas.push({data, valor, hist:tag(blk,'MEMO')||tag(blk,'NAME'), nome:tag(blk,'NAME')!==tag(blk,'MEMO')?tag(blk,'NAME'):'', doc:'', idExterno:tag(blk,'FITID')});
+  }
+  let saldoFinal = null;
+  const lb = txt.match(/<LEDGERBAL>([\s\S]*?)(?:<\/LEDGERBAL>|$)/i);
+  if(lb){
+    const s = parseFloat(tag(lb[1],'BALAMT').replace(',','.'));
+    if(!isNaN(s)) saldoFinal = {data:concData(tag(lb[1],'DTASOF').slice(0,8)), saldo:Math.round(s*100)/100};
+  }
+  return {linhas, saldoAnterior:null, saldoFinal};
+}
+function concDecodificar(buf){
+  let t = new TextDecoder('utf-8').decode(buf);
+  if(t.includes('�')) t = new TextDecoder('windows-1252').decode(buf);
+  return t;
+}
+async function concLerArquivo(file){
+  const buf = await file.arrayBuffer();
+  const nome = (file.name||'').toLowerCase();
+  const u8 = new Uint8Array(buf);
+  if(u8[0]===0x50 && u8[1]===0x4B){                       // ZIP → Excel
+    const z = await concLerZip(buf);
+    const folha = Object.keys(z).filter(k=>k.startsWith('xl/worksheets/')).sort()[0];
+    if(!folha) throw new Error('Não achei nenhuma planilha dentro do Excel.');
+    return concLinhasDeTabela(concXlsxParaTabela(z['xl/sharedStrings.xml']||'', z[folha]));
+  }
+  const txt = concDecodificar(buf);
+  if(/<STMTTRN>/i.test(txt) || /\.(ofx|ofc)$/.test(nome)) return concLinhasOfx(txt);
+  return concLinhasDeTabela(concParseCsv(txt));
+}
+
+/* ---------------- conciliação ---------------- */
+/* as baixas que mexeram no saldo dessa conta, com o sinal que o banco mostraria */
+function concBaixasDaConta(contaId){
+  const out = [];
+  DB.lancamentos.forEach(l=>(l.baixas||[]).forEach(b=>{
+    const v = Number(b.valor)||0; if(!v) return;
+    let sv = null;
+    if(l.tipo==='transferencia'){
+      if(l.contaId===l.contaDestinoId) return;
+      if(l.contaId===contaId) sv = -v; else if(l.contaDestinoId===contaId) sv = v;
+    }else if(contaDaBaixa(l,b)===contaId){
+      sv = l.tipo==='receita' ? v : -v;
+    }
+    if(sv!==null) out.push({l, b, valor:Math.round(sv*100)/100, data:b.data});
+  }));
+  return out;
+}
+function concTemChaveDaConta(b, contaId){
+  return (b.extratoRef||[]).some(k=>k.startsWith(contaId+'|'));
+}
+/* dá a cada linha uma chave estável (ver cabeçalho do arquivo) */
+function concPrepararLinhas(contaId, linhas){
+  const cont = {};
+  return linhas.map(x=>{
+    const r = Object.assign({}, x);
+    if(r.idExterno) r.chave = contaId+'|id:'+r.idExterno;
+    else{
+      const base = [r.data, r.valor.toFixed(2), concNorm(r.hist), concNorm(r.nome)].join('|');
+      cont[base] = (cont[base]||0)+1;
+      r.chave = contaId+'|'+base+'|'+cont[base];
+    }
+    return r;
+  });
+}
+
+/* O que é este pagamento a um funcionário? Compara o valor com o que o app calcula para a pessoa:
+   adiantamento do dia 20, saldo do mês anterior, VT/VR e diárias da sexta. Se nada bate, é vale.
+   `ja` = o app já tem a marca de pago (e o lançamento) — então é só ligar, não marcar de novo. */
+function concIdentificar(r){
+  const f = r.func;
+  if(!f || r.valor>=0) return null;
+  const alvo = Math.abs(r.valor), mesData = r.data.slice(0,7);
+  const igual = x=>Math.abs(x-alvo)<0.005;
+  const ehFichado = m=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(m), ultimoDiaMes(m));
+  const cands = [];
+  if(ehFichado(mesData)){
+    const c = calcFichado(f, mesData);
+    if(c.temDireitoAdiantamento && c.adiantamento>0 && igual(c.adiantamento))
+      cands.push({tipo:'adiantamento', mes:mesData, rotulo:'Adiantamento (dia 20) de '+monthLabel(mesData), ja:!!c.reg.adiantamentoPago, lancId:c.reg.adiantamentoLancamentoId});
+  }
+  const mAnt = mesAnteriorDe(mesData);
+  if(ehFichado(mAnt)){
+    const c = calcFichado(f, mAnt);
+    if(c.saldo!==null && c.saldo>0 && igual(c.saldo))
+      cands.push({tipo:'saldo', mes:mAnt, rotulo:'Saldo de salário de '+monthLabel(mAnt), ja:!!c.reg.saldoPago, lancId:c.reg.saldoLancamentoId});
+  }
+  [mesData, mesMais(mesData,1)].forEach(m=>{
+    if(!ehFichado(m) || !recebeAlgumVale(f)) return;
+    const cv = calcVale(f, m);
+    if(cv.liquido>0 && igual(cv.liquido))
+      cands.push({tipo:'vt', mes:m, rotulo:'Vale VT/VR de '+monthLabel(m), ja:!!cv.v.pago, lancId:cv.v.pagoLancamentoId});
+  });
+  let sexta = r.data; while(dowOf(sexta)!==5) sexta = addDays(sexta,1);
+  [sexta, addDays(sexta,-7)].forEach(s=>{
+    calcsDoFechamento(s).forEach(x=>{
+      if(x.f.id!==f.id || !(x.liquido>0) || !igual(x.liquido)) return;
+      const per = x.apenasComissao ? 'comissao' : (x.periodicidadeUsada || x.f.periodicidade);
+      const pg = pagamentoDe(f.id, s, per);
+      cands.push({tipo:'diaria', sexta:s, per, valor:x.liquido, rotulo:'Diárias da sexta '+fmtDate(s), ja:!!pg, lancId:pg?pg.lancamentoId:''});
+    });
+  });
+  if(cands.length) return cands.find(c=>!c.ja) || cands[0];
+  return {tipo:'vale', rotulo:'Vale (adiantamento) para '+f.nome, ja:false, lancId:''};
+}
+
+function concConciliar(contaId, linhas){
+  const pool = concBaixasDaConta(contaId);
+  const usado = new Set();
+  const res = concPrepararLinhas(contaId, linhas);
+  const porChave = new Map();
+  pool.forEach(p=>(p.b.extratoRef||[]).forEach(k=>porChave.set(k,p)));
+  res.forEach(r=>{
+    const p = porChave.get(r.chave);
+    if(p && !usado.has(p)){ r.par = p; r.via = 'chave'; usado.add(p); }
+  });
+  const cands = [];
+  res.forEach((r,i)=>{
+    if(r.par) return;
+    pool.forEach(p=>{
+      if(usado.has(p) || concTemChaveDaConta(p.b, contaId)) return;
+      if(Math.abs(p.valor-r.valor)>0.004) return;
+      const dd = Math.abs(concDias(r.data,p.data));
+      if(dd>CONC_JANELA_DIAS) return;
+      const nomeOk = r.nome && concNomeNaDescricao(r.nome, p.l.descricao||'');
+      cands.push({i, p, score:dd*10+(nomeOk?0:5)});
+    });
+  });
+  cands.sort((a,b)=>a.score-b.score || a.i-b.i);
+  cands.forEach(c=>{
+    const r = res[c.i];
+    if(r.par || usado.has(c.p)) return;
+    r.par = c.p; r.via = 'valor'; usado.add(c.p);
+  });
+  /* quem é funcionário */
+  res.forEach(r=>{
+    if(r.par || !r.nome) return;
+    r.func = concAcharFuncionario(r.nome);
+  });
+  /* "parece ser este": mesmo valor, mas a data da baixa no app está longe da do banco
+     (até CONC_JANELA_SUGESTAO_DIAS). Em vez de oferecer lançar de novo — que duplicaria —,
+     sugere ligar à baixa que já existe. Cada baixa é sugerida a uma linha só. */
+  const sug = [];
+  res.forEach((r,i)=>{
+    if(r.par) return;
+    pool.forEach(p=>{
+      if(usado.has(p) || concTemChaveDaConta(p.b, contaId)) return;
+      if(Math.abs(p.valor-r.valor)>0.004) return;
+      const dd = Math.abs(concDias(r.data,p.data));
+      if(dd>CONC_JANELA_SUGESTAO_DIAS) return;
+      const nomeOk = r.nome && concNomeNaDescricao(r.nome, p.l.descricao||'');
+      sug.push({i, p, score:dd+(nomeOk?0:20)});
+    });
+  });
+  sug.sort((a,b)=>a.score-b.score || a.i-b.i);
+  const sugerido = new Set();
+  sug.forEach(c=>{
+    const r = res[c.i];
+    if(r.par || r.possivel || usado.has(c.p) || sugerido.has(c.p)) return;
+    r.possivel = c.p; sugerido.add(c.p);
+  });
+  /* pagamento de funcionário: descobre o que é (adiantamento, saldo, VT/VR, diárias ou vale). Se o app
+     já tem a marca de pago, o lançamento existe (talvez noutra conta ou noutra data) — liga a ele. */
+  res.forEach(r=>{
+    if(r.par || r.possivel || !r.func) return;
+    const id = concIdentificar(r);
+    if(!id) return;
+    r.ident = id;
+    if(id.ja){
+      const l = DB.lancamentos.find(x=>x.id===id.lancId);
+      const b = l && (l.baixas||[])[0];
+      if(b && !sugerido.has(b)){
+        const alvo = pool.find(p=>p.b===b);
+        if(!alvo || !usado.has(alvo)){
+          r.possivel = {l, b, valor:-(Number(b.valor)||0), data:b.data, moverConta:contaDaBaixa(l,b)!==contaId};
+          sugerido.add(b);
+        }
+      }
+    }
+  });
+  const datas = res.map(r=>r.data).sort();
+  const soApp = datas.length ? pool.filter(p=>!usado.has(p) && !sugerido.has(p.b) && !sugerido.has(p) && p.data>=datas[0] && p.data<=datas[datas.length-1]) : [];
+  return {res, soApp};
+}
+
+/* ---------------- ações ---------------- */
+async function concCarregar(file){
+  if(!file) return;
+  const st = concEstado;
+  st.erro = ''; st.arquivo = file.name; st.linhas = null; st.res = null;
+  try{
+    const r = await concLerArquivo(file);
+    if(!r || !r.linhas.length) throw new Error('Não achei nenhuma linha de lançamento neste arquivo (procurei as colunas Data e Valor).');
+    st.linhas = r.linhas; st.saldoAnterior = r.saldoAnterior; st.saldoFinal = r.saldoFinal;
+    concRecalcular();
+  }catch(e){ st.erro = e.message || String(e); }
+  renderConciliacao();
+}
+function concRecalcular(){
+  const st = concEstado;
+  if(!st.linhas || !st.contaId){ st.res = null; st.soApp = []; return; }
+  const c = concConciliar(st.contaId, st.linhas);
+  st.res = c.res; st.soApp = c.soApp;
+}
+function concTrocarConta(id){
+  concEstado.contaId = id;
+  concRecalcular();
+  renderConciliacao();
+}
+
+/* chama as funções de marcar-pago do Fechamento/Vales sem redesenhar a tela delas e
+   com a conta do extrato como "de onde sai o pagamento" (é de onde o dinheiro saiu de fato) */
+function concMarcarPago(chaveConfig, contaId, fn){
+  const antConta = DB.config[chaveConfig], antF = window.renderFechamento, antV = window.renderVales;
+  DB.config[chaveConfig] = contaId;
+  window.renderFechamento = function(){}; window.renderVales = function(){};
+  try{ return fn(); }
+  finally{ DB.config[chaveConfig] = antConta; window.renderFechamento = antF; window.renderVales = antV; }
+}
+/* depois de marcar pago, a baixa do lançamento criado passa para a data do banco e guarda a chave */
+function concAmarrarBaixa(lancId, r){
+  const l = lancId && DB.lancamentos.find(x=>x.id===lancId);
+  if(!l || !l.baixas || !l.baixas[0]) return false;
+  l.baixas[0].data = r.data;
+  l.baixas[0].extratoRef = (l.baixas[0].extratoRef||[]).concat([r.chave]);
+  return true;
+}
+function concPagarPeloApp(r, st){
+  const f = r.func, id = r.ident;
+  if(id.tipo==='adiantamento'){
+    concMarcarPago('fichadosContaPadrao', st.contaId, ()=>toggleAdiantamentoFichadoPago(f.id, id.mes));
+    return concAmarrarBaixa(getFechFichado(f.id, id.mes).adiantamentoLancamentoId, r);
+  }
+  if(id.tipo==='saldo'){
+    concMarcarPago('fichadosContaPadrao', st.contaId, ()=>toggleSaldoFichadoPago(f.id, id.mes));
+    return concAmarrarBaixa(getFechFichado(f.id, id.mes).saldoLancamentoId, r);
+  }
+  if(id.tipo==='vt'){
+    concMarcarPago('valesContaPadrao', st.contaId, ()=>toggleValePago(f.id, id.mes));
+    return concAmarrarBaixa(getVale(f.id, id.mes).pagoLancamentoId, r);
+  }
+  if(id.tipo==='diaria'){
+    concMarcarPago('fechamentoContaPadrao', st.contaId, ()=>togglePago(f.id, id.sexta, id.per, id.valor));
+    const pg = pagamentoDe(f.id, id.sexta, id.per);
+    return concAmarrarBaixa(pg && pg.lancamentoId, r);
+  }
+  return false;
+}
+function concLancarVale(r, st){
+  const f = r.func, abs = Math.abs(r.valor);
+  const fichado = vinculoEm(f, r.data)==='fichado';
+  const a = {id:uid(), funcionarioId:f.id, data:r.data, valor:abs, descricao:'Pix pelo extrato', tipo:'vale',
+    modo:fichado?'fichado_vale':'diarista_semana', parcelas:1, mesInicio:fichado?mesMais(r.data.slice(0,7),1):'',
+    contaId:st.contaId, categoriaId:'', lancamentoId:''};
+  sincronizaLancamentoAdiantamento(a);
+  DB.adiantamentos.push(a);
+  return concAmarrarBaixa(a.lancamentoId, r);
+}
+
+/* Aplicar: faz o que é automático (ligar, marcar pago, vale) e abre a janela, linha por linha,
+   para o que o app não identificou (categoria, obra e operação). */
+function concAplicar(){
+  const st = concEstado, ct = conta(st.contaId);
+  if(!ct || !st.res) return;
+  const feitos = {ligadas:0, pagos:0, vales:0};
+  const fila = [];
+  const acoes = [];
+  for(let i=0;i<st.res.length;i++){
+    const r = st.res[i];
+    if(r.par){ if(r.via==='valor') acoes.push(['vincular', r]); continue; }
+    const modo = val('conc_modo_'+i);
+    if(modo==='ligar' && r.possivel) acoes.push(['ligar', r]);
+    else if(modo==='pagar' && r.ident && r.ident.tipo!=='vale') acoes.push(['pagar', r]);
+    else if(modo==='vale' && r.func) acoes.push(['vale', r]);
+    else if(modo==='detalhar') fila.push(i);
+  }
+  acoes.forEach(([acao, r])=>{
+    if(acao==='vincular'){ r.par.b.extratoRef = (r.par.b.extratoRef||[]).concat([r.chave]); feitos.ligadas++; }
+    else if(acao==='ligar'){
+      r.possivel.b.extratoRef = (r.possivel.b.extratoRef||[]).concat([r.chave]);
+      if(r.possivel.moverConta) r.possivel.b.contaId = st.contaId;
+      feitos.ligadas++;
+    }
+    else if(acao==='pagar'){ if(concPagarPeloApp(r, st)) feitos.pagos++; }
+    else if(acao==='vale'){ if(concLancarVale(r, st)) feitos.vales++; }
+  });
+  saveDB();
+  st.fila = fila; st.filaPos = 0; st.criados = 0; st.feitos = feitos;
+  if(fila.length) concAbrirDetalhe();
+  else concFimAplicar();
+}
+function concFimAplicar(){
+  const st = concEstado, f = st.feitos || {ligadas:0, pagos:0, vales:0};
+  closeModal();
+  st.fila = []; concRecalcular(); renderConciliacao();
+  toast(`${f.ligadas} ligada(s) · ${f.pagos} pagamento(s) marcado(s) no app · ${f.vales} vale(s) · ${st.criados||0} lançamento(s) novo(s).`);
+}
+
+/* A janela de cada linha que o app não soube identificar */
+function concAbrirDetalhe(){
+  const st = concEstado, ct = conta(st.contaId);
+  const i = st.fila[st.filaPos], r = st.res[i];
+  const entrada = r.valor>0;
+  const cats = categoriasDe(entrada?'receita':'despesa');
+  const outras = contasAtivas().filter(x=>x.id!==st.contaId);
+  openModal(`
+    <button class="modal-close" onclick="concDetalheCancelar()">×</button>
+    <h2>Lançar do extrato <span style="font-weight:400;font-size:14px;">(${st.filaPos+1} de ${st.fila.length})</span></h2>
+    <div class="kpi" style="margin-bottom:12px;">
+      <div class="v" style="color:${entrada?'var(--verde)':'var(--vermelho)'};">${entrada?'+':'−'} ${fmtMoney(Math.abs(r.valor))}</div>
+      <div class="l">${fmtDate(r.data)} · ${esc(r.hist||'—')}${r.nome?' · '+esc(r.nome):''}${r.doc?' · '+esc(r.doc):''} · conta prevista: <b>${esc(ct.nome)}</b></div>
+    </div>
+    <div class="field"><label>Descrição</label><input id="cd_desc" value="${esc((r.hist||'Lançamento do extrato')+(r.nome?' — '+r.nome:''))}"></div>
+    <div class="grid grid-2">
+      <div class="field"><label>Tratar como</label>
+        <select id="cd_modo" onchange="document.getElementById('cd_outra_w').style.display=this.value==='transferencia'?'':'none'">
+          <option value="operacao">${entrada?'Receita':'Despesa'} da operação</option>
+          <option value="particular">Particular (fora do resultado)</option>
+          <option value="transferencia">Transferência entre contas</option>
+        </select></div>
+      <div class="field" id="cd_outra_w" style="display:none;"><label>Outra conta</label>
+        <select id="cd_outra"><option value="">— escolha —</option>${outras.map(x=>`<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid grid-2">
+      <div class="field"><label>Categoria</label>
+        <select id="cd_cat"><option value="">— sem categoria —</option>${cats.map(x=>`<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+      <div class="field"><label>Obra</label>
+        <select id="cd_obra"><option value="">— sem obra —</option>${DB.obras.map(o=>`<option value="${o.id}">${esc(o.nome)}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid grid-2">
+      <div class="field"><label>Operação</label>
+        <select id="cd_op"><option value="">— sem operação —</option>${Object.keys(SERVICO_LABEL).map(k=>`<option value="${k}">${esc(SERVICO_LABEL[k])}</option>`).join('')}</select></div>
+      <div class="field"><label>Rateio de guia</label>
+        <select id="cd_guia"><option value="">— não é guia —</option>${Object.keys(TIPO_GUIA_LABEL).map(k=>`<option value="${k}">${esc(TIPO_GUIA_LABEL[k])}</option>`).join('')}</select></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="concDetalheCancelar()">Parar aqui</button>
+      <button class="btn btn-secondary" onclick="concDetalhePular()">Pular esta</button>
+      <button class="btn btn-primary" onclick="concDetalheSalvar()">${st.filaPos+1<st.fila.length?'Salvar e próxima':'Salvar'}</button>
+    </div>
+  `);
+}
+function concDetalheProxima(){
+  const st = concEstado;
+  st.filaPos++;
+  if(st.filaPos<st.fila.length) concAbrirDetalhe(); else concFimAplicar();
+}
+function concDetalhePular(){ concDetalheProxima(); }
+function concDetalheCancelar(){ concFimAplicar(); }
+function concDetalheSalvar(){
+  const st = concEstado, ct = conta(st.contaId);
+  const r = st.res[st.fila[st.filaPos]];
+  const modo = val('cd_modo'), abs = Math.abs(r.valor);
+  let outra = '';
+  if(modo==='transferencia'){
+    outra = val('cd_outra');
+    if(!outra){ toast('Escolha a outra conta da transferência.'); return; }
+  }
+  const baixa = {id:uid(), data:r.data, valor:abs, contaId:st.contaId, extratoRef:[r.chave]};
+  const base = {id:uid(), baixas:[baixa], origem:'extrato', natureza:modo==='particular'?'particular':'operacao',
+    descricao:val('cd_desc').trim() || (r.hist||'Lançamento do extrato'), valor:abs, vencimento:r.data,
+    obs:r.doc?('CPF/CNPJ '+r.doc):'', obraId:val('cd_obra'), tipoServico:val('cd_op'), tipoGuia:val('cd_guia')};
+  if(modo==='transferencia'){
+    const sai = r.valor<0;
+    const origem = sai ? st.contaId : outra, destino = sai ? outra : st.contaId;
+    baixa.contaId = origem;
+    Object.assign(base, {tipo:'transferencia', natureza:'operacao', contaId:origem, contaDestinoId:destino,
+      empresaId:conta(origem).empresaId, empresaDestinoId:conta(destino).empresaId, categoriaId:'', obraId:'', tipoServico:'', tipoGuia:''});
+  }else{
+    Object.assign(base, {tipo:r.valor>0?'receita':'despesa', empresaId:ct.empresaId, contaId:st.contaId, categoriaId:val('cd_cat')});
+  }
+  DB.lancamentos.push(base);
+  st.criados = (st.criados||0)+1;
+  saveDB();
+  concDetalheProxima();
+}
+
+/* ---------------- tela ---------------- */
+function renderConciliacao(){
+  const c = document.getElementById('content');
+  const st = concEstado;
+  if(!financeiroPronto()){
+    c.innerHTML = `<div class="card"><div class="empty">Cadastre a empresa e a conta do banco em
+      <a href="#" onclick="goTo('caixa'); return false;">Caixa e Contas</a> antes de conciliar.</div></div>`;
+    return;
+  }
+  const contas = contasAtivas();
+  if(!st.contaId || !conta(st.contaId)) st.contaId = '';
+  const optsConta = `<option value="">— escolha a conta —</option>` +
+    contas.map(ct=>`<option value="${ct.id}" ${st.contaId===ct.id?'selected':''}>${esc(ct.nome)} · ${esc(empresaFinNome(ct.empresaId))}</option>`).join('');
+  const cor = v=>v<0?'var(--vermelho)':'var(--verde)';
+
+  let corpo = '';
+  if(st.erro){
+    corpo = `<p class="help" style="padding:9px 12px;background:#fdecea;border-radius:8px;color:#9b1c1c;">${esc(st.erro)}</p>`;
+  }else if(st.linhas && !st.contaId){
+    corpo = `<p class="help" style="padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
+      Li <b>${st.linhas.length}</b> linha(s) de <b>${esc(st.arquivo)}</b>. Agora escolha acima de qual conta é este extrato.</p>`;
+  }else if(st.res){
+    const ok = st.res.filter(r=>r.par), novos = st.res.filter(r=>!r.par);
+    const dFim = st.res.map(r=>r.data).sort().pop();
+    const dSaldo = (st.saldoFinal && st.saldoFinal.data) || dFim;
+    const saldoApp = saldoConta(st.contaId, dSaldo);
+    const dif = st.saldoFinal ? Math.round((st.saldoFinal.saldo - saldoApp)*100)/100 : null;
+    const nada = !novos.length && !ok.some(r=>r.via==='valor');
+    corpo = `
+      <div class="kpis">
+        <div class="kpi"><div class="v">${st.res.length}</div><div class="l">Linhas no arquivo</div></div>
+        <div class="kpi"><div class="v" style="color:var(--verde);">${ok.length}</div><div class="l">Já lançadas no app</div></div>
+        <div class="kpi"><div class="v" style="color:${novos.length?'var(--vermelho)':'inherit'};">${novos.length}</div><div class="l">Faltam no app</div></div>
+        <div class="kpi"><div class="v" style="color:${st.soApp.length?'var(--vermelho)':'inherit'};">${st.soApp.length}</div><div class="l">Só no app (sem linha no banco)</div></div>
+      </div>
+      ${st.saldoFinal ? `<p class="help" style="margin:10px 0 0;padding:9px 12px;border-radius:8px;background:#f3f4f7;">
+        Saldo do banco em <b>${fmtDate(dSaldo)}</b>: <b>${fmtMoney(st.saldoFinal.saldo)}</b> ·
+        saldo do app na mesma data: <b>${fmtMoney(saldoApp)}</b> ·
+        diferença: <b style="color:${Math.abs(dif)<0.005?'var(--verde)':'var(--vermelho)'};">${fmtMoney(dif)}</b>
+        ${Math.abs(dif)<0.005?'— os dois saldos batem.':'— normal enquanto houver linhas faltando acima; confira de novo depois de aplicar.'}</p>` : ''}
+
+      ${novos.length ? `
+      <h3>Faltam no app (${novos.length})</h3>
+      <p class="help">O app já conferiu o que existe e sugeriu o que fazer com cada linha. Pagamento de funcionário é reconhecido pelo
+        valor (adiantamento, saldo, VT/VR, diárias da sexta) e <b>marcado como pago</b> no app se ainda não estava. O que ele
+        não identifica abre uma janela para você informar categoria, obra e operação. Revise e clique em <b>Aplicar</b>.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Data</th><th>Lançamento no banco</th><th class="num">Valor</th><th>O que fazer</th></tr></thead>
+        <tbody>${st.res.map((r,i)=>{
+          if(r.par) return '';
+          const id = r.ident;
+          const padrao = r.possivel ? 'ligar' : (id ? (id.tipo==='vale'?'vale':'pagar') : 'detalhar');
+          let aviso = '';
+          if(r.possivel) aviso = `<span class="badge badge-yellow">parece ser: ${esc(r.possivel.l.descricao||'lançamento')} (baixa em ${fmtDate(r.possivel.data)})${r.possivel.moverConta?' — a baixa está em outra conta; ao ligar passa para esta':''}</span>`;
+          else if(id) aviso = `<span class="badge ${id.tipo==='vale'?'badge-gray':'badge-green'}">${id.tipo==='vale'?'não bate com nenhum pagamento — parece vale':'é: '+esc(id.rotulo)}</span>`;
+          return `<tr>
+            <td>${fmtDate(r.data)}</td>
+            <td><b>${esc(r.hist||'—')}</b>${r.nome?`<br><span style="font-size:11px;color:#6b7280;">${esc(r.nome)}</span>`:''}${aviso?'<br>'+aviso:''}</td>
+            <td class="num" style="font-weight:700;color:${cor(r.valor)};">${r.valor<0?'−':'+'} ${fmtMoney(Math.abs(r.valor))}</td>
+            <td style="white-space:nowrap;">
+              <select id="conc_modo_${i}">
+                ${r.possivel?`<option value="ligar" ${padrao==='ligar'?'selected':''}>Ligar a este lançamento (já existe)</option>`:''}
+                ${id && id.tipo!=='vale' && !r.possivel?`<option value="pagar" ${padrao==='pagar'?'selected':''}>Marcar como pago: ${esc(id.rotulo)}</option>`:''}
+                ${r.func && r.valor<0?`<option value="vale" ${padrao==='vale'?'selected':''}>Lançar como vale de ${esc(r.func.nome.split(' ')[0])}</option>`:''}
+                <option value="detalhar" ${padrao==='detalhar'?'selected':''}>Lançar — informar categoria, obra e operação</option>
+                <option value="ignorar">Ignorar</option>
+              </select>
+            </td></tr>`;
+        }).join('')}</tbody></table></div>`
+      : `<p class="help" style="margin-top:12px;padding:9px 12px;background:#e8f5ec;border-radius:8px;color:#1e6b3a;">
+          Todas as linhas deste arquivo já estão lançadas no app.</p>`}
+
+      <div style="margin:12px 0;">
+        <button class="btn btn-primary" onclick="concAplicar()" ${nada?'disabled':''}>Aplicar</button>
+        <span class="help" style="margin-left:8px;">Liga as baixas encontradas às linhas do banco, marca os pagamentos reconhecidos e abre a janela das linhas a lançar.</span>
+      </div>
+
+      ${st.soApp.length ? `
+      <h3>Só no app (${st.soApp.length})</h3>
+      <p class="help">Baixas desta conta, dentro do período do arquivo, que não têm linha correspondente no banco —
+        costuma ser baixa na conta errada, valor digitado diferente ou pagamento que ainda não saiu.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Data da baixa</th><th>Descrição</th><th class="num">Valor</th></tr></thead>
+        <tbody>${st.soApp.slice().sort((a,b)=>a.data.localeCompare(b.data)).map(p=>`<tr>
+          <td>${fmtDate(p.data)}</td><td>${esc(p.l.descricao||'—')}</td>
+          <td class="num" style="font-weight:700;color:${cor(p.valor)};">${p.valor<0?'−':'+'} ${fmtMoney(Math.abs(p.valor))}</td></tr>`).join('')}</tbody></table></div>` : ''}
+
+      ${ok.length ? `
+      <details style="margin-top:14px;"><summary style="cursor:pointer;font-weight:700;">Já lançadas (${ok.length})</summary>
+      <div class="table-wrap" style="margin-top:8px;"><table>
+        <thead><tr><th>Data</th><th>Banco</th><th class="num">Valor</th><th>Lançamento no app</th><th>Ligação</th></tr></thead>
+        <tbody>${ok.map(r=>{
+          const dd = concDias(r.par.data, r.data);
+          return `<tr><td>${fmtDate(r.data)}</td><td>${esc(r.hist||'—')}${r.nome?' — '+esc(r.nome):''}</td>
+            <td class="num">${r.valor<0?'−':'+'} ${fmtMoney(Math.abs(r.valor))}</td>
+            <td>${esc(r.par.l.descricao||'—')}${dd?` <span class="badge badge-yellow">baixa em ${fmtDate(r.par.data)}</span>`:''}</td>
+            <td>${r.via==='chave'?'<span class="badge badge-green">já ligada</span>':'<span class="badge badge-gray">por valor e data</span>'}</td></tr>`;
+        }).join('')}</tbody></table></div></details>` : ''}`;
+  }
+
+  c.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Conciliação bancária</h2>
+      <p class="help">Importe o extrato do banco (Excel do Itaú, CSV do Nu ou OFX) e o app compara com as baixas da conta:
+        mostra o que já está lançado, o que falta e o que está no app sem estar no banco. Nada é gravado até você clicar em
+        <b>Aplicar</b>, e o que for lançado fica ligado à linha do banco — importar o mesmo período de novo <b>não duplica</b>.</p>
+      <div class="grid grid-3" style="align-items:end;">
+        <div class="field" style="margin:0;"><label>Conta do extrato</label>
+          <select id="conc_conta" onchange="concTrocarConta(this.value)">${optsConta}</select></div>
+        <div class="field" style="margin:0;"><label>Arquivo do extrato</label>
+          <input type="file" id="conc_arquivo" accept=".xlsx,.csv,.ofx,.ofc,.txt" onchange="concCarregar(this.files[0])"></div>
+      </div>
+      <div style="margin-top:12px;">${corpo}</div>
+    </div>`;
 }
 /* =========================================================
    AJUSTES DE TELA PEQUENA
