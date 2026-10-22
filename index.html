@@ -866,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.34.0';
+const VERSAO = '1.35.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -14106,6 +14106,7 @@ function renderDiario(){
       <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="salvarDiario()">Salvar diário</button>
         <button class="btn btn-secondary" onclick="printDiario('${diaObraSel}','${iso}')">Imprimir este dia (PDF)</button>
+        <button class="btn btn-secondary" onclick="printServicosDia('${diaObraSel}','${iso}')">Serviços executados (PDF)</button>
         ${registroDiario(diaObraSel, iso) ? `<button class="btn btn-secondary" onclick="excluirDiario('${diaObraSel}','${iso}')">Excluir este dia</button>` : ''}
       </div>
       <p class="help">O diário não mexe no Ponto — é só o registro do dia. Presença/falta continuam lançadas em <a href="#" onclick="goTo('ponto'); return false;">Ponto</a>.</p>
@@ -14213,6 +14214,88 @@ function printDiario(obraId, iso){
     ${docFoot()}
   </div>`;
   doPrint(html, `Diario de Obra - ${obraNome(obraId)} - ${fmtDate(iso)}`);
+}
+
+/* ---------------------------------------------------------
+   SERVIÇOS EXECUTADOS NO DIA (22/10/2026)
+
+   Pedido do Maycon: além do diário (uma linha por pessoa), um relatório só com os
+   SERVIÇOS do dia — tudo o que o app achou no "O que fez" de cada um e nas
+   "Atividades do dia", sem repetir: "LANÇAMENTO DE CONCRETO" escrito para 5 pessoas
+   vira UMA linha com as 5 pessoas. Texto igual = mesmo serviço, ignorando acento,
+   maiúscula e espaço sobrando; um texto com ";" ou quebra de linha conta como dois.
+
+   Fica de fora do serviço o que não é serviço: "FALTA" (e quem está com falta no
+   Ponto) e o apoio a outra pessoa ("AUXILIO CÉLIO", "APOIO VALTER") — esse vai numa
+   seção própria, para não parecer um serviço da obra.
+   --------------------------------------------------------- */
+function chaveServico(s){
+  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+}
+function partesServico(texto){
+  return String(texto||'').split(/[;\n]+/).map(s=>s.trim().replace(/[.,]+$/,'')).filter(Boolean);
+}
+function servicosDoDia(obraId, iso){
+  const reg = registroDiario(obraId, iso);
+  const vazio = {servicos:[], apoios:[], gerais:[]};
+  if(!reg) return vazio;
+  const contrato = contratoDaObra(obraId);
+  const nomeEtapa = id => (contrato && contrato.etapas.find(e=>e.id===id) || {}).nome || '';
+  const servicos = [], porChave = {}, apoios = [];
+  const gerais = partesServico(reg.atividades);
+  equipeDiario(obraId, iso).forEach(f=>{
+    const st = statusDoDia(f, iso).status;
+    if(st && st !== 'trabalhado') return;   // falta, atestado, folga... não executou serviço
+    const it = equipeItem(reg, f.id);
+    partesServico(it.texto).forEach(p=>{
+      const k = chaveServico(p);
+      if(k === 'FALTA') return;
+      if(/^(AUXILIO|AUXILIAR|APOIO|AJUDANTE|AJUDA)\b/.test(k)){ apoios.push({texto:p, f}); return; }
+      let s = porChave[k];
+      if(!s){ s = porChave[k] = {texto:p, pessoas:[], etapas:[]}; servicos.push(s); }
+      if(s.pessoas.indexOf(f) < 0) s.pessoas.push(f);
+      const et = it.etapaId ? nomeEtapa(it.etapaId) : '';
+      if(et && s.etapas.indexOf(et) < 0) s.etapas.push(et);
+    });
+  });
+  /* serviço geral do dia que ninguém escreveu na própria linha também entra, sem equipe */
+  gerais.forEach(p=>{
+    const k = chaveServico(p);
+    if(!porChave[k]){ porChave[k] = {texto:p, pessoas:[], etapas:[]}; servicos.push(porChave[k]); }
+  });
+  return {servicos, apoios, gerais};
+}
+function printServicosDia(obraId, iso){
+  const reg = registroDiario(obraId, iso);
+  if(!reg){ toast('Salve o diário antes de imprimir.'); return; }
+  const r = servicosDoDia(obraId, iso);
+  if(!r.servicos.length && !r.apoios.length){ toast('Nenhum serviço escrito neste dia.'); return; }
+  const temEtapa = r.servicos.some(s=>s.etapas.length);
+  const pessoas = new Set(); r.servicos.forEach(s=>s.pessoas.forEach(f=>pessoas.add(f.id)));
+  const html = `
+  <div class="doc">
+    ${docHead('Serviços Executados', `${esc(obraNome(obraId))} — ${fmtDate(iso)} (${DOW_FULL[dowOf(iso)]})`)}
+    <p class="dnote" style="margin-top:0;">${r.servicos.length} serviço(s) · ${pessoas.size} pessoa(s) em serviço${reg.clima?` · ${CLIMA_LABEL[reg.clima]}`:''}${reg.parado?` · <b>Paralisado</b>${reg.motivoParada?` — ${esc(reg.motivoParada)}`:''}`:''}</p>
+    ${r.servicos.length ? `
+    <table class="dtab">
+      <thead><tr><th style="width:5%;">#</th><th>Serviço executado</th>${temEtapa?'<th style="width:16%;">Etapa</th>':''}<th style="width:36%;">Equipe</th><th style="width:7%;text-align:center;">Qtd</th></tr></thead>
+      <tbody>${r.servicos.map((s,i)=>`<tr>
+        <td>${i+1}</td><td><b>${esc(s.texto)}</b></td>
+        ${temEtapa?`<td>${esc(s.etapas.join(', ')||'—')}</td>`:''}
+        <td>${s.pessoas.length ? esc(s.pessoas.map(f=>f.nome).join(', ')) : '<i>atividade geral do dia</i>'}</td>
+        <td style="text-align:center;">${s.pessoas.length||'—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>` : ''}
+    ${r.apoios.length ? `
+    <table class="dtab" style="margin-top:8px;">
+      <thead><tr><th>Apoio às equipes</th><th style="width:40%;">Quem</th></tr></thead>
+      <tbody>${r.apoios.map(a=>`<tr><td>${esc(a.texto)}</td><td>${esc(a.f.nome)}</td></tr>`).join('')}</tbody>
+    </table>` : ''}
+    ${reg.ocorrencias ? `<p class="dnote"><b>Ocorrências:</b><br>${esc(reg.ocorrencias).replace(/\n/g,'<br>')}</p>` : ''}
+    <div class="assinatura"><div>Responsável pelo diário</div><div>${esc(reg.responsavel||'')}</div></div>
+    ${docFoot()}
+  </div>`;
+  doPrint(html, `Servicos Executados - ${obraNome(obraId)} - ${fmtDate(iso)}`);
 }
 /* =========================================================
    PROVISÕES TRABALHISTAS (30/09/2026)
