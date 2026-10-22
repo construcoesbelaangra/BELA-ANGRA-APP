@@ -866,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.33.0';
+const VERSAO = '1.34.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -5754,6 +5754,12 @@ function mensagemPagamento(x){
 function abrirMensagem(funcId, per){
   const f = func(funcId);
   const x = calcDiarista(f, periodoDaSexta(fcSexta, per));
+  abrirModalMensagem(mensagemPagamento(x));
+}
+
+/* Modal de copiar, genérico — usado por qualquer mensagem de WhatsApp quando a pessoa não
+   tem celular na ficha (diarista, vale VT/VR, adiantamento e saldo do fichado). */
+function abrirModalMensagem(texto){
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
     <h2>Mensagem de pagamento</h2>
@@ -5763,7 +5769,7 @@ function abrirMensagem(funcId, per){
     <textarea id="msgPag" rows="6" spellcheck="false"
       style="width:100%;font-family:ui-monospace,Consolas,monospace;font-size:13.5px;
              padding:10px;border:1px solid var(--cinza-borda);border-radius:8px;
-             resize:vertical;">${esc(mensagemPagamento(x))}</textarea>
+             resize:vertical;">${esc(texto)}</textarea>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">Fechar</button>
       <button class="btn btn-primary" onclick="copiarMensagem()">Copiar</button>
@@ -5778,10 +5784,17 @@ function abrirMensagem(funcId, per){
    copiar de sempre, para ele não ficar sem jeito nenhum de mandar a mensagem. */
 function abrirWhatsAppPagamento(funcId, per){
   const f = func(funcId);
-  const numero = numeroWhatsApp(f);
-  if(!numero){ toast('Sem celular cadastrado na ficha dele — copie a mensagem.'); abrirMensagem(funcId, per); return; }
   const x = calcDiarista(f, periodoDaSexta(fcSexta, per));
-  window.open(`https://wa.me/${numero}?text=${encodeURIComponent(mensagemPagamento(x))}`, '_blank');
+  enviarWhatsApp(f, mensagemPagamento(x));
+}
+
+/* Abre a conversa do funcionário com o texto pronto (wa.me). Funciona com o WhatsApp de quem
+   estiver usando o aparelho — inclusive o WhatsApp Business da empresa aberto em vários
+   aparelhos. Sem celular na ficha, cai no modal de copiar. */
+function enviarWhatsApp(f, texto){
+  const numero = numeroWhatsApp(f);
+  if(!numero){ toast('Sem celular cadastrado na ficha dele — copie a mensagem.'); abrirModalMensagem(texto); return; }
+  window.open(`https://wa.me/${numero}?text=${encodeURIComponent(texto)}`, '_blank');
 }
 
 /* Copiar precisa dos dois caminhos: `execCommand` funciona com o arquivo aberto
@@ -6914,7 +6927,9 @@ function renderFechamentoFichados(){
                     `title="${r.reg.saldoPago?`Pago em ${fmtDate(r.reg.saldoQuando)} — clique para desmarcar`:'Marcar como pago'}"`}
                   onclick="toggleSaldoFichadoPago('${r.f.id}','${mes}')">
               </td>
-              <td><button class="btn btn-secondary btn-sm" onclick="printReciboAdiantamento('${r.f.id}')" ${r.temDireitoAdiantamento?'':'disabled'}>Recibo do adiant.</button></td>
+              <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="printReciboAdiantamento('${r.f.id}')" ${r.temDireitoAdiantamento?'':'disabled'}>Recibo do adiant.</button>
+                <button class="btn btn-secondary btn-sm" onclick="whatsAppFichado('${r.f.id}','adiantamento')" ${r.temDireitoAdiantamento?'':'disabled'} title="WhatsApp com o valor do adiantamento do dia 20">WhatsApp adiant.</button>
+                <button class="btn btn-secondary btn-sm" onclick="whatsAppFichado('${r.f.id}','saldo')" ${r.saldo===null?'disabled title="Preencha o líquido do mês primeiro"':'title="WhatsApp com o saldo do 5º dia útil"'}>WhatsApp saldo</button></td>
             </tr>`;}).join('')}
           </tbody>
           <tfoot><tr>
@@ -7050,6 +7065,25 @@ function reciboAdiantamentoHTML(r){
     ${docFoot()}
   </div>`;
 }
+/* Mensagens do fichado para o WhatsApp — mesmo estilo curto da do diarista. */
+function mensagemFichado(r, tipo){
+  const l = [r.f.nome, ''];
+  if(tipo==='adiantamento'){
+    l.push(`adiantamento ${monthLabel(r.mes)} (dia 20) = ${fmtMoney(r.adiantamento)}`);
+  } else {
+    l.push(`salário líquido ${monthLabel(r.mes)} = ${fmtMoney(r.liquido)}`);
+    if(r.adiantamento) l.push(`adiantamento = -${fmtMoney(r.adiantamento)}`);
+    l.push(`saldo = ${fmtMoney(r.saldo)}`);
+  }
+  return l.join('\n');
+}
+function whatsAppFichado(funcId, tipo){
+  const r = calcFichado(func(funcId), fcMesFichados);
+  if(tipo==='adiantamento' && !r.temDireitoAdiantamento){ toast('Não há adiantamento neste mês.'); return; }
+  if(tipo==='saldo' && r.saldo===null){ toast('Preencha o líquido do mês antes.'); return; }
+  enviarWhatsApp(r.f, mensagemFichado(r, tipo));
+}
+
 function printReciboAdiantamento(funcId){
   const r = calcFichado(func(funcId), fcMesFichados);
   if(!r.temDireitoAdiantamento){ alert(r.pagamentoUnico ? 'Este funcionário recebe pagamento único — não há adiantamento.' : 'Este funcionário foi admitido depois do dia 20 — não há adiantamento neste mês.'); return; }
@@ -7461,7 +7495,8 @@ function renderVales(){
                   `title="${pago?`Pago em ${fmtDate(r.v.pagoQuando)} — clique para desmarcar`:'Marcar como pago'}"`}
                 onclick="toggleValePago('${r.f.id}','${valesMes}')">
             </td>
-            <td><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button></td>
+            <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button>
+                <button class="btn btn-secondary btn-sm" onclick="whatsAppVale('${r.f.id}')" title="Abre o WhatsApp dele com o valor do vale">WhatsApp</button></td>
           </tr>`;}).join('')}
           </tbody>
           <tfoot><tr>
@@ -7525,7 +7560,8 @@ function renderRecibosVales(){
             <td><b>${esc(r.f.nome)}</b><br><span style="font-size:11px;color:#9aa0ab;">${esc([r.f.cidadeVT1,r.f.cidadeVT2].filter(Boolean).join(' + ')||'trecho não cadastrado')}</span></td>
             <td style="text-align:center;">${r.dias}</td>
             <td class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(r.liquido)}</td>
-            <td><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button></td>
+            <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button>
+                <button class="btn btn-secondary btn-sm" onclick="whatsAppVale('${r.f.id}')" title="Abre o WhatsApp dele com o valor do vale">WhatsApp</button></td>
           </tr>`).join('')}
           </tbody>
         </table>` : `<div class="empty">Nenhum funcionário fichado com vale ativado em ${monthLabel(valesMes)}.</div>`}
@@ -7675,6 +7711,25 @@ function reciboValeHTML(funcId){
     ${docFoot()}
   </div>`;
 }
+/* Mensagem do vale VT/VR para o WhatsApp — mesmo estilo curto da mensagem do diarista
+   (`mensagemPagamento`): uma linha por valor, desconto só quando existe. Pago: usa o valor
+   que foi de verdade lançado, igual a tela. */
+function mensagemVale(r){
+  const l = [r.f.nome, '', `vale ${monthLabel(valesMes)} (${r.dias} ${r.dias===1?'dia':'dias'})`];
+  if(r.totalVT) l.push(`transporte = ${fmtMoney(r.totalVT)}`);
+  if(r.totalVR) l.push(`alimentação = ${fmtMoney(r.totalVR)}`);
+  if(r.descFaltas) l.push(`desconto dias não trabalhados em ${monthLabel(r.mesAnterior)} = -${fmtMoney(r.descFaltas)}`);
+  if(r.totalParcelas) l.push(`empréstimo = -${fmtMoney(r.totalParcelas)}`);
+  if(r.descOutros) l.push(`outros descontos = -${fmtMoney(r.descOutros)}`);
+  const lanc = r.v.pago && r.v.pagoLancamentoId && DB.lancamentos.find(x=>x.id===r.v.pagoLancamentoId);
+  l.push(`total = ${fmtMoney(lanc ? lanc.valor : r.liquido)}`);
+  return l.join('\n');
+}
+function whatsAppVale(funcId){
+  const f = func(funcId);
+  enviarWhatsApp(f, mensagemVale(calcVale(f, valesMes)));
+}
+
 function printRecibo(funcId){
   const f = func(funcId);
   doPrint(reciboValeHTML(funcId), `Vale VT-VR - ${monthLabel(valesMes)} - ${f.nome}`);
