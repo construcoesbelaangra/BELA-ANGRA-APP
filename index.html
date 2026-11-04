@@ -866,7 +866,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.36.0';
+const VERSAO = '1.37.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -973,7 +973,7 @@ function defaultDB(){
        empresa. Enquanto estiver vazio, todo mundo tem acesso total (ver 20_usuarios.js). */
     usuarios: [],
     diasUteisMes: {},     // 'YYYY-MM' -> nº de dias trabalhados usado no vale daquele mês
-    pontoMensal: {},      // `${funcId}_${YYYY-MM}` -> {dias:{'YYYY-MM-DD':status}, excecaoDia:{'YYYY-MM-DD':{obraId,funcao,comissao}}}
+    pontoMensal: {},      // `${funcId}_${YYYY-MM}` -> {dias:{'YYYY-MM-DD':status}, excecaoDia:{'YYYY-MM-DD':{obraId,funcao,comissao,tipoServico}}}
     pontoDiarista: [],    // {id, funcionarioId, obraId, data, status, quentinha, funcao, comissao}
     adiantamentos: [],    // {id, funcionarioId, data, valor, descricao}
     /* Pagamentos já feitos, marcados à mão no fechamento enquanto ele paga um a
@@ -1752,13 +1752,36 @@ function periodicidadeHistoricaEm(f, iso){
    12/10. Trocar `f.tipoServico` direto mudaria também os dias de ANTES (saíam da Medição HH
    já em rascunho e entravam no custo da empreitada). Mesmo padrão dos outros históricos:
    `f.tipoServicoHistorico = [{tipoServico, inicio}]`. Sem histórico, vale o `f.tipoServico`.
-   Se a data é anterior à primeira entrada, vale a primeira (nunca o valor de hoje). */
-function tipoServicoEm(f, iso){
+   Se a data é anterior à primeira entrada, vale a primeira (nunca o valor de hoje).
+   Este é o tipo "de sempre" daquela data, sem exceção do dia: é o que classifica os
+   PAGAMENTOS (ver `tipoServicoEm`, abaixo). */
+function tipoServicoDefinitivoEm(f, iso){
   const hist = (f.tipoServicoHistorico||[]).slice().sort((a,b)=>a.inicio.localeCompare(b.inicio));
   if(!hist.length) return f.tipoServico || '';
   let v = hist[0].tipoServico;
   hist.forEach(h=>{ if(h.inicio <= iso) v = h.tipoServico; });
   return v;
+}
+
+/* Tipo de serviço EFETIVO de um dia — 04/11/2026. Pedido do Maycon: trocar Homem-Hora ×
+   Empreitada SÓ NAQUELE DIA, pelo mesmo modal da obra/função/comissão do dia; no dia
+   seguinte volta sozinho, e a troca definitiva continua sendo na ficha. Mesmo lugar da
+   função do dia: `reg.excecaoDia[iso].tipoServico` (fichado) e o registro do dia em
+   `DB.pontoDiarista` (diarista). Vale para o que é decidido DIA A DIA: Medição HH, custo
+   por etapa, Diário e relatório do dia. As pontes de pagamento usam
+   `tipoServicoDefinitivoEm`: pagamento cobre vários dias, e uma exceção que caísse na
+   data dele (sexta, dia 20...) reclassificaria o período inteiro. */
+function tipoServicoEm(f, iso){
+  return tipoServicoExcecaoNoDia(f, iso) || tipoServicoDefinitivoEm(f, iso);
+}
+function tipoServicoExcecaoNoDia(f, iso){
+  if(vinculoEm(f, iso) === 'fichado'){
+    const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`];
+    const exc = reg && reg.excecaoDia ? reg.excecaoDia[iso] : null;
+    return (exc && exc.tipoServico) || '';
+  }
+  const r = DB.pontoDiarista.find(p=>p.funcionarioId===f.id && p.data===iso);
+  return (r && r.tipoServico) || '';
 }
 
 /* =========================================================
@@ -4074,11 +4097,12 @@ function renderCalendarMensal(){
        emprestado/fez outro serviço"; não é transferência (essa é permanente, ver
        "Transferir de obra" na lista de Funcionários). */
     const exc = excecaoDia[iso] || {};
-    const temExcecao = !!(exc.obraId || exc.funcao || exc.comissao);
+    const temExcecao = !!(exc.obraId || exc.funcao || exc.comissao || exc.tipoServico);
     const partesExc = [];
     if(exc.obraId) partesExc.push('obra ' + obraNome(exc.obraId));
     if(exc.funcao) partesExc.push('função ' + exc.funcao);
     if(exc.comissao) partesExc.push('comissão ' + fmtMoney(exc.comissao));
+    if(exc.tipoServico) partesExc.push(SERVICO_LABEL[exc.tipoServico]);
     let titulo = STATUS_LABEL[st] || 'Sem lançamento';
     if(fer) titulo = `${fer.nome} (feriado)${st?' — '+titulo:''}`;
     if(bloqueado) titulo = motivoBloqueio(f, iso, 'fichado');
@@ -4157,11 +4181,13 @@ function abrirExcecaoDiaModal(iso){
   const reg = DB.pontoMensal[`${f.id}_${iso.slice(0,7)}`] || {};
   const exc = (reg.excecaoDia||{})[iso] || {};
   const definitiva = obraHistoricaEm(f, iso);
+  const tipoDeSempre = tipoServicoDefinitivoEm(f, iso);
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
     <h2>Obra, função e comissão do dia — ${fmtDate(iso)}</h2>
     <p class="help">
-      De sempre: obra <b>${esc(obraNome(definitiva))}</b>, função <b>${esc(f.funcao||'—')}</b>.
+      De sempre: obra <b>${esc(obraNome(definitiva))}</b>, função <b>${esc(f.funcao||'—')}</b>,
+      tipo de serviço <b>${esc(SERVICO_LABEL[tipoDeSempre]||'—')}</b>.
       Preencha só o que for diferente NESTE DIA — não muda o cadastro dele.
     </p>
     <div class="field"><label>Obra neste dia</label>
@@ -4169,6 +4195,9 @@ function abrirExcecaoDiaModal(iso){
         <option value="">— obra definitiva (${esc(obraNome(definitiva))}) —</option>
         ${DB.obras.filter(o=>o.id!==definitiva).map(o=>`<option value="${o.id}" ${exc.obraId===o.id?'selected':''}>${esc(o.nome)}</option>`).join('')}
       </select>
+    </div>
+    <div class="field"><label>Tipo de serviço neste dia</label>
+      <select id="ed_tipoServico">${opcoesTipoServicoDoDia(tipoDeSempre, exc.tipoServico)}</select>
     </div>
     <div class="grid grid-2">
       <div class="field"><label>Função neste dia (categoria de cobrança na Medição HH)</label>
@@ -4186,6 +4215,14 @@ function abrirExcecaoDiaModal(iso){
   `);
 }
 
+/* Opções do seletor de tipo de serviço do dia, nos dois modais (fichado e diarista):
+   a de sempre, que não grava nada, e a outra, que é a exceção. */
+function opcoesTipoServicoDoDia(tipoDeSempre, escolhido){
+  return `<option value="">— tipo de sempre (${esc(SERVICO_LABEL[tipoDeSempre]||'não classificado')}) —</option>`
+    + Object.keys(SERVICO_LABEL).filter(k=>k!==tipoDeSempre)
+        .map(k=>`<option value="${k}" ${escolhido===k?'selected':''}>${SERVICO_LABEL[k]}</option>`).join('');
+}
+
 function salvarExcecaoDia(iso){
   const f = func(pmFuncId);
   if(!f) return;
@@ -4196,8 +4233,9 @@ function salvarExcecaoDia(iso){
   const obraEscolhida = val('ed_obra');
   const funcaoEscolhida = val('ed_funcao').trim();
   const comissaoEscolhida = numVal('ed_comissao');
-  if(obraEscolhida || funcaoEscolhida || comissaoEscolhida){
-    reg.excecaoDia[iso] = {obraId: obraEscolhida, funcao: funcaoEscolhida, comissao: comissaoEscolhida};
+  const tipoEscolhido = val('ed_tipoServico');
+  if(obraEscolhida || funcaoEscolhida || comissaoEscolhida || tipoEscolhido){
+    reg.excecaoDia[iso] = {obraId: obraEscolhida, funcao: funcaoEscolhida, comissao: comissaoEscolhida, tipoServico: tipoEscolhido};
   } else {
     delete reg.excecaoDia[iso];
   }
@@ -4205,7 +4243,7 @@ function salvarExcecaoDia(iso){
      (achado em 10/09/2026, ver mesclar() em 09_sync.js) */
   reg.excecaoDiaTs[iso] = Date.now();
   saveDB(); closeModal(); renderPontoMensal();
-  toast((obraEscolhida||funcaoEscolhida||comissaoEscolhida)
+  toast((obraEscolhida||funcaoEscolhida||comissaoEscolhida||tipoEscolhido)
     ? `Dia ${fmtDate(iso)} atualizado.`
     : `Exceção removida — volta a valer tudo de sempre neste dia.`);
 }
@@ -4349,7 +4387,7 @@ function setStatusDoDia(f, iso, status, auto){
     e.status = status;
     if(auto) e.auto = true; else delete e.auto;
     if(!e.obraId) e.obraId = f.obraPadrao||'';
-    if(!e.status && !e.quentinha) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
+    if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
   }
   return true;
 }
@@ -5335,8 +5373,8 @@ function renderCalendarDiarista(){
       <div class="nd">${d}${porConfirmar?'<span class="pend">•</span>':''}${fer&&!bloqueado?'<span class="pend" style="color:#7b3fb8;">🎉</span>':''}</div>
       <div class="st">${bloqueado?'<span style="color:#9aa0ab;">—</span>':(PD_SIGLA[st]||'')}</div>
       ${bloqueado?'':`<span class="qbtn ${e&&e.quentinha?'on':''}" onclick="event.stopPropagation(); toggleQuentinha('${iso}')" title="Marcar quentinha">🍱</span>`}
-      ${bloqueado?'':`<span class="qbtn2 ${e&&(e.funcao||e.comissao||e.vtExtra)?'on':''}" onclick="event.stopPropagation(); abrirFuncaoComissaoDiaristaModal('${iso}')"
-        title="${e&&(e.funcao||e.comissao||e.vtExtra)?'Hoje: '+esc([e.funcao?'função '+e.funcao:'', e.comissao?'comissão '+fmtMoney(e.comissao):'', e.vtExtra?'VT extra '+fmtMoney(e.vtExtra):''].filter(Boolean).join(', ')):'Marcar função diferente, comissão e/ou VT extra do dia'}">💰</span>`}
+      ${bloqueado?'':`<span class="qbtn2 ${e&&(e.funcao||e.comissao||e.vtExtra||e.tipoServico)?'on':''}" onclick="event.stopPropagation(); abrirFuncaoComissaoDiaristaModal('${iso}')"
+        title="${e&&(e.funcao||e.comissao||e.vtExtra||e.tipoServico)?'Hoje: '+esc([e.funcao?'função '+e.funcao:'', e.comissao?'comissão '+fmtMoney(e.comissao):'', e.vtExtra?'VT extra '+fmtMoney(e.vtExtra):'', e.tipoServico?SERVICO_LABEL[e.tipoServico]:''].filter(Boolean).join(', ')):'Marcar tipo de serviço, função diferente, comissão e/ou VT extra do dia'}">💰</span>`}
     </div>`;
   }
 
@@ -5378,6 +5416,14 @@ function renderCalendarDiarista(){
   `;
 }
 
+/* Registro do dia sem mais nada nele: só então pode sumir. Limpar o status de um dia não
+   pode levar junto a comissão, a função, o VT extra ou o tipo de serviço marcados no 💰 —
+   para tirar esses, é pelo próprio modal. Igual ao fichado, cuja `excecaoDia` não depende
+   do status (achado em 04/11/2026: a comissão sumia sem aviso). */
+function registroDiaristaVazio(e){
+  return !e.status && !e.quentinha && !e.funcao && !e.comissao && !e.vtExtra && !e.tipoServico;
+}
+
 function cyclePd(iso){
   const f = func(pdFuncId);
   if(antesDaAdmissao(f, iso, 'diarista')){ avisaAdmissao(f, iso, 'diarista'); return; }
@@ -5390,8 +5436,8 @@ function cyclePd(iso){
     const next = ciclo[(ciclo.indexOf(e.status)+1)%ciclo.length];
     delete e.auto;                                   // tocar no dia confirma
     if(next===''){
-      if(e.quentinha){ e.status = ''; }              // mantém o registro só pela quentinha
-      else DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
+      e.status = '';
+      if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
     } else {
       e.status = next;
       if(!e.obraId) e.obraId = f.obraPadrao||'';
@@ -5408,7 +5454,7 @@ function toggleQuentinha(iso){
     DB.pontoDiarista.push({id:uid(), funcionarioId:pdFuncId, obraId:f.obraPadrao||'', data:iso, status:'', quentinha:true});
   } else {
     e.quentinha = !e.quentinha;
-    if(!e.quentinha && !e.status) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
+    if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
   }
   saveDB(); renderPontoDiarista();
 }
@@ -5428,11 +5474,16 @@ function abrirFuncaoComissaoDiaristaModal(iso){
   if(!f) return;
   if(antesDaAdmissao(f, iso, 'diarista')){ avisaAdmissao(f, iso, 'diarista'); return; }
   const e = pdEntry(pdFuncId, iso) || {};
+  const tipoDeSempre = tipoServicoDefinitivoEm(f, iso);
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
     <h2>Exceções do dia — ${fmtDate(iso)}</h2>
-    <p class="help">De sempre: função <b>${esc(f.funcao||'—')}</b>. Preencha só o que for
+    <p class="help">De sempre: função <b>${esc(f.funcao||'—')}</b>, tipo de serviço
+      <b>${esc(SERVICO_LABEL[tipoDeSempre]||'—')}</b>. Preencha só o que for
       diferente NESTE DIA — não muda o cadastro dele.</p>
+    <div class="field"><label>Tipo de serviço neste dia</label>
+      <select id="fc_tipoServico">${opcoesTipoServicoDoDia(tipoDeSempre, e.tipoServico)}</select>
+    </div>
     <div class="grid grid-3">
       <div class="field"><label>Função neste dia (categoria de cobrança na Medição HH)</label>
         <select id="fc_funcao">
@@ -5459,21 +5510,21 @@ function salvarFuncaoComissaoDiarista(iso){
   const funcaoEscolhida = val('fc_funcao').trim();
   const comissaoEscolhida = numVal('fc_comissao');
   const vtExtraEscolhido = numVal('fc_vtextra');
+  const tipoEscolhido = val('fc_tipoServico');
   let e = pdEntry(pdFuncId, iso);
   if(!e){
-    if(!funcaoEscolhida && !comissaoEscolhida && !vtExtraEscolhido){ closeModal(); return; }
+    if(!funcaoEscolhida && !comissaoEscolhida && !vtExtraEscolhido && !tipoEscolhido){ closeModal(); return; }
     e = {id:uid(), funcionarioId:pdFuncId, obraId:f.obraPadrao||'', data:iso, status:'', quentinha:false};
     DB.pontoDiarista.push(e);
   }
   e.funcao = funcaoEscolhida;
   e.comissao = comissaoEscolhida;
   e.vtExtra = vtExtraEscolhido;
+  e.tipoServico = tipoEscolhido;
   /* limpa o registro se não sobrou nada nele (mesma disciplina de toggleQuentinha) */
-  if(!e.status && !e.quentinha && !e.funcao && !e.comissao && !e.vtExtra){
-    DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
-  }
+  if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
   saveDB(); closeModal(); renderPontoDiarista();
-  toast((funcaoEscolhida||comissaoEscolhida) ? `Dia ${fmtDate(iso)} atualizado.` : 'Exceção removida.');
+  toast((funcaoEscolhida||comissaoEscolhida||vtExtraEscolhido||tipoEscolhido) ?`Dia ${fmtDate(iso)} atualizado.` : 'Exceção removida.');
 }
 
 /* ---- cálculo de um diarista dentro de um período ---- */
@@ -5696,7 +5747,7 @@ function togglePago(funcId, sexta, per, valor){
       tipo: 'despesa', natureza: 'operacao',
       empresaId: ct.empresaId, contaId,
       categoriaId: DB.config.fechamentoCategoriaPadrao || '',
-      obraId: f.obraPadrao || '', tipoServico: tipoServicoEm(f, sexta) || '',
+      obraId: f.obraPadrao || '', tipoServico: tipoServicoDefinitivoEm(f, sexta) || '',
       /* linha "só comissão" (fichado pago junto com os diaristas, ver
          `linhasComissaoFichados` acima) usa `per==='comissao'` como sentinela
          — nem periodicidade semanal nem quinzenal de verdade */
@@ -6560,7 +6611,7 @@ function sincronizaLancamentoAdiantamento(a){
   if(!ct) return;
   const campos = {
     tipo:'despesa', natureza:'operacao', empresaId: ct.empresaId, contaId: a.contaId,
-    categoriaId: a.categoriaId || '', obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoEm(f, a.data) || '',
+    categoriaId: a.categoriaId || '', obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoDefinitivoEm(f, a.data) || '',
     descricao: `${a.tipo==='desconto'?'Desconto':'Vale/adiantamento'} — ${f.nome}${a.descricao?' — '+a.descricao:''}`,
     valor: a.valor, vencimento: a.data, obs: ''
   };
@@ -6744,7 +6795,7 @@ function toggleAdiantamentoFichadoPago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.fichadosCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoEm(f, c.dataAdiantamento) || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoDefinitivoEm(f, c.dataAdiantamento) || '',
     descricao: `Adiantamento de salário (dia 20) — ${f.nome} — ${monthLabel(mes)}`,
     valor: c.adiantamento, vencimento: c.dataAdiantamento, obs: ''
   };
@@ -6796,7 +6847,7 @@ function toggleSaldoFichadoPago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.fichadosCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoEm(f, ultimoDiaMes(mes)) || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoDefinitivoEm(f, ultimoDiaMes(mes)) || '',
     descricao: `Saldo de salário (5º dia útil) — ${f.nome} — ${monthLabel(mes)}`,
     valor: c.saldo, vencimento: c.dataPagamento, obs: ''
   };
@@ -7653,7 +7704,7 @@ function toggleValePago(funcId, mes){
     tipo: 'despesa', natureza: 'operacao',
     empresaId: ct.empresaId, contaId,
     categoriaId: DB.config.valesCategoriaPadrao || '',
-    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoEm(f, primeiroDiaMes(mes)) || '',
+    obraId: f.obraPadrao || '', rateioObras: rateioObrasDe(f), tipoServico: tipoServicoDefinitivoEm(f, primeiroDiaMes(mes)) || '',
     descricao: `Vale-transporte/refeição — ${f.nome} — ${monthLabel(mes)}`,
     valor: r.liquido, vencimento: hoje, obs: ''
   };
@@ -12930,9 +12981,13 @@ function diaContaNaMedicaoHH(f, iso, obraId){
    é custo interno, não é cobrado da Bandeira (só a categoria/preço do dia). */
 function calcMedicaoHH(obraId, ini, fim){
   const blocos = blocosSemanaMedicao(ini, fim);
+  /* olha cada dia do período: quem é Empreitada de sempre pode ter um dia de Homem-Hora */
+  const foiHomemHoraNoPeriodo = f=>{
+    for(let iso=ini; iso<=fim; iso=addDays(iso,1)){ if(tipoServicoEm(f, iso)==='homem_hora') return true; }
+    return false;
+  };
   const funcionarios = ativosNoPeriodo(ini, fim)
-    .filter(f=>(f.tipoServico==='homem_hora' || (f.tipoServicoHistorico||[]).some(h=>h.tipoServico==='homem_hora'))
-               && !f.duplicataSoContabil);
+    .filter(f=>foiHomemHoraNoPeriodo(f) && !f.duplicataSoContabil);
   const precos = DB.config.tabelaHH || {};
 
   const porCategoria = {servente:{dias:0,valor:0}, meioOficial:{dias:0,valor:0},
@@ -12945,7 +13000,7 @@ function calcMedicaoHH(obraId, ini, fim){
       const porCatNoBloco = {};    // categoria ('' = sem categoria) -> {dias, abonados}
       dias.forEach(iso=>{
         if(iso < ini || iso > fim) return;   // o bloco pode passar do intervalo pedido
-        if(tipoServicoEm(f, iso) !== 'homem_hora') return;   // virou Empreitada depois: não é mais HH
+        if(tipoServicoEm(f, iso) !== 'homem_hora') return;   // virou Empreitada depois, ou só neste dia: não é HH
         const st = diaContaNaMedicaoHH(f, iso, obraId);
         if(!st) return;
         const cat = categoriaHH(funcaoEfetivaNoDia(f, iso)) || '';
@@ -13681,7 +13736,7 @@ function renderMedicaoEmpreitada(abrirId){
    — tem gente na etapa 1, gente já na etapa 2 — pra saber o lucro de cada
    etapa quando ela terminar, não só o do contrato inteiro.
 
-   A ligação nasce no Diário (`f.tipoServico==='empreitada'` ganha um seletor
+   A ligação nasce no Diário (`tipoServicoEm(f, dia)==='empreitada'` ganha um seletor
    de etapa no dia, `16_diario.js`) — aqui só se soma o que já foi marcado lá.
    ========================================================= */
 
@@ -14119,7 +14174,7 @@ function renderDiario(){
           <thead><tr><th>Funcionário</th><th>Cargo</th><th>Ponto</th>${temEtapas?'<th>Etapa</th>':''}<th>O que fez</th></tr></thead>
           <tbody>${equipe.map(f=>{
             const it = equipeItem(reg, f.id);
-            const ehEmpreitada = f.tipoServico === 'empreitada';
+            const ehEmpreitada = tipoServicoEm(f, iso) === 'empreitada';
             return `
             <tr>
               <td><b>${esc(f.nome)}</b></td>
