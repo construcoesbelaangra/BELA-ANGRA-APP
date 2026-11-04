@@ -702,6 +702,8 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 .fcont{font-size:9px;margin-bottom:12px;page-break-inside:avoid;}
 .fcont th{padding:3px 4px;font-size:8px;white-space:normal;text-align:center;vertical-align:middle;}
 .fcont td{padding:3px 4px;}
+/* equipe grande: a semana inteira continua cabendo numa folha (planoFolhaContabil) */
+.fcont.apertada td{padding:1.5px 4px;}
 .fcont th.c, .fcont td.c{text-align:center;}
 /* dia que pertence ao mês vizinho, ou pessoa fora do vínculo: não conta */
 .fcont .fora{background:#eceef2;color:#7a808c;font-size:7.5px;}
@@ -866,7 +868,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.37.0';
+const VERSAO = '1.37.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -2598,6 +2600,7 @@ function renderDashboard(){
     : `<div class="al ok"><span class="dpt ok">✓</span> ${textoOk}</div>`;
   const alertas = [
     alerta(aConfirmar, 'dia(s) de ponto a confirmar', 'ponto em dia', "goTo('ponto')"),
+    diasLimposPendentes().length ? alerta(diasLimposPendentes().length, 'dia(s) de diarista limpo(s) com lançamento', '', "goTo('ponto')") : '',
     alerta(regNaoEnv, 'fichado(s) com documentos não enviados', 'todos os fichados com documentos enviados', 'dashAtalhoRegistro()'),
     fin ? alerta(vencidasN, 'conta(s) a pagar vencida(s)', 'nenhuma conta vencida', "goTo('lancamentos')") : '',
     alerta(semCpf, 'ativo(s) sem CPF', 'todos com CPF', "goTo('funcionarios')"),
@@ -3971,6 +3974,7 @@ function segmentoPonto(tipo){
 
 function abasPonto(tipo){
   return `
+  ${faixaDiasLimpos()}
   ${segmentoPonto(tipo)}
   <div class="tabs">
     <button class="tab ${pontoAba==='dia'?'active':''}" onclick="pontoAba='dia'; renderPonto();">
@@ -4016,7 +4020,7 @@ function cardFolhaContabil(mes, ano, obraFiltro){
       </div>
       <p class="help" style="margin:0;">
         Os dois cobrem a equipe fichada inteira de ${MESES[mes-1]}/${ano}${obraFiltro?`, só na obra <b>${esc(obraNome(obraFiltro))}</b>`:''}.
-        A <b>folha de ponto</b> é o dia a dia em blocos de segunda a sexta, no formato das planilhas que você
+        A <b>folha de ponto</b> é o dia a dia em blocos de segunda a sexta (e o sábado, quando alguém trabalhou), no formato das planilhas que você
         mandava à mão. O <b>resumo</b> é o mês fechado em números — dias trabalhados, faltas, admissões e
         demissões do mês, e o aviso de dia sem lançamento.
       </p>
@@ -4384,10 +4388,10 @@ function setStatusDoDia(f, iso, status, auto){
       e = {id:uid(), funcionarioId:f.id, obraId:f.obraPadrao||'', data:iso, status:'', quentinha:false};
       DB.pontoDiarista.push(e);
     }
+    if(!status){ limparStatusDiarista(e); return true; }
     e.status = status;
     if(auto) e.auto = true; else delete e.auto;
     if(!e.obraId) e.obraId = f.obraPadrao||'';
-    if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
   }
   return true;
 }
@@ -4846,7 +4850,8 @@ function executarPreenchimento(tipo){
 
    O DESENHO DA PLANILHA (conferido contra Janeiro e Julho/2026):
 
-     - Um bloco por SEMANA, sempre de segunda a sexta.
+     - Um bloco por SEMANA, de segunda a sexta, mais o sábado quando alguém
+       trabalhou nele (ver `semanasDoMes`).
      - As semanas são as que TOCAM o mês: começa na segunda da semana do dia 1
        e termina na sexta da semana do último dia. Por isso o primeiro e o
        último bloco quase sempre têm dias do mês vizinho.
@@ -4872,8 +4877,8 @@ function executarPreenchimento(tipo){
    cabeçalho saiu sozinho numa primeira página em branco e os blocos foram para a
    segunda em diante, sem repetir nada. (Relatado pelo Maycon em 28/08/2026.)
 
-   Agora a paginação é feita AQUI, não pelo navegador: `blocosPorPagina()` calcula
-   quantos blocos semanais cabem numa folha, os blocos são agrupados em páginas, e
+   Agora a paginação é feita AQUI, não pelo navegador: `planoFolhaContabil()` calcula
+   quantos blocos semanais cabem em cada folha, os blocos são agrupados em páginas, e
    cada página leva o seu próprio cabeçalho + legenda e termina com um
    `page-break-after`. Sai igual em qualquer navegador, e não depende de nenhum
    comportamento de impressão.
@@ -4934,20 +4939,51 @@ const SIGLA_CONTABIL = {
   folga:               'FC'
 };
 
-/* Quantas linhas de tabela cabem numa folha, e daí quantos blocos semanais.
-
-   Medidas em milímetros, contra o A4 com margem de 10mm (277mm úteis de altura).
-   Os valores foram conferidos contra o PDF gerado; são deliberadamente folgados,
-   porque o custo de errar para menos (bloco numa página sem cabeçalho) é bem maior
-   do que o de errar para mais (espaço branco no pé). */
+/* Medidas em milímetros, contra o A4 com margem de 10mm (277mm úteis de altura),
+   conferidas contra o PDF gerado (04/11/2026). Errar para menos faz sobrar folha
+   quase em branco; errar para mais só deixa espaço branco no pé. */
 const FP_ALTURA_PAGINA = 277;   // mm úteis
 const FP_CABECALHO     = 46;    // logo + endereço + título + legenda
-const FP_LINHA         = 4.7;   // mm por linha de funcionário
-const FP_BLOCO_FIXO    = 12;    // as 2 linhas de cabeçalho do bloco + o espaço entre blocos
+const FP_LINHA         = 4.7;   // mm por linha do Resumo Mensal
+const FP_LINHA_FOLHA   = 5.1;   // mm por linha de funcionário na folha
+const FP_LINHA_APERTADA = 4.3;  // idem, com a tabela `.apertada` (equipe grande)
+const FP_BLOCO_FIXO    = 13;    // as 2 linhas de cabeçalho do bloco + o espaço entre blocos
+const FP_FERIADO       = 6;     // a legenda de feriado abaixo do bloco
+const FP_RODAPE        = 16;    // total de funcionários + "documento gerado"
 
-function blocosPorPagina(nPessoas){
-  const bloco = nPessoas * FP_LINHA + FP_BLOCO_FIXO;
-  return Math.max(1, Math.floor((FP_ALTURA_PAGINA - FP_CABECALHO) / bloco));
+/* Como os blocos semanais se distribuem nas folhas. Bug real (04/11/2026): com 43
+   pessoas o bloco enchia a folha, e o que vinha depois dele (a legenda de feriado, o
+   rodapé) caía sozinho em páginas quase em branco; com mais gente, o bloco inteiro
+   pularia e deixaria uma folha só com o cabeçalho. Agora:
+   - equipe grande usa a tabela apertada, para a semana continuar inteira numa folha;
+   - bloco que não cabe na folha que sobrou vai inteiro para a próxima;
+   - só um bloco maior que uma folha inteira é repartido, com o cabeçalho repetido;
+   - o rodapé só sai se couber: ele nunca abre uma folha sozinho.
+   `feriados` traz, por semana, se ela tem a legenda de feriado. Cada página é uma lista
+   de pedaços `{semana, de, ate}`, com o intervalo de pessoas de cada um. */
+function planoFolhaContabil(nPessoas, feriados){
+  const livrePorFolha = FP_ALTURA_PAGINA - FP_CABECALHO;
+  const apertada = nPessoas * FP_LINHA_FOLHA + FP_BLOCO_FIXO + FP_FERIADO + FP_RODAPE > livrePorFolha;
+  const linha = apertada ? FP_LINHA_APERTADA : FP_LINHA_FOLHA;
+  const paginas = [[]];
+  let usado = 0;
+  feriados.forEach((temFeriado, semana) => {
+    const fixo = FP_BLOCO_FIXO + (temFeriado ? FP_FERIADO : 0);
+    let de = 0;
+    while(de < nPessoas){
+      const cabem = Math.floor((livrePorFolha - usado - fixo) / linha);
+      const faltam = nPessoas - de;
+      if(cabem < faltam && paginas[paginas.length-1].length){
+        paginas.push([]); usado = 0;      // não cabe inteiro aqui: vai para a próxima folha
+        continue;
+      }
+      const ate = de + Math.min(cabem, faltam);
+      paginas[paginas.length-1].push({semana, de, ate});
+      usado += (ate - de) * linha + fixo;
+      de = ate;
+    }
+  });
+  return {apertada, paginas, rodape: usado + FP_RODAPE <= livrePorFolha};
 }
 
 /* quebra uma lista em pedaços de tamanho `n` */
@@ -4967,8 +5003,12 @@ function segundaDaSemana(iso){
 
    Só entra a semana que tem PELO MENOS UM dia útil dentro do mês. Sem essa
    trava, um mês que começa no sábado (agosto/2026) abriria com um bloco inteiro
-   do mês anterior — cinco colunas escritas "JULHO" e nenhuma diária. */
-function semanasDoMes(ano, mes){
+   do mês anterior — cinco colunas escritas "JULHO" e nenhuma diária.
+
+   `sabadoEntra(iso)` (opcional, 04/11/2026): diz se o sábado do mês ganha coluna,
+   virando o 6º dia daquela semana. Sábado não é dia normal de trabalho, então só
+   aparece quando alguém trabalhou nele (6 pessoas em 31/10/2026, que não saíam). */
+function semanasDoMes(ano, mes, sabadoEntra){
   const ym = `${ano}-${String(mes).padStart(2,'0')}`;
   const fim = ultimoDiaMes(ym);
   const semanas = [];
@@ -4976,6 +5016,8 @@ function semanasDoMes(ano, mes){
   while(seg <= fim){
     const dias = [];
     for(let i=0; i<5; i++) dias.push(addDays(seg, i));
+    const sabado = addDays(seg, 5);
+    if(sabadoEntra && sabado.slice(0,7) === ym && sabadoEntra(sabado)) dias.push(sabado);
     if(dias.some(iso => iso.slice(0,7) === ym)) semanas.push(dias);
     seg = addDays(seg, 7);
   }
@@ -4999,7 +5041,14 @@ function printFolhaContabilidade(){
     return;
   }
 
-  const blocos = semanasDoMes(ano, mes).map(dias => {
+  const trabalhou = (f, iso) => !foraDoVinculo(f, iso, vinculoMudou(f) ? 'fichado' : undefined)
+    && statusParaFolhaContabil(f, iso, ym) === 'trabalhado';
+  const semanas = semanasDoMes(ano, mes, iso => equipe.some(f => trabalhou(f, iso)));
+  const plano = planoFolhaContabil(equipe.length,
+    semanas.map(dias => dias.some(iso => iso.slice(0,7) === ym && feriadoDoDia(iso))));
+
+  const blocoDaSemana = ({semana, de, ate}) => {
+    const dias = semanas[semana];
     /* Cabeçalho em DUAS linhas, como no "Modelo Atualizado": data em cima, dia
        da semana embaixo. Itens / FUNCIONÁRIO / CARGO / Total Diárias ocupam as
        duas (rowspan), em vez de deixar uma linha em branco embaixo delas.
@@ -5024,7 +5073,7 @@ function printFolhaContabilidade(){
       .filter(iso => iso.slice(0,7) === ym && feriadoDoDia(iso))
       .map(iso => `${fmtDate(iso)} — ${esc(feriadoDoDia(iso).nome)}`);
 
-    const linhas = equipe.map((f, i) => {
+    const linhas = equipe.slice(de, ate).map((f, i) => {
       let total = 0;
       const celulas = dias.map(iso => {
         const doMes = iso.slice(0,7) === ym;
@@ -5039,7 +5088,7 @@ function printFolhaContabilidade(){
         return `<td class="c">${sig}</td>`;
       }).join('');
       return `<tr>
-        <td class="c">${i+1}</td>
+        <td class="c">${de+i+1}</td>
         <td>${esc(f.nome)}</td>
         <td>${esc(funcaoHistoricaEm(f, ultimoDiaMes(ym)).toUpperCase())}</td>
         ${celulas}
@@ -5048,7 +5097,7 @@ function printFolhaContabilidade(){
     }).join('');
 
     return `
-    <table class="dtab fcont">
+    <table class="dtab fcont${plano.apertada ? ' apertada' : ''}">
       <thead>
         <tr>
           <th class="c" rowspan="2">Itens</th>
@@ -5060,9 +5109,9 @@ function printFolhaContabilidade(){
         <tr>${cabDow}</tr>
       </thead>
       <tbody>${linhas}</tbody>
-    </table>${feriadosDaSemana.length ? `
+    </table>${feriadosDaSemana.length && ate === equipe.length ? `
     <p class="ffer">🎉 ${feriadosDaSemana.join(' · ')}</p>` : ''}`;
-  });   /* fica como LISTA de blocos: quem junta é o agrupamento por página */
+  };
 
   const obraTxt = pmObraFiltro ? obraNome(pmObraFiltro) : 'Todas as obras';
   const legenda = `
@@ -5076,16 +5125,16 @@ function printFolhaContabilidade(){
       <b>FER</b> feriado (nome completo na legenda abaixo da semana): só marca "1" quem trabalhou
     </div>`;
 
-  /* agrupa os blocos em páginas e desenha o cabeçalho em cada uma */
-  const paginas = emPaginas(blocos, blocosPorPagina(equipe.length));
+  /* desenha o cabeçalho em cada página do plano */
+  const paginas = plano.paginas;
   const corpo = paginas.map((pag, i) => `
     <div class="fpag${i < paginas.length-1 ? ' quebra' : ''}">
       ${docHead('Folha de Ponto', `MÊS ${MESES[mes-1].toUpperCase()} / ${ano}`,
         `Obra<br><b>${esc(obraTxt)}</b><br>Emitida em ${fmtDate(todayISO())}`
         + (paginas.length > 1 ? `<br>Folha ${i+1} de ${paginas.length}` : ''))}
       ${legenda}
-      ${pag.join('')}
-      ${i === paginas.length-1 ? `
+      ${pag.map(blocoDaSemana).join('')}
+      ${i === paginas.length-1 && plano.rodape ? `
         <div class="dtotais">
           ${equipe.length} funcionário(s) · ${MESES[mes-1]} de ${ano}
         </div>
@@ -5121,6 +5170,12 @@ function resumoMesFuncionario(f, ym){
   let iso = ini;
   while(iso <= fim){
     const dw = dowOf(iso);
+    /* sábado trabalhado conta, igual na folha dia a dia, para as duas fichas fecharem. Só
+       ele entra: sábado não é dia útil aqui, nem deve lançamento quando não houve trabalho. */
+    if(dw === 6 && !foraDoVinculo(f, iso, vinculoMudou(f) ? 'fichado' : undefined)
+       && statusParaFolhaContabil(f, iso, ym) === 'trabalhado'){
+      r.comVinculo++; r.trabalhado++;
+    }
     if(dw >= 1 && dw <= 5){
       r.uteis++;
       if(!foraDoVinculo(f, iso, vinculoMudou(f) ? 'fichado' : undefined)){
@@ -5223,7 +5278,7 @@ function printResumoMensal(){
       <div class="flegenda">
         <b>${uteis}</b> dias úteis no mês (segunda a sexta) &nbsp;·&nbsp;
         <b>Dias no vínculo</b> = dias úteis em que a pessoa já estava admitida e ainda não
-        havia saído &nbsp;·&nbsp; a soma das colunas de cada pessoa (inclusive Feriados) fecha
+        havia saído, mais os sábados que ela trabalhou &nbsp;·&nbsp; a soma das colunas de cada pessoa (inclusive Feriados) fecha
         com os dias no vínculo &nbsp;·&nbsp; <b>Feriados</b> = feriado cadastrado em que a
         pessoa não trabalhou (não conta como falta nem reduz o vínculo)
       </div>
@@ -5416,12 +5471,97 @@ function renderCalendarDiarista(){
   `;
 }
 
-/* Registro do dia sem mais nada nele: só então pode sumir. Limpar o status de um dia não
-   pode levar junto a comissão, a função, o VT extra ou o tipo de serviço marcados no 💰 —
-   para tirar esses, é pelo próprio modal. Igual ao fichado, cuja `excecaoDia` não depende
-   do status (achado em 04/11/2026: a comissão sumia sem aviso). */
+/* DIA LIMPO COM LANÇAMENTO (04/11/2026). Limpar o status de um diarista apagava junto a
+   comissão, a função e o VT extra do dia, sem aviso. Pedido do Maycon: "quando limpar o dia,
+   deixa o registro lá com uma notificação" — alguém pode ser deslocado, trabalhar só uma
+   hora, e ele limpar o dia e esquecer de lançar de novo. Só o status sai, e `e.diaLimpo`
+   viaja no próprio registro (sincroniza junto) até ELE decidir, na faixa do Ponto
+   (`faixaDiasLimpos`): limpar os lançamentos ou confirmar. Não some sozinha, nem se o dia
+   for apontado de novo. Não muda a regra de pagamento: `calcDiarista` soma comissão e VT
+   extra com ou sem status, e por isso a faixa mostra quanto está entrando no Fechamento. */
+function temLancamentoNoDia(e){
+  return !!(e.quentinha || e.funcao || e.comissao || e.vtExtra || e.tipoServico);
+}
 function registroDiaristaVazio(e){
-  return !e.status && !e.quentinha && !e.funcao && !e.comissao && !e.vtExtra && !e.tipoServico;
+  return !e.status && !e.diaLimpo && !temLancamentoNoDia(e);
+}
+/* Tira o status do dia; é o único caminho que acende a notificação. */
+function limparStatusDiarista(e){
+  if(e.status && temLancamentoNoDia(e)) e.diaLimpo = true;
+  e.status = '';
+  delete e.auto;
+  if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
+}
+function diasLimposPendentes(){
+  return DB.pontoDiarista.filter(e=>e.diaLimpo).sort((a,b)=>a.data.localeCompare(b.data));
+}
+function descreveLancamentosDoDia(e){
+  return [
+    e.comissao ? 'comissão ' + fmtMoney(e.comissao) : '',
+    e.vtExtra ? 'VT extra ' + fmtMoney(e.vtExtra) : '',
+    e.funcao ? 'função ' + (CATEGORIA_HH_LABEL[e.funcao] || e.funcao) : '',
+    e.tipoServico ? 'tipo ' + SERVICO_LABEL[e.tipoServico] : '',
+    e.quentinha ? 'quentinha' : ''
+  ].filter(Boolean).join(', ') || 'nada mais lançado';
+}
+/* Dinheiro deste dia que continua no Fechamento enquanto os lançamentos existirem, e em
+   qual sexta, para ele ver o risco de pagar a mais antes de decidir. */
+function avisoPagamentoDiaLimpo(e){
+  const valor = (Number(e.comissao)||0) + (Number(e.vtExtra)||0);
+  if(!valor) return '';
+  const f = func(e.funcionarioId);
+  if(!f) return '';
+  const per = periodicidadeHistoricaEm(f, e.data);
+  const sexta = sextaDeFechamento(e.data, per);
+  const jaPago = pagamentoDe(f.id, sexta, per);
+  const dia = e.status ? '' : ', mesmo sem presença neste dia';
+  return jaPago
+    ? `<b>${fmtMoney(valor)}</b> estão no Fechamento de ${fmtDate(sexta)}, <b>já marcado como pago</b>${dia}. Limpar aqui não desfaz esse pagamento.`
+    : `<b>${fmtMoney(valor)}</b> entram no Fechamento de ${fmtDate(sexta)}${dia}.`;
+}
+function faixaDiasLimpos(){
+  const lista = diasLimposPendentes();
+  if(!lista.length) return '';
+  return `
+  <div id="faixaDiasLimpos" style="margin:0 0 14px;padding:11px 14px;background:#fdf3e2;border-radius:8px;color:#8a5a00;border-left:4px solid var(--amarelo);">
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px;">
+      ${lista.length} dia(s) de diarista limpo(s) com lançamento, esperando sua decisão
+    </div>
+    ${lista.map(e=>{
+      const f = func(e.funcionarioId);
+      const aviso = avisoPagamentoDiaLimpo(e);
+      return `
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 0;border-top:1px solid #e6d3a8;">
+        <div style="flex:1;min-width:220px;font-size:12.5px;">
+          <b>${esc(f ? f.nome : 'Funcionário removido')}</b> · ${fmtDate(e.data)} ·
+          ${e.status ? esc(PD_LABEL[e.status]||e.status) : 'sem status'}<br>
+          Ficou lançado: ${esc(descreveLancamentosDoDia(e))}
+          ${aviso ? `<br>${aviso}` : ''}
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="if(confirm('Apagar os lançamentos deste dia? O status do dia não muda.')) limparLancamentosDoDia('${e.id}');">Limpar lançamentos</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmarDiaLimpo('${e.id}');">Confirmar</button>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+/* "Limpar lançamentos": apaga o que sobrou. Se o dia foi apontado de novo, o status fica. */
+function limparLancamentosDoDia(id){
+  const e = DB.pontoDiarista.find(x=>x.id===id);
+  if(!e) return;
+  ['funcao','comissao','vtExtra','tipoServico','diaLimpo'].forEach(k=>{ delete e[k]; });
+  e.quentinha = false;
+  if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
+  saveDB(); renderPonto();
+  toast('Lançamentos do dia apagados.');
+}
+/* "Confirmar": os dados ficam como estão, só a notificação sai. */
+function confirmarDiaLimpo(id){
+  const e = DB.pontoDiarista.find(x=>x.id===id);
+  if(!e) return;
+  delete e.diaLimpo;
+  if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
+  saveDB(); renderPonto();
+  toast('Confirmado. Os lançamentos do dia continuam valendo.');
 }
 
 function cyclePd(iso){
@@ -5436,8 +5576,7 @@ function cyclePd(iso){
     const next = ciclo[(ciclo.indexOf(e.status)+1)%ciclo.length];
     delete e.auto;                                   // tocar no dia confirma
     if(next===''){
-      e.status = '';
-      if(registroDiaristaVazio(e)) DB.pontoDiarista = DB.pontoDiarista.filter(x=>x.id!==e.id);
+      limparStatusDiarista(e);
     } else {
       e.status = next;
       if(!e.obraId) e.obraId = f.obraPadrao||'';
