@@ -633,6 +633,12 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
    pra isso; sem margem, ele desiste de desenhar. Pedido do Maycon em 10/09/2026, na ficha
    de admissão e no Holerite (recibo de pagamento) — ver doPrint. */
 .doc-margem-zero{padding:10mm;}
+/* Mesma coisa para documento de várias folhas com paginação própria (Folha de Ponto e
+   Resumo Mensal, 04c_folha_contabil.js): o padding do `.doc` só existiria no início da
+   primeira folha, então cada `.fpag` traz o seu. Sem padding embaixo, para ele nunca
+   abrir uma folha em branco: os 10mm de baixo sobram porque a conta só usa 277mm. */
+.doc-margem-zero.fpags{padding:0;}
+.fpags .fpag{padding:10mm 10mm 0;}
 
 /* Holerite em UMA via, A5 (11/09/2026): mesma ideia do `doc-margem-zero` acima, mas na
    página curta do recibo (`@page{size:211mm 149mm}`, ver doPrint) — devolve o mesmo
@@ -721,6 +727,18 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 .fresumo th{padding:3px 4px;font-size:8px;white-space:normal;text-align:center;}
 .fresumo td{padding:3px 5px;}
 .fresumo td.c, .fresumo th.c{text-align:center;}
+/* larguras fixas somando os 190mm da folha: é o que deixa a tabela dentro da margem e a
+   altura de cada linha previsível (alturaLinhaResumo). O nome fica com o que sobrar. */
+.fresumo{table-layout:fixed;}
+.fresumo th, .fresumo td{padding-left:2px;padding-right:2px;}
+.fresumo td{font-size:8.5px;}
+.fresumo thead th{font-size:6.5px;letter-spacing:0;}
+.fresumo thead th:nth-child(1){width:8mm;}
+.fresumo thead th:nth-child(3){width:22mm;}
+.fresumo thead th:nth-child(4){width:14mm;}
+.fresumo thead th:nth-child(n+5){width:8.8mm;}
+.fresumo thead th:nth-child(5){width:10mm;}
+.fresumo thead th:nth-child(13){width:24mm;}
 .fresumo .obs{font-size:8px;color:#555;}
 .fresumo tfoot td{font-weight:800;background:#f2f4f9;}
 
@@ -868,7 +886,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.37.1';
+const VERSAO = '1.37.2';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -4944,7 +4962,15 @@ const SIGLA_CONTABIL = {
    quase em branco; errar para mais só deixa espaço branco no pé. */
 const FP_ALTURA_PAGINA = 277;   // mm úteis
 const FP_CABECALHO     = 46;    // logo + endereço + título + legenda
-const FP_LINHA         = 4.7;   // mm por linha do Resumo Mensal
+const FP_RESUMO_CABECALHO = 66; // logo + endereço + título + legenda + cabeçalho da tabela
+const FP_RESUMO_LINHA  = 5.2;   // mm por linha de funcionário no Resumo Mensal
+const FP_RESUMO_OBS_BASE = 2.6; // a parte fixa de uma linha com observação
+const FP_RESUMO_OBS_LINHA = 3.2; // cada linha de texto da observação
+const FP_RESUMO_OBS_CHARS = 16;  // caracteres que cabem por linha, com folga
+const FP_RESUMO_NOME_CHARS = 30; // idem, na coluna do nome
+const FP_RESUMO_CARGO_CHARS = 14; // idem, na coluna do cargo
+const FP_RESUMO_TOTAL  = 6;     // a linha de TOTAL
+const FP_RESUMO_AVISO  = 16;    // o aviso de dia sem lançamento
 const FP_LINHA_FOLHA   = 5.1;   // mm por linha de funcionário na folha
 const FP_LINHA_APERTADA = 4.3;  // idem, com a tabela `.apertada` (equipe grande)
 const FP_BLOCO_FIXO    = 13;    // as 2 linhas de cabeçalho do bloco + o espaço entre blocos
@@ -4986,11 +5012,37 @@ function planoFolhaContabil(nPessoas, feriados){
   return {apertada, paginas, rodape: usado + FP_RODAPE <= livrePorFolha};
 }
 
-/* quebra uma lista em pedaços de tamanho `n` */
-function emPaginas(lista, n){
-  const out = [];
-  for(let i = 0; i < lista.length; i += n) out.push(lista.slice(i, i + n));
-  return out;
+/* Linhas do Resumo Mensal em folhas, pela altura de cada uma (05/11/2026). Sem margem na
+   página, uma linha que transbordasse cairia colada na borda da folha seguinte e sem
+   cabeçalho, então a conta precisa acertar: observação comprida ocupa mais de uma linha.
+   `reservaFinal` é o que vem depois da tabela na última folha; se não couber, as últimas
+   linhas descem junto para a próxima, para o total nunca sair numa folha sem pessoas. */
+function alturaLinhaResumo(obs, nome, cargo){
+  const linhas = obs.reduce((s, o) => s + Math.ceil(String(o).replace(/<[^>]*>/g, '').length / FP_RESUMO_OBS_CHARS), 0);
+  const textoNaLinha = Math.max(Math.ceil(String(nome||'').length / FP_RESUMO_NOME_CHARS),
+                                Math.ceil(String(cargo||'').length / FP_RESUMO_CARGO_CHARS), 1);
+  return Math.max(FP_RESUMO_OBS_BASE + linhas * FP_RESUMO_OBS_LINHA,
+                  FP_RESUMO_LINHA + (textoNaLinha - 1) * FP_RESUMO_OBS_LINHA);
+}
+function planoResumoMensal(alturas, reservaFinal){
+  const livre = FP_ALTURA_PAGINA - FP_RESUMO_CABECALHO;
+  const paginas = [[]];
+  let usado = 0;
+  alturas.forEach((h, i) => {
+    if(usado + h > livre && paginas[paginas.length-1].length){ paginas.push([]); usado = 0; }
+    paginas[paginas.length-1].push(i);
+    usado += h;
+  });
+  if(usado + reservaFinal > livre){
+    const ultima = paginas[paginas.length-1], descem = [];
+    while(usado + reservaFinal > livre && ultima.length > 1){
+      const i = ultima.pop();
+      descem.unshift(i);
+      usado -= alturas[i];
+    }
+    if(descem.length) paginas.push(descem);
+  }
+  return paginas;
 }
 
 /* a segunda-feira da semana em que a data cai (domingo pertence à semana anterior) */
@@ -5144,7 +5196,9 @@ function printFolhaContabilidade(){
   const nomeArq = String(mes).padStart(2,'0') + '. FOLHA DE PONTO - '
     + MESES[mes-1].toUpperCase() + ' ' + ano
     + (pmObraFiltro ? ' - ' + obraTxt : '');
-  doPrint(`<div class="doc">${corpo}</div>`, nomeArq);
+  /* `doc-margem-zero` (05/11/2026): sem margem na página o navegador não escreve o endereço
+     do sistema, a data e o título no pé e no topo da folha, que iam para a contabilidade. */
+  doPrint(`<div class="doc doc-margem-zero fpags">${corpo}</div>`, nomeArq);
 }
 
 /* =========================================================
@@ -5232,7 +5286,7 @@ function printResumoMensal(){
     }
     if(r.semLancamento) obs.push(`<b>${r.semLancamento} dia(s) sem lançamento</b>`);
 
-    return `<tr>
+    return {altura: alturaLinhaResumo(obs, f.nome, f.funcao), html: `<tr>
       <td class="c">${i+1}</td>
       <td>${esc(f.nome)}</td>
       <td>${esc((f.funcao||'—').toUpperCase())}</td>
@@ -5246,7 +5300,7 @@ function printResumoMensal(){
       <td class="c">${r.feriado||''}</td>
       <td class="c">${r.folga||''}</td>
       <td class="obs">${obs.join('<br>')}</td>
-    </tr>`;
+    </tr>`};
   });   /* fica como LISTA de linhas: quem junta é o agrupamento por página */
 
   /* dias úteis do mês é igual para todos: calcula uma vez, com o primeiro */
@@ -5264,9 +5318,9 @@ function printResumoMensal(){
       <th class="c">Folgas<br>/ DSR</th><th>Observações</th>
     </tr></thead>`;
 
-  const porPagina = Math.max(1,
-    Math.floor((FP_ALTURA_PAGINA - FP_CABECALHO - FP_BLOCO_FIXO) / FP_LINHA));
-  const paginas = emPaginas(linhas, porPagina);
+  const paginas = planoResumoMensal(linhas.map(l=>l.altura),
+    FP_RESUMO_TOTAL + FP_RODAPE + (algumFuro ? FP_RESUMO_AVISO : 0))
+    .map(pag=>pag.map(i=>linhas[i].html));
 
   const corpo = paginas.map((pag, i) => {
     const ultima = i === paginas.length - 1;
@@ -5314,7 +5368,7 @@ function printResumoMensal(){
   const nomeArq = String(mes).padStart(2,'0') + '. RESUMO MENSAL DE FREQUENCIA - '
     + MESES[mes-1].toUpperCase() + ' ' + ano
     + (pmObraFiltro ? ' - ' + obraTxt : '');
-  doPrint(`<div class="doc">${corpo}</div>`, nomeArq);
+  doPrint(`<div class="doc doc-margem-zero fpags">${corpo}</div>`, nomeArq);
 }
 /* =========================================================
    PONTO DIARISTAS — calendário por funcionário (igual ao dos fichados)
