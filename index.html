@@ -886,7 +886,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.37.3';
+const VERSAO = '1.38.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -7570,6 +7570,34 @@ function resumoNaoEfetivados(fal){
   return partes.join(' + ') || 'nenhum dia a descontar';
 }
 
+/* Primeiro mês do acerto pelo efetivo (ver calcVale). Os meses antes dele continuam com a
+   regra das faltas, para os vales já pagos não mudarem de valor na tela. */
+const ACERTO_VALE_DESDE = '2026-11';
+
+/* Dias que o vale pagou: o número gravado ao marcar Pago (`v.diasPagos`, desde 05/11/2026);
+   vale pago antes disso usa o cálculo de hoje, que muda se um feriado entrar depois. */
+function diasPagosVale(f, mes){
+  const v = DB.vales.find(x=>x.funcionarioId===f.id && x.mes===mes && x.pago);
+  if(!v) return null;
+  return (v.diasPagos===undefined || v.diasPagos===null || v.diasPagos==='') ? diasValeFunc(f, mes) : Number(v.diasPagos);
+}
+
+/* {pagos, efetivos, dias} do mês: dias = efetivos − pagos; null quando não há o que acertar */
+function acertoValeMesAnterior(f, mes){
+  const pagos = diasPagosVale(f, mes);
+  if(pagos===null) return null;
+  const efetivos = getFaltasMes(f.id, mes).trabalhado;
+  if(!efetivos) return null;
+  return {pagos, efetivos, dias: efetivos - pagos};
+}
+
+/* Texto curto do acerto, para a tela, o recibo e o WhatsApp */
+function textoAcertoVale(a){
+  const d = Math.abs(a.dias);
+  if(!a.dias) return `${a.efetivos} trabalhados = ${a.pagos} pagos`;
+  return `${a.efetivos} trabalhados − ${a.pagos} pagos = ${a.dias>0?'+':'−'}${d} ${d===1?'dia':'dias'}`;
+}
+
 function calcVale(f, mes){
   const v = getVale(f.id, mes);
   const dias = diasValeFunc(f, mes);
@@ -7590,7 +7618,17 @@ function calcVale(f, mes){
   const falAnt = getFaltasMes(f.id, mesAnterior);
   const diasNaoEfetivadosAnt = falAnt.injustificada + falAnt.justificada + falAnt.atestado
                               + falAnt.licenca + falAnt.folga;
-  const sugDescFaltas = Math.round((vtDia+vrDia)*diasNaoEfetivadosAnt*100)/100;
+  /* Acerto pelo efetivo (05/11/2026, a partir do vale de novembro). Outubro foi pago por 21
+     dias e depois apareceu o feriado do dia 19; e teve quem trabalhou no feriado do dia 12 e
+     nos sábados. Contar só as faltas não pegava nenhuma das duas coisas. Agora o mês seguinte
+     acerta a diferença: dias trabalhados no ponto do mês anterior (sábado e feriado
+     trabalhados contam) menos os dias pagos naquele vale. Positivo = complemento a pagar;
+     negativo = desconto. Só quando o vale anterior foi pago e o ponto tem dia trabalhado
+     (quem não bate ponto, como o escritório, segue a regra das faltas). */
+  const acerto = mes >= ACERTO_VALE_DESDE ? acertoValeMesAnterior(f, mesAnterior) : null;
+  const sugDescFaltas = acerto
+    ? Math.round(-(vtDia+vrDia)*acerto.dias*100)/100
+    : Math.round((vtDia+vrDia)*diasNaoEfetivadosAnt*100)/100;
   const descFaltas = (v.descontoFaltas===''||v.descontoFaltas===null||v.descontoFaltas===undefined)
                      ? sugDescFaltas : Number(v.descontoFaltas)||0;
 
@@ -7600,7 +7638,7 @@ function calcVale(f, mes){
 
   const descOutros = Number(v.descontoOutros)||0;
   return {f, v, dias, vtDia, vrDia, totalVT, totalVR, bruto: totalVT+totalVR,
-          mesAnterior, falAnt, diasNaoEfetivadosAnt, sugDescFaltas, descFaltas,
+          mesAnterior, falAnt, diasNaoEfetivadosAnt, acerto, sugDescFaltas, descFaltas,
           parcelas, totalParcelas, descOutros,
           liquido: totalVT+totalVR-descFaltas-totalParcelas-descOutros};
 }
@@ -7650,10 +7688,15 @@ function renderVales(){
         Ainda assim dá para corrigir a coluna <b>Dias</b> de uma pessoa específica.
       </p>
       <p class="help" style="margin:0 0 14px;padding:9px 12px;background:#fdf3e2;border-radius:8px;color:#8a5a00;">
-        <b>Como as faltas entram:</b> o vale é pago adiantado, antes de o mês acontecer — então não dá para prever falta,
+        ${valesMes >= ACERTO_VALE_DESDE
+          ? `<b>Acerto do mês anterior:</b> o vale é pago adiantado, antes de o mês acontecer. Aqui entra a diferença entre
+        os dias <b>trabalhados no ponto</b> de <b>${monthLabel(mesAnteriorDe(valesMes))}</b> (sábado e feriado trabalhados
+        contam; falta, atestado, licença e folga não) e os dias que o vale daquele mês pagou. Trabalhou mais: complemento
+        (desconto negativo). Trabalhou menos: desconto.`
+          : `<b>Como as faltas entram:</b> o vale é pago adiantado, antes de o mês acontecer — então não dá para prever falta,
         atestado, licença ou folga. <b>Todo dia que não foi efetivamente trabalhado</b> em
         <b>${monthLabel(mesAnteriorDe(valesMes))}</b> (falta, falta justificada, atestado, licença ou folga) é descontado
-        aqui, no vale de ${monthLabel(valesMes)} — só quem esteve de fato na obra teve o custo de passagem e alimentação.
+        aqui, no vale de ${monthLabel(valesMes)} — só quem esteve de fato na obra teve o custo de passagem e alimentação.`}
         O mesmo vale para empréstimos: são descontados no mês seguinte ao que você emprestou, podendo ser parcelados.
       </p>
 
@@ -7694,7 +7737,7 @@ function renderVales(){
             <th>Funcionário</th>
             <th class="num">VT/dia</th><th class="num">VR/dia</th><th style="text-align:center;width:74px;">Dias</th>
             <th class="num">Total VT</th><th class="num">Total VR</th>
-            <th class="num" style="width:130px;">Faltas mês ant.</th>
+            <th class="num" style="width:130px;">${valesMes >= ACERTO_VALE_DESDE ? 'Acerto mês ant.' : 'Faltas mês ant.'}</th>
             <th class="num" style="width:120px;">Empréstimo</th>
             <th class="num" style="width:110px;">Outros desc.</th>
             <th class="num">Líquido</th><th style="width:110px;">Pago</th><th></th>
@@ -7715,13 +7758,15 @@ function renderVales(){
             <td class="num">${fmtMoney(r.totalVT)}</td>
             <td class="num">${fmtMoney(r.totalVR)}</td>
             <td><input type="number" step="0.01" value="${r.descFaltas}" onwheel="this.blur()" ${dis} onchange="setValeCampo('${r.f.id}','descontoFaltas',this.value)">
-                ${r.diasNaoEfetivadosAnt
+                ${r.acerto
+                  ? `<span style="font-size:10px;color:${r.acerto.dias>0?'var(--verde)':r.acerto.dias<0?'var(--vermelho)':'#9aa0ab'};">${monthLabel(r.mesAnterior).slice(0,3)}: ${textoAcertoVale(r.acerto)}${r.acerto.dias>0?' (complemento: desconto negativo)':''}</span>`
+                  : r.diasNaoEfetivadosAnt
                   ? `<span style="font-size:10px;color:var(--vermelho);">${resumoNaoEfetivados(r.falAnt)} em ${monthLabel(r.mesAnterior).slice(0,3)}</span>`
                   : '<span style="font-size:10px;color:#9aa0ab;">sem dias a descontar no mês anterior</span>'}
                 ${!pago && Math.abs(r.descFaltas - r.sugDescFaltas) > 0.01
                   ? `<button class="btn btn-secondary btn-sm" style="margin-top:3px;padding:2px 6px;font-size:10px;"
                        onclick="setValeCampo('${r.f.id}','descontoFaltas',${r.sugDescFaltas})"
-                       title="O valor digitado não bate com o cálculo pelas faltas do mês anterior">↺ corrigir para ${fmtMoney(r.sugDescFaltas)}</button>`
+                       title="O valor digitado não bate com o cálculo pelo mês anterior">↺ corrigir para ${fmtMoney(r.sugDescFaltas)}</button>`
                   : ''}</td>
             <td class="num">${r.totalParcelas
                 ? `<span style="color:var(--vermelho);font-weight:700;">- ${fmtMoney(r.totalParcelas)}</span><br><span style="font-size:10px;color:#9aa0ab;">${r.parcelas.map(p=>`${p.parcela}/${p.total}`).join(', ')}</span>`
@@ -7868,7 +7913,7 @@ function toggleValePago(funcId, mes){
     if(!confirm(`Desmarcar o vale de ${f.nome} como pago?\n\n`
       + `Isso apaga o lançamento criado no financeiro e volta a liberar os campos para editar.`)) return;
     if(v.pagoLancamentoId) DB.lancamentos = DB.lancamentos.filter(l=>l.id!==v.pagoLancamentoId);
-    v.pago = false; v.pagoQuando = ''; v.pagoLancamentoId = '';
+    v.pago = false; v.pagoQuando = ''; v.pagoLancamentoId = ''; v.diasPagos = '';
     saveDB(); renderVales();
     toast('Vale desmarcado.');
     return;
@@ -7882,6 +7927,7 @@ function toggleValePago(funcId, mes){
   const r = calcVale(f, mes);
   const hoje = todayISO();
   v.pago = true; v.pagoQuando = hoje;
+  v.diasPagos = r.dias;   // o acerto do mês seguinte parte daqui, mesmo que um feriado entre depois
 
   /* líquido zero ou negativo (descontos comeram o vale inteiro): marca como
      pago, mas não há dinheiro saindo — não cria lançamento nenhum */
@@ -7938,8 +7984,10 @@ function reciboValeHTML(funcId){
                 ? ` (${fmtDate(admissaoFolha(r.f))} à ${nd} de ${MESES[m-1]})`
                 : ` (01 à ${nd} de ${MESES[m-1]})`}</td>
             <td class="n" style="font-weight:800;">${fmtNum(r.bruto)}</td></tr>
-        ${r.descFaltas ? `<tr><td>Desconto referente a dias não efetivados em ${mesAnterior}</td>
-            <td>${r.diasNaoEfetivadosAnt?resumoNaoEfetivados(r.falAnt):''}</td><td class="n">- ${fmtNum(r.descFaltas)}</td></tr>` : ''}
+        ${r.descFaltas > 0 ? `<tr><td>Desconto referente a dias não efetivados em ${mesAnterior}</td>
+            <td>${r.acerto?textoAcertoVale(r.acerto):r.diasNaoEfetivadosAnt?resumoNaoEfetivados(r.falAnt):''}</td><td class="n">- ${fmtNum(r.descFaltas)}</td></tr>` : ''}
+        ${r.descFaltas < 0 ? `<tr><td>Complemento referente a dias trabalhados a mais em ${mesAnterior}</td>
+            <td>${r.acerto?textoAcertoVale(r.acerto):''}</td><td class="n">+ ${fmtNum(-r.descFaltas)}</td></tr>` : ''}
         ${r.parcelas.map(p=>`<tr><td>${esc(p.a.descricao||'Empréstimo')}${p.total>1?` — parcela ${p.parcela} de ${p.total}`:''}</td>
             <td>${fmtDate(p.a.data)}</td><td class="n">- ${fmtNum(p.valor)}</td></tr>`).join('')}
         ${r.descOutros ? `<tr><td>Outros descontos</td><td></td><td class="n">- ${fmtNum(r.descOutros)}</td></tr>` : ''}
@@ -7962,7 +8010,8 @@ function mensagemVale(r){
   const l = [r.f.nome, '', `vale ${monthLabel(valesMes)} (${r.dias} ${r.dias===1?'dia':'dias'})`];
   if(r.totalVT) l.push(`transporte = ${fmtMoney(r.totalVT)}`);
   if(r.totalVR) l.push(`alimentação = ${fmtMoney(r.totalVR)}`);
-  if(r.descFaltas) l.push(`desconto dias não trabalhados em ${monthLabel(r.mesAnterior)} = -${fmtMoney(r.descFaltas)}`);
+  if(r.descFaltas > 0) l.push(`desconto dias não trabalhados em ${monthLabel(r.mesAnterior)} = -${fmtMoney(r.descFaltas)}`);
+  if(r.descFaltas < 0) l.push(`complemento dias trabalhados a mais em ${monthLabel(r.mesAnterior)} = +${fmtMoney(-r.descFaltas)}`);
   if(r.totalParcelas) l.push(`empréstimo = -${fmtMoney(r.totalParcelas)}`);
   if(r.descOutros) l.push(`outros descontos = -${fmtMoney(r.descOutros)}`);
   const lanc = r.v.pago && r.v.pagoLancamentoId && DB.lancamentos.find(x=>x.id===r.v.pagoLancamentoId);
