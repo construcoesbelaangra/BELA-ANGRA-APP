@@ -886,7 +886,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.38.1';
+const VERSAO = '1.39.0';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -7087,6 +7087,7 @@ function selectOrdemFichados(){
 
 function renderFechamentoFichados(){
   const c = document.getElementById('content');
+  pdfPrepararImagens([DB.empresa.logo]);   // a logo fica pronta antes do clique no WhatsApp (22_pdf.js)
   if(!fcMesFichados) fcMesFichados = currentYM();
   const mes = fcMesFichados;
   const fichados = ativosNoMes(mes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(mes), ultimoDiaMes(mes)))
@@ -7203,7 +7204,7 @@ function renderFechamentoFichados(){
                   onclick="toggleSaldoFichadoPago('${r.f.id}','${mes}')">
               </td>
               <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="printReciboAdiantamento('${r.f.id}')" ${r.temDireitoAdiantamento?'':'disabled'}>Recibo do adiant.</button>
-                <button class="btn btn-secondary btn-sm" onclick="whatsAppFichado('${r.f.id}','adiantamento')" ${r.temDireitoAdiantamento?'':'disabled'} title="WhatsApp com o valor do adiantamento do dia 20">WhatsApp adiant.</button>
+                <button class="btn btn-secondary btn-sm" onclick="whatsAppFichado('${r.f.id}','adiantamento')" ${r.temDireitoAdiantamento?'':'disabled'} title="Manda o PDF do recibo do adiantamento pelo WhatsApp (escolha o contato na lista)">WhatsApp adiant.</button>
                 <button class="btn btn-secondary btn-sm" onclick="whatsAppFichado('${r.f.id}','saldo')" ${r.saldo===null?'disabled title="Preencha o líquido do mês primeiro"':'title="WhatsApp com o saldo do 5º dia útil"'}>WhatsApp saldo</button></td>
             </tr>`;}).join('')}
           </tbody>
@@ -7248,6 +7249,7 @@ function renderFechamentoFichados(){
    gravam o MESMO registro (`DB.fechFichados`), então o que ela digita aparece lá na hora. */
 function renderLiquidoFichadosRH(){
   const c = document.getElementById('content');
+  pdfPrepararImagens([DB.empresa.logo]);   // a logo fica pronta antes do clique no WhatsApp (22_pdf.js)
   if(!fcMesFichados) fcMesFichados = currentYM();
   const mes = fcMesFichados;
   const fichados = ativosNoMes(mes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(mes), ultimoDiaMes(mes)))
@@ -7280,7 +7282,7 @@ function renderLiquidoFichadosRH(){
             <th>Funcionário</th><th class="num">Salário</th>
             <th class="num">Adiantamento (${pct}%)</th>
             <th class="num" style="min-width:130px;">Líquido do mês<br><span style="font-weight:400;text-transform:none;font-size:10px;">informado pela contabilidade</span></th>
-            <th class="num">Saldo a pagar</th>
+            <th class="num">Saldo a pagar</th><th></th>
           </tr></thead>
           <tbody>
             ${rows.map(r=>{
@@ -7298,13 +7300,19 @@ function renderLiquidoFichadosRH(){
               </td>
               <td class="num" style="font-weight:800;color:${r.saldo===null?'#9aa0ab':(r.saldo<0?'var(--vermelho)':'var(--verde)')};">
                 ${r.saldo===null?'—':fmtMoney(r.saldo)}</td>
+              <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="printReciboAdiantamento('${r.f.id}')" ${r.temDireitoAdiantamento?'':'disabled'}>Recibo do adiant.</button>
+                <button class="btn btn-secondary btn-sm" onclick="whatsAppFichado('${r.f.id}','adiantamento')" ${r.temDireitoAdiantamento?'':'disabled'} title="Manda o PDF do recibo do adiantamento pelo WhatsApp (escolha o contato na lista)">WhatsApp adiant.</button></td>
             </tr>`;}).join('')}
           </tbody>
         </table>` : '<div class="empty">Nenhum funcionário fichado ativo.</div>'}
+      ${rows.some(r=>r.temDireitoAdiantamento) ? `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button class="btn btn-secondary" onclick="printTodosAdiantamentos()">Recibos de adiantamento (PDF)</button>
+      </div>` : ''}
       </div>
       <p class="help">
-        Aqui só se preenche o <b>líquido do mês</b> que a contabilidade manda no holerite. O pagamento
-        (marcar como pago, recibos e relatórios) é feito pelo financeiro.
+        Aqui se preenche o <b>líquido do mês</b> que a contabilidade manda no holerite e se entregam os
+        <b>recibos do adiantamento</b> (imprimir ou mandar o PDF pelo WhatsApp). Marcar como pago e os
+        relatórios ficam no financeiro.
       </p>
     </div>
   `;
@@ -7356,6 +7364,13 @@ function whatsAppFichado(funcId, tipo){
   const r = calcFichado(func(funcId), fcMesFichados);
   if(tipo==='adiantamento' && !r.temDireitoAdiantamento){ toast('Não há adiantamento neste mês.'); return; }
   if(tipo==='saldo' && r.saldo===null){ toast('Preencha o líquido do mês antes.'); return; }
+  /* 06/11/2026: o adiantamento vai com o PDF do recibo (igual ao impresso), pelo Compartilhar do
+     aparelho (22_pdf.js). O saldo não tem recibo próprio: segue só o texto. */
+  if(tipo==='adiantamento'){
+    compartilharPdf(reciboAdiantamentoHTML(r), `Recibo Adiantamento - ${monthLabel(r.mes)} - ${r.f.nome}`,
+      mensagemFichado(r, tipo), r.f);
+    return;
+  }
   enviarWhatsApp(r.f, mensagemFichado(r, tipo));
 }
 
@@ -7676,6 +7691,7 @@ function calcVale(f, mes){
 
 function renderVales(){
   initValesMes();
+  pdfPrepararImagens([DB.empresa.logo]);   // a logo fica pronta antes do clique no WhatsApp (22_pdf.js)
   const c = document.getElementById('content');
   const fichados = ativosNoMes(valesMes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(valesMes), ultimoDiaMes(valesMes)) && recebeAlgumVale(f))
     .sort(cmpFuncionarios);
@@ -7816,7 +7832,7 @@ function renderVales(){
                 onclick="toggleValePago('${r.f.id}','${valesMes}')">
             </td>
             <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button>
-                <button class="btn btn-secondary btn-sm" onclick="whatsAppVale('${r.f.id}')" title="Abre o WhatsApp dele com o valor do vale">WhatsApp</button></td>
+                <button class="btn btn-secondary btn-sm" onclick="whatsAppVale('${r.f.id}')" title="Manda o PDF do recibo pelo WhatsApp (escolha o contato na lista)">WhatsApp</button></td>
           </tr>`;}).join('')}
           </tbody>
           <tfoot><tr>
@@ -7852,6 +7868,7 @@ function renderVales(){
    então o documento é idêntico ao que o Financeiro gera. */
 function renderRecibosVales(){
   initValesMes();
+  pdfPrepararImagens([DB.empresa.logo]);   // a logo fica pronta antes do clique no WhatsApp (22_pdf.js)
   const c = document.getElementById('content');
   const fichados = ativosNoMes(valesMes)
     .filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(valesMes), ultimoDiaMes(valesMes)) && recebeAlgumVale(f))
@@ -7881,7 +7898,7 @@ function renderRecibosVales(){
             <td style="text-align:center;">${r.dias}</td>
             <td class="num" style="font-weight:800;color:var(--azul-esc);">${fmtMoney(r.liquido)}</td>
             <td style="white-space:nowrap;"><button class="btn btn-secondary btn-sm" onclick="printRecibo('${r.f.id}')">Recibo</button>
-                <button class="btn btn-secondary btn-sm" onclick="whatsAppVale('${r.f.id}')" title="Abre o WhatsApp dele com o valor do vale">WhatsApp</button></td>
+                <button class="btn btn-secondary btn-sm" onclick="whatsAppVale('${r.f.id}')" title="Manda o PDF do recibo pelo WhatsApp (escolha o contato na lista)">WhatsApp</button></td>
           </tr>`).join('')}
           </tbody>
         </table>` : `<div class="empty">Nenhum funcionário fichado com vale ativado em ${monthLabel(valesMes)}.</div>`}
@@ -8049,9 +8066,13 @@ function mensagemVale(r){
   l.push(`total = ${fmtMoney(lanc ? lanc.valor : r.liquido)}`);
   return l.join('\n');
 }
+/* 06/11/2026: manda o PDF do recibo (igual ao impresso) junto com o texto, pelo Compartilhar
+   do aparelho (ver 22_pdf.js). Onde não dá para compartilhar arquivo, baixa o PDF e abre o
+   WhatsApp com o texto, como antes. */
 function whatsAppVale(funcId){
   const f = func(funcId);
-  enviarWhatsApp(f, mensagemVale(calcVale(f, valesMes)));
+  compartilharPdf(reciboValeHTML(funcId), `Vale VT-VR - ${monthLabel(valesMes)} - ${f.nome}`,
+    mensagemVale(calcVale(f, valesMes)), f);
 }
 
 function printRecibo(funcId){
@@ -16557,6 +16578,222 @@ function renderConciliacao(){
       </div>
       <div style="margin-top:12px;">${corpo}</div>
     </div>`;
+}
+/* =========================================================
+   PDF DE UM DOCUMENTO, SEM BIBLIOTECA (06/11/2026)
+
+   Pedido do Maycon: o botão WhatsApp do recibo de VT/VR mandava só texto; ele quer mandar o
+   PDF do recibo, igual ao impresso. O `wa.me` não anexa arquivo (só texto), então o caminho é
+   o "Compartilhar" do aparelho (`navigator.share` com o arquivo): abre a lista de apps, a
+   pessoa escolhe o WhatsApp e o contato. Escolher o contato sozinho não dá: o WhatsApp não
+   aceita isso de fora.
+
+   O app é offline e um HTML só, então o PDF sai daqui mesmo, sem biblioteca: o documento é
+   montado com o MESMO HTML e CSS da impressão numa área escondida, e cada pedaço (fundo, borda,
+   imagem, palavra) vai para o PDF na posição que o navegador calculou. Por isso sai igual ao
+   impresso. A fonte é a Helvetica do próprio PDF (mesmas medidas da Arial da impressão).
+   Desenhar o HTML num canvas (SVG foreignObject) foi descartado: o Safari do iPhone bloqueia
+   ler esse canvas.
+   ========================================================= */
+
+/* imagens já convertidas para JPEG (o PDF lê JPEG direto), por src */
+const pdfImgCache = {};
+
+/* Converte as imagens do documento ANTES do clique: compartilhar tem que acontecer logo
+   depois do toque (o Safari recusa `navigator.share` depois de uma espera), então a geração
+   do PDF é síncrona e só usa o que já estiver aqui. Imagem que não ficou pronta sai sem ela. */
+function pdfPrepararImagens(srcs){
+  (srcs||[]).filter(s=>s && !pdfImgCache[s]).forEach(src=>{
+    pdfImgCache[src] = {pronta:false};
+    const img = new Image();
+    img.onload = ()=>{
+      try{
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+        const ctx = cv.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);   // JPEG não tem transparência
+        ctx.drawImage(img, 0, 0);
+        const b64 = cv.toDataURL('image/jpeg', 0.92).split(',')[1];
+        pdfImgCache[src] = {pronta:true, w:cv.width, h:cv.height, bin:atob(b64)};
+      }catch(e){ pdfImgCache[src] = {pronta:false, erro:true}; }
+    };
+    img.onerror = ()=>{ pdfImgCache[src] = {pronta:false, erro:true}; };
+    img.src = src;
+  });
+}
+
+/* texto em Windows-1252 (a codificação da Helvetica do PDF): acentos do português cabem;
+   o que não cabe vira o parecido ou "?" */
+const PDF_CP1252 = {'€':0x80,'‚':0x82,'„':0x84,'…':0x85,'‘':0x91,'’':0x92,'“':0x93,'”':0x94,
+  '•':0x95,'–':0x96,'—':0x97,'−':0x2D,' ':0x20};
+function pdfTexto(s){
+  let o = '';
+  for(const ch of String(s)){
+    const c = ch.codePointAt(0);
+    const b = PDF_CP1252[ch] !== undefined ? PDF_CP1252[ch] : (c < 256 ? c : 0x3F);
+    const x = String.fromCharCode(b);
+    o += (x==='(' || x===')' || x==='\\') ? '\\' + x : x;
+  }
+  return '(' + o + ')';
+}
+
+function pdfCor(css){
+  const m = String(css||'').match(/rgba?\(([^)]+)\)/);
+  if(!m) return null;
+  const p = m[1].split(',').map(x=>parseFloat(x));
+  if(p.length > 3 && p[3] === 0) return null;
+  return p.slice(0,3).map(v=>(v/255).toFixed(3)).join(' ');
+}
+const pdfN = v => (Math.round(v*100)/100).toString();
+
+/* Monta o PDF (bytes) de um HTML de documento. Tamanho em mm; padrão A5 deitado com 8 mm de
+   margem, o mesmo `@page` do `doc-recibo` (ver doPrint). Mais alto que a página: quebra em
+   páginas pela altura. */
+function pdfDeHTML(html, opt){
+  opt = Object.assign({larguraMm:211, alturaMm:149, margemMm:8}, opt||{});
+  const PT = 72/25.4;
+  const pagW = opt.larguraMm*PT, pagH = opt.alturaMm*PT, mg = opt.margemMm*PT;
+  const largPx = Math.round((opt.larguraMm - 2*opt.margemMm) / 25.4 * 96);
+  const escala = (pagW - 2*mg) / largPx;            // px de tela → pt do PDF
+  const altPagPx = (pagH - 2*mg) / escala;
+
+  const area = document.createElement('div');
+  area.style.cssText = `position:absolute;left:-30000px;top:0;width:${largPx}px;background:#fff;`;
+  area.innerHTML = html;
+  document.body.appendChild(area);
+  const base = area.getBoundingClientRect();
+  const paginas = [];                                // um array de comandos por página
+  const imagens = [];                                // {nome, w, h, bin}
+  const cmd = (yPx, s) => {
+    const n = Math.max(0, Math.floor(yPx / altPagPx));
+    while(paginas.length <= n) paginas.push([]);
+    paginas[n].push(s);
+    return n;
+  };
+  const X = x => mg + x*escala;
+  const Y = (y, n) => pagH - mg - (y - n*altPagPx)*escala;
+  const ret = (x, y, w, h, cor) => {
+    const n = Math.max(0, Math.floor(y / altPagPx));
+    cmd(y, `${cor} rg ${pdfN(X(x))} ${pdfN(Y(y+h, n))} ${pdfN(w*escala)} ${pdfN(h*escala)} re f`);
+  };
+
+  try{
+    const andar = el => {
+      const cs = getComputedStyle(el);
+      if(cs.display === 'none' || cs.visibility === 'hidden') return;
+      const r = el.getBoundingClientRect();
+      const x = r.left - base.left, y = r.top - base.top;
+      const fundo = pdfCor(cs.backgroundColor);
+      if(fundo && r.width && r.height) ret(x, y, r.width, r.height, fundo);
+      [['Top', x, y, r.width, null], ['Bottom', x, null, r.width, null],
+       ['Left', x, y, null, r.height], ['Right', null, y, null, r.height]].forEach(([lado, bx, by, bw, bh])=>{
+        const w = parseFloat(cs['border'+lado+'Width']) || 0;
+        const cor = pdfCor(cs['border'+lado+'Color']);
+        if(!w || !cor || cs['border'+lado+'Style'] === 'none') return;
+        ret(bx===null ? x + r.width - w : bx, by===null ? y + r.height - w : by,
+            bw===null ? w : bw, bh===null ? w : bh, cor);
+      });
+      if(el.tagName === 'IMG'){
+        const im = pdfImgCache[el.getAttribute('src')];
+        if(im && im.pronta && r.width && r.height){
+          /* object-fit:contain: a imagem inteira dentro da caixa, sem deformar */
+          const k = Math.min(r.width/im.w, r.height/im.h);
+          const w = im.w*k, h = im.h*k, ix = x + (r.width-w)/2, iy = y + (r.height-h)/2;
+          const nome = '/Im' + (imagens.length+1);
+          imagens.push({nome, w:im.w, h:im.h, bin:im.bin});
+          const n = Math.max(0, Math.floor(iy / altPagPx));
+          cmd(iy, `q ${pdfN(w*escala)} 0 0 ${pdfN(h*escala)} ${pdfN(X(ix))} ${pdfN(Y(iy+h, n))} cm ${nome} Do Q`);
+        }
+        return;
+      }
+      el.childNodes.forEach(no=>{
+        if(no.nodeType === 1) andar(no);
+        else if(no.nodeType === 3) palavras(no, cs);
+      });
+    };
+    /* cada palavra no lugar exato em que o navegador a pôs (quebra de linha, alinhamento e
+       espaçamento já resolvidos por ele) */
+    const palavras = (no, cs) => {
+      const fs = parseFloat(cs.fontSize) || 11;
+      const negrito = (parseInt(cs.fontWeight) || 400) >= 600;
+      const cor = pdfCor(cs.color) || '0 0 0';
+      const maius = cs.textTransform === 'uppercase';
+      const tc = parseFloat(cs.letterSpacing) || 0;     // espaço entre letras (títulos), que o PDF faz com Tc
+      const rg = document.createRange();
+      const re = /\S+/g;
+      let m;
+      while((m = re.exec(no.data))){
+        rg.setStart(no, m.index); rg.setEnd(no, m.index + m[0].length);
+        const q = rg.getClientRects()[0];
+        if(!q || !q.width) continue;
+        const x = q.left - base.left, y = q.top - base.top;
+        const linha = fs*1.117;                       // altura da Arial/Helvetica (ascendente + descendente)
+        const bl = y + (q.height - linha)/2 + fs*0.905;
+        const n = Math.max(0, Math.floor(y / altPagPx));
+        const txt = maius ? m[0].toLocaleUpperCase('pt-BR') : m[0];
+        cmd(y, `BT ${cor} rg /${negrito?'F2':'F1'} ${pdfN(fs*escala)} Tf ${pdfN(tc*escala)} Tc ${pdfN(X(x))} ${pdfN(Y(bl, n))} Td ${pdfTexto(txt)} Tj ET`);
+      }
+    };
+    andar(area);
+  } finally {
+    area.remove();
+  }
+  if(!paginas.length) paginas.push([]);
+
+  /* ---- o arquivo PDF: objetos numerados, tabela de posições (xref) e trailer ---- */
+  const obj = [];                                    // texto "binário" (1 caractere = 1 byte)
+  const add = s => { obj.push(s); return obj.length; };
+  const catalogo = add(''), pags = add('');
+  const f1 = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  const f2 = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  const imgsObj = imagens.map(im=>({nome:im.nome, n:add(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} `
+    + `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.bin.length} >>\nstream\n${im.bin}\nendstream`)}));
+  const recursos = `<< /Font << /F1 ${f1} 0 R /F2 ${f2} 0 R >> /XObject << ${imgsObj.map(i=>`${i.nome} ${i.n} 0 R`).join(' ')} >> >>`;
+  const kids = paginas.map(cmds=>{
+    const conteudo = cmds.join('\n');
+    const c = add(`<< /Length ${conteudo.length} >>\nstream\n${conteudo}\nendstream`);
+    return add(`<< /Type /Page /Parent ${pags} 0 R /MediaBox [0 0 ${pdfN(pagW)} ${pdfN(pagH)}] /Resources ${recursos} /Contents ${c} 0 R >>`);
+  });
+  obj[catalogo-1] = `<< /Type /Catalog /Pages ${pags} 0 R >>`;
+  obj[pags-1] = `<< /Type /Pages /Kids [${kids.map(k=>k+' 0 R').join(' ')}] /Count ${kids.length} >>`;
+
+  let s = '%PDF-1.4\n%\xe2\xe3\xcf\xd3\n';
+  const pos = [];
+  obj.forEach((o, i)=>{ pos.push(s.length); s += `${i+1} 0 obj\n${o}\nendobj\n`; });
+  const xref = s.length;
+  s += `xref\n0 ${obj.length+1}\n0000000000 65535 f \n` + pos.map(p=>String(p).padStart(10,'0')+' 00000 n \n').join('');
+  s += `trailer\n<< /Size ${obj.length+1} /Root ${catalogo} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  const bytes = new Uint8Array(s.length);
+  for(let i=0; i<s.length; i++) bytes[i] = s.charCodeAt(i) & 0xff;
+  return bytes;
+}
+
+/* Manda o PDF pelo "Compartilhar" do aparelho (WhatsApp, e-mail...). Onde o navegador não
+   compartilha arquivo (alguns PCs, o arquivo aberto direto do disco), baixa o PDF e abre o
+   WhatsApp com o texto, para anexar o PDF baixado à mão. Chamar direto do clique. */
+function compartilharPdf(html, nomeArquivo, texto, f){
+  let bytes;
+  try{ bytes = pdfDeHTML(html); }
+  catch(e){ toast('Não consegui gerar o PDF: ' + (e && e.message || e)); return; }
+  const nome = nomeArquivoSeguro(nomeArquivo) + '.pdf';
+  const arq = new File([bytes], nome, {type:'application/pdf'});
+  if(navigator.canShare && navigator.share && navigator.canShare({files:[arq]})){
+    navigator.share({files:[arq], title:nome, text:texto}).catch(e=>{
+      if(e && e.name === 'AbortError') return;          // a pessoa fechou a lista sem escolher
+      baixarPdf(arq); if(f) enviarWhatsApp(f, texto);
+    });
+    return;
+  }
+  baixarPdf(arq);
+  toast('PDF baixado — anexe no WhatsApp que vai abrir.');
+  if(f) enviarWhatsApp(f, texto);
+}
+function baixarPdf(arq){
+  const url = URL.createObjectURL(arq);
+  const a = document.createElement('a');
+  a.href = url; a.download = arq.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
 }
 /* =========================================================
    AJUSTES DE TELA PEQUENA
