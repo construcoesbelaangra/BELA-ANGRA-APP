@@ -886,7 +886,7 @@ table.dt{font-size:12px;} table.dt th,table.dt td{padding:4px 8px;}
 <script>
 /* Versão do programa. BUMPAR A MÃO a cada publicação — é o que permite
    comparar num relance se o celular e os PCs estão na mesma versão. */
-const VERSAO = '1.38.0';
+const VERSAO = '1.38.1';
 
 /* =========================================================
    AS DUAS LOGOS — e por que são duas
@@ -7055,13 +7055,43 @@ function toggleSaldoFichadoPago(funcId, mes){
   toast(`Saldo de ${f.nome} marcado como pago — lançamento de ${fmtMoney(c.saldo)} criado no financeiro.`);
 }
 
+/* Ordem da tabela do Fechamento dos fichados (06/11/2026, pedido do Maycon): além das ordens
+   de sempre (`ORDENACOES`, nome, função...), por valor. `fcOrdemValor` vazio = a ordem de
+   sempre. Quem ainda não tem o valor (líquido não informado) fica no fim. */
+const ORDEM_VALOR_FICHADOS = {
+  saldo_desc:   'Saldo a pagar (maior primeiro)',
+  saldo_asc:    'Saldo a pagar (menor primeiro)',
+  liquido_desc: 'Líquido do mês (maior primeiro)',
+  adiant_desc:  'Adiantamento (maior primeiro)',
+  salario_desc: 'Salário (maior primeiro)'
+};
+let fcOrdemValor = '';
+function ordenarLinhasFichados(rows){
+  if(!ORDEM_VALOR_FICHADOS[fcOrdemValor]) return rows;
+  const [campo, sentido] = fcOrdemValor.split('_');
+  const valor = r => ({saldo:r.saldo, liquido:r.liquido, adiant:r.adiantamento, salario:r.salario})[campo];
+  return rows.slice().sort((a,b)=>{
+    const x = valor(a), y = valor(b);
+    if(x===null || y===null) return (x===null) - (y===null) || cmpFuncionarios(a.f, b.f);
+    return (sentido==='asc' ? x - y : y - x) || cmpFuncionarios(a.f, b.f);
+  });
+}
+function selectOrdemFichados(){
+  const atual = fcOrdemValor || ordemFuncionarios;
+  const op = (k, rot) => `<option value="${k}" ${atual===k?'selected':''}>${rot}</option>`;
+  return `<select onchange="if(ORDEM_VALOR_FICHADOS[this.value]){ fcOrdemValor=this.value; } else { fcOrdemValor=''; ordemFuncionarios=this.value; } renderFechamento();">`
+    + Object.keys(ORDENACOES).map(k=>op(k, ORDENACOES[k])).join('')
+    + Object.keys(ORDEM_VALOR_FICHADOS).map(k=>op(k, ORDEM_VALOR_FICHADOS[k])).join('')
+    + `</select>`;
+}
+
 function renderFechamentoFichados(){
   const c = document.getElementById('content');
   if(!fcMesFichados) fcMesFichados = currentYM();
   const mes = fcMesFichados;
   const fichados = ativosNoMes(mes).filter(f=>vinculoNoPeriodo(f, 'fichado', primeiroDiaMes(mes), ultimoDiaMes(mes)))
     .sort(cmpFuncionarios);
-  const rows = fichados.map(f=>calcFichado(f, mes));
+  const rows = ordenarLinhasFichados(fichados.map(f=>calcFichado(f, mes)));
 
   const totAdiant = rows.reduce((s,r)=>s+r.adiantamento,0);
   const totLiq    = rows.reduce((s,r)=>s+(r.liquido||0),0);
@@ -7132,7 +7162,8 @@ function renderFechamentoFichados(){
         ${DB.contas.length?'':'<a href="#" onclick="goTo(\'caixa\'); return false;">cadastre uma em Caixa e Contas</a>.'}
       </p>`:''}` : ''}
 
-      <div class="table-wrap" style="margin-top:14px;">
+      ${rows.length ? `<div style="margin-top:14px;font-size:12.5px;">Ordem: ${selectOrdemFichados()}</div>` : ''}
+      <div class="table-wrap" style="margin-top:8px;">
         ${rows.length ? `
         <table>
           <thead><tr>
